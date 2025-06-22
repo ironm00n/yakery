@@ -27,6 +27,7 @@
       package = pkgs.kdePackages.breeze-icons;
       name = "breeze-dark";
     };
+    gtk2.force = true;
   };
 
   dconf = {
