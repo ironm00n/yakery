@@ -57,7 +57,7 @@ in
         "power-profiles-daemon"
         "idle_inhibitor"
         "battery"
-        "custom/dunst"
+        # "custom/dunst"
       ];
 
       "hyprland/workspaces" = {

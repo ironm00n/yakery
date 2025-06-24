@@ -7,6 +7,8 @@ in
   settings = {
     general = {
       lock_cmd = "pidof hyprlock || hyprlock";
+      on_lock_cmd = "dunstctl set-paused true";
+      on_unlock_cmd = "dunstctl set-paused false";
       before_sleep_cmd = "loginctl lock-session";
       after_sleep_cmd = "hyprctl dispatch dpms on";
     };
