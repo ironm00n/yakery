@@ -108,7 +108,7 @@
 
       google-chrome
       # firefox enabled with home-manager
-      firefox-devedition-bin # devedition keeps updating and is slow
+      firefox-devedition
       tor-browser-bundle-bin
       element-desktop
       ladybird
