@@ -20,8 +20,7 @@ in
   };
 
   config = mkIf cfg.enable {
-    # home.file.".p10k.zsh".source = symlink ./.p10k.zsh;
-    home.file.".p10k.zsh".source = symlink "ironmoon/bundles/zsh/.p10k.zsh";
+    home.file.".p10k.zsh".source = symlink ./.p10k.zsh;
 
     programs.zsh = import ./program.nix { inherit lib config pkgs; };
   };

@@ -10,6 +10,7 @@ let
     mkAfter
     getExe
     ;
+  inherit (lib.strings) optionalString;
 in
 {
   enable = true;
@@ -156,11 +157,15 @@ in
       # TODO: use current specialisation
       nixos-switch() {
         sudo nixos-rebuild switch "''${1:+--specialisation}" "''${1:+$1}" \
-          --keep-going --log-format=internal-json -v |& nom --json
+          --keep-going --log-format=internal-json -v \
+          ${optionalString config.host.out-of-store-symlinks "--impure"} \
+          |& nom --json
       }
       nixos-boot() {
         sudo nixos-rebuild boot \
-          --keep-going --log-format=internal-json -v |& nom --json
+          --keep-going --log-format=internal-json -v \
+          ${optionalString config.host.out-of-store-symlinks "--impure"} \
+          |& nom --json
       }
     '')
   ];

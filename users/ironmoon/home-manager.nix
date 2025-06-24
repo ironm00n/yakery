@@ -5,7 +5,7 @@ args@{
   ...
 }:
 let
-  inherit (my-utils) symlink;
+  _ = my-utils;
   my-modules = import ./modules/default.nix;
   bundles = import ./bundles/default.nix;
   importWith = path: import path args;

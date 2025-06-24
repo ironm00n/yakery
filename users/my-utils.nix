@@ -1,27 +1,34 @@
 {
   host,
-  hm,
   pkgs,
   lib,
+  inputs,
   ...
 }:
+let
+  inherit (inputs.home-manager.lib) hm;
+  inherit (lib) removePrefix escapeShellArg;
+  inherit (lib.strings) optionalString;
+  inherit (pkgs) runCommandLocal;
+in
 rec {
   # FIXME: this is copied from home-manager modules/files.nix, can it be extracted?
   mkOutOfStoreSymlink =
     path:
     let
-      pathStr = toString path;
-      name = hm.strings.storeFileName (baseNameOf pathStr);
+      name = hm.strings.storeFileName (baseNameOf path);
     in
-    pkgs.runCommandLocal name { } ''ln -s ${lib.escapeShellArg pathStr} $out'';
+    runCommandLocal name { } ''ln -s ${escapeShellArg path} $out'';
 
   symlink =
     file:
     if host.out-of-store-symlinks then
       let
-        path = "/etc/nixos/users/" + file;
+        rootNixPath = builtins.getEnv "ROOT_NIX_PATH";
+        rootDir = optionalString (rootNixPath == "") "/etc/nixos";
+        path = rootDir + removePrefix (toString inputs.self) (toString file);
       in
-      mkOutOfStoreSymlink path
+      mkOutOfStoreSymlink (builtins.trace path path)
     else
       file;
 }

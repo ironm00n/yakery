@@ -20,7 +20,7 @@
       inherit (config) host;
       # TODO: how to get home-manager's version of config?
       my-utils = import ./my-utils.nix {
-        inherit lib pkgs;
+        inherit lib pkgs inputs;
         inherit (config) host;
         inherit (inputs.home-manager.lib) hm;
       };

@@ -50,6 +50,7 @@
 
   outputs =
     inputs@{
+      self,
       nixpkgs,
       nixpkgs-stable,
       home-manager,
@@ -150,6 +151,11 @@
 
               lua-language-server
             ]);
+
+          shellHook = ''
+            export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
+            echo $ROOT_NIXOS_PATH
+          '';
         };
       });
     };

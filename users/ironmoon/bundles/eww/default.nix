@@ -23,9 +23,7 @@ in
   config = mkIf cfg.enable {
     home.packages = [ pkgs.eww ];
 
-    # home.file."${ewwDir}/eww.yuck".source = symlink ./eww.yuck;
-    # home.file."${ewwDir}/eww.scss".source = symlink ./eww.scss;
-    home.file."${ewwDir}/eww.yuck".source = symlink "ironmoon/bundles/eww/eww.yuck";
-    home.file."${ewwDir}/eww.scss".source = symlink "ironmoon/bundles/eww/eww.scss";
+    home.file."${ewwDir}/eww.yuck".source = symlink ./eww.yuck;
+    home.file."${ewwDir}/eww.scss".source = symlink ./eww.scss;
   };
 }
