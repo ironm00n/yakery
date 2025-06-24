@@ -57,6 +57,7 @@ in
         "power-profiles-daemon"
         "idle_inhibitor"
         "battery"
+        "custom/dunst"
       ];
 
       "hyprland/workspaces" = {
@@ -227,8 +228,11 @@ in
           ];
         };
       };
+      # "custom/dunst" = {
+      #   "on-click" = "dunstctl set-paused toggle";
+      # };
     };
   };
 
-  style = builtins.readFile ../resources/waybar.css;
+  style = builtins.readFile ./waybar.css;
 }

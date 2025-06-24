@@ -26,6 +26,7 @@ in
 
   bundles = {
     eww.enable = true;
+    waybar.enable = true;
     zsh.enable = true;
   };
 
@@ -44,7 +45,6 @@ in
     firefox = importWith ./programs/firefox.nix;
     direnv = importWith ./programs/direnv.nix;
 
-    waybar = importWith ./programs/waybar.nix;
     hyprlock = importWith ./programs/hyprlock.nix;
     kitty = importWith ./programs/kitty.nix;
     anyrun = importWith ./programs/anyrun.nix;
