@@ -24,7 +24,10 @@ in
 
   host = host;
 
-  bundles.eww.enable = true;
+  bundles = {
+    eww.enable = true;
+    zsh.enable = true;
+  };
 
   home.sessionVariables = {
     PAGER = "${pkgs.moar}/bin/moar --no-linenumbers";
@@ -33,11 +36,7 @@ in
     ELECTRON_OZONE_PLATFORM_HINT = "auto";
   };
 
-  # home.file.".p10k.zsh".source = symlink ./resources/.p10k.zsh;
-  home.file.".p10k.zsh".source = symlink "ironmoon/resources/.p10k.zsh";
-
   programs = {
-    zsh = importWith ./programs/zsh.nix;
     fzf = importWith ./programs/fzf.nix;
     konsole = importWith ./programs/konsole.nix;
     okular = importWith ./programs/okular.nix;
