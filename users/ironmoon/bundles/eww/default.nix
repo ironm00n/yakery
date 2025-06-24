@@ -25,7 +25,7 @@ in
 
     # home.file."${ewwDir}/eww.yuck".source = symlink ./eww.yuck;
     # home.file."${ewwDir}/eww.scss".source = symlink ./eww.scss;
-    home.file."${ewwDir}/eww.yuck".source = symlink "ironmoon/bundles/eww.yuck";
-    home.file."${ewwDir}/eww.scss".source = symlink "ironmoon/bundles/eww.scss";
+    home.file."${ewwDir}/eww.yuck".source = symlink "ironmoon/bundles/eww/eww.yuck";
+    home.file."${ewwDir}/eww.scss".source = symlink "ironmoon/bundles/eww/eww.scss";
   };
 }
