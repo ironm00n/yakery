@@ -38,5 +38,9 @@ in
           kdePackages.xdg-desktop-portal-kde
         ];
     };
+
+    environment.systemPackages = with pkgs; [
+      maliit-keyboard
+    ];
   };
 }
