@@ -21,7 +21,7 @@ in
   };
 
   config = mkIf cfg.enable {
-    home.packages = [ pkgs.eww ];
+    home.packages = with pkgs; [ eww hyprland-workspaces ];
 
     home.file."${ewwDir}/eww.yuck".source = symlink ./eww.yuck;
     home.file."${ewwDir}/eww.scss".source = symlink ./eww.scss;
