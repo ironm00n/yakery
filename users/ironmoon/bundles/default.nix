@@ -3,4 +3,6 @@
   ./waybar/default.nix
 
   ./zsh/default.nix
+
+  ./discord/default.nix
 ]

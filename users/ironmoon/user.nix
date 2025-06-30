@@ -148,18 +148,6 @@
       gtop
       jq
 
-      (discord.override {
-        withVencord = true;
-      })
-      discord-ptb
-      (discord-canary.override {
-        withOpenASAR = true;
-        withVencord = true;
-      })
-      (vesktop.override {
-        withMiddleClickScroll = true;
-        withTTS = true;
-      })
       slack
       signal-desktop
 

@@ -28,6 +28,8 @@ in
     eww.enable = true;
     waybar.enable = true;
     zsh.enable = true;
+
+    discord.enable = true;
   };
 
   home.sessionVariables = {
