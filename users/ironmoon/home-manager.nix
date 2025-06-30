@@ -27,6 +27,7 @@ in
   bundles = {
     eww.enable = true;
     waybar.enable = true;
+    quickshell.enable = true;
     zsh.enable = true;
 
     discord.enable = true;

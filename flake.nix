@@ -29,6 +29,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };
+    quickshell = {
+      url = "git+https://git.outfoxxed.me/outfoxxed/quickshell";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   nixConfig = {
@@ -139,24 +143,37 @@
       formatter = eachSystem (pkgs: treefmtEval.${pkgs.system}.config.build.wrapper);
 
       devShells = eachSystem (pkgs: {
-        default = pkgs.mkShell {
-          nativeBuildInputs =
-            [
-              treefmtEval.${pkgs.system}.config.build.wrapper
-            ]
-            ++ (with pkgs; [
-              nixd
-              nixfmt-rfc-style
-              nil
+        default =
+          let
+            quickshell = inputs.quickshell.packages.${system}.default;
 
-              lua-language-server
-            ]);
+            qml2_import = lib.concatStringsSep ":" [
+              "${quickshell}/lib/qt-6/qml"
+              "${pkgs.kdePackages.qtdeclarative}/lib/qt-6/qml"
+              "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
+            ];
+          in
+          pkgs.mkShell {
+            nativeBuildInputs =
+              [
+                treefmtEval.${pkgs.system}.config.build.wrapper
+              ]
+              ++ (with pkgs; [
+                nixd
+                nixfmt-rfc-style
+                nil
 
-          shellHook = ''
-            export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
-            echo $ROOT_NIXOS_PATH
-          '';
-        };
+                lua-language-server
+
+                kdePackages.qtdeclarative # qmlls
+                quickshell
+              ]);
+
+            shellHook = ''
+              export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
+              export QML2_IMPORT_PATH=${qml2_import}:$QML2_IMPORT_PATH
+            '';
+          };
       });
     };
 }
