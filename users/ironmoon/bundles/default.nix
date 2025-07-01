@@ -4,6 +4,7 @@
   ./quickshell/default.nix
 
   ./zsh/default.nix
+  ./dev/default.nix
 
   ./discord/default.nix
 ]

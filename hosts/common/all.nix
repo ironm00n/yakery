@@ -1,12 +1,13 @@
-args@{ ... }:
+{ pkgs, ... }:
 {
   # all bundles are behind an `enable` option
   imports = [
-    (import ../../bundles/default.nix args)
+    ../../bundles/default.nix
   ];
 
   # Set your time zone.
-  time.timeZone = "America/New_York";
+  # time.timeZone = "America/New_York";
+  time.timeZone = "America/Los_Angeles";
 
   # Select internationalization properties.
   i18n.defaultLocale = "en_US.UTF-8";
@@ -22,5 +23,5 @@ args@{ ... }:
     LC_TIME = "en_US.UTF-8";
   };
 
-  environment.systemPackages = import ./pkgs/base.nix args;
+  environment.systemPackages = import ./pkgs/base.nix { inherit pkgs; };
 }

@@ -2,14 +2,9 @@
 # - https://github.com/jdecked/twemoji
 # - https://github.com/mozilla/twemoji-colr
 # uses pkgs-stable to avoid excessive rebuilds
-{
-  inputs,
-  system,
-  ...
-}:
-
+{ inputs, system, ... }:
 let
-  pkgs = import inputs.nixpkgs-24_11 { inherit system; };
+  pkgs = inputs.nixpkgs-24_11.legacyPackages.${system};
 
   twemoji = pkgs.fetchFromGitHub {
     name = "twemoji";

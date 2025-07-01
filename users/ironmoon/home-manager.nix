@@ -29,6 +29,7 @@ in
     waybar.enable = true;
     quickshell.enable = true;
     zsh.enable = true;
+    dev.enable = true;
 
     discord.enable = true;
   };

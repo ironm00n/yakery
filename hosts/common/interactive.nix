@@ -1,25 +1,19 @@
-args@{
-  config,
-  lib,
-  pkgs,
-  ...
-}:
+{ config, lib, pkgs, ... }:
 {
   imports = [
-    (import ./networked.nix args)
+    ./networked.nix
     ../../users/home-manager.nix
+    ./specializations/hyprland.nix
+    ./specializations/kde.nix
+    ../../users/ironmoon/user.nix
   ];
 
   bundles.fonts.enable = true;
   bundles.mullvad-vpn.enable = false;
   bundles.nvidia.enable = config.host.nvidia;
 
-  specialisation = {
-    kde.configuration = import ./specializations/kde.nix args;
-    hyprland.configuration = import ./specializations/hyprland.nix args;
-  };
-
   # SECURITY: this is fine for single user, personal systems.
+  # TODO: make a specific group for this, it shouldn't just be wheel
   nix.settings.trusted-users = [
     "root"
     "@wheel"
@@ -67,12 +61,6 @@ args@{
   services.openssh.enable = true;
   services.udisks2.enable = true; # for calibre
 
-  # user account.
-  # set a password with `passwd`
-  users.users.ironmoon = import ../../users/ironmoon/user.nix args;
-
-  # home-manager
-
   programs = {
     firefox = import ./programs/firefox.nix;
     thunderbird = import ./programs/thunderbird.nix;
@@ -95,7 +83,7 @@ args@{
     ladybird.enable = true;
     dconf.enable = true;
     binary-ninja = {
-      enable = true;
+      enable = true; # TODO, reenable when fixed upstream
       package = pkgs.binary-ninja-free-wayland;
     };
   };
@@ -104,5 +92,5 @@ args@{
   # documentation.dev.enable = true;
   # documentation.man.generateCaches = true;
 
-  environment.systemPackages = import ./pkgs/interactive.nix args;
+  environment.systemPackages = import ./pkgs/interactive.nix { inherit pkgs; };
 }

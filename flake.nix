@@ -25,7 +25,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     binary-ninja = {
-      url = "github:jchv/nix-binary-ninja";
+      url = "github:ironm00n/nix-binary-ninja";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };
@@ -63,14 +63,15 @@
       treefmt-nix,
       binary-ninja,
       systems,
+      flake-utils,
       ...
     }:
     let
       overlays = import ./overlays/default.nix;
       lib = nixpkgs.lib;
-      eachSystem =
-        f: lib.genAttrs (import systems) (system: f (import nixpkgs { inherit system overlays; }));
-      treefmtEval = eachSystem (pkgs: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
+      system = "x86_64-linux";
+      pkgs = import nixpkgs { inherit system overlays; };
+      treefmtEval = treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix;
     in
     let
       base-nixpkgs-config = {
@@ -83,6 +84,8 @@
         nix.settings.experimental-features = [
           "nix-command"
           "flakes"
+          "pipe-operators"
+          # "no-url-literals"
         ];
       };
       base-modules = [
@@ -91,7 +94,6 @@
         home-manager.nixosModules.home-manager
         binary-ninja.nixosModules.binaryninja
       ];
-      system = "x86_64-linux";
       base-system = rec {
         inherit system;
         specialArgs = ({
@@ -127,7 +129,7 @@
       homeConfigurations = {
         "ironmoon" = home-manager.lib.homeManagerConfiguration {
           # todo make this nicer
-          pkgs = import nixpkgs { inherit system overlays; };
+          inherit pkgs;
           extraSpecialArgs = { inherit inputs; };
           modules = [
             {
@@ -140,40 +142,38 @@
         };
       };
 
-      formatter = eachSystem (pkgs: treefmtEval.${pkgs.system}.config.build.wrapper);
+      formatter.${system} = treefmtEval.config.build.wrapper;
 
-      devShells = eachSystem (pkgs: {
-        default =
-          let
-            quickshell = inputs.quickshell.packages.${system}.default;
+      devShells.${system}.default =
+        let
+          quickshell = inputs.quickshell.packages.${system}.default;
 
-            qml2_import = lib.concatStringsSep ":" [
-              "${quickshell}/lib/qt-6/qml"
-              "${pkgs.kdePackages.qtdeclarative}/lib/qt-6/qml"
-              "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
-            ];
-          in
-          pkgs.mkShell {
-            nativeBuildInputs =
-              [
-                treefmtEval.${pkgs.system}.config.build.wrapper
-              ]
-              ++ (with pkgs; [
-                nixd
-                nixfmt-rfc-style
-                nil
+          qml2_import = lib.concatStringsSep ":" [
+            "${quickshell}/lib/qt-6/qml"
+            "${pkgs.kdePackages.qtdeclarative}/lib/qt-6/qml"
+            "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
+          ];
+        in
+        pkgs.mkShell {
+          nativeBuildInputs =
+            [
+              treefmtEval.config.build.wrapper
+            ]
+            ++ (with pkgs; [
+              nixd
+              nixfmt-rfc-style
+              nil
 
-                lua-language-server
+              lua-language-server
 
-                kdePackages.qtdeclarative # qmlls
-                quickshell
-              ]);
+              kdePackages.qtdeclarative # qmlls
+              quickshell
+            ]);
 
-            shellHook = ''
-              export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
-              export QML2_IMPORT_PATH=${qml2_import}:$QML2_IMPORT_PATH
-            '';
-          };
-      });
+          shellHook = ''
+            export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
+            export QML2_IMPORT_PATH=${qml2_import}:$QML2_IMPORT_PATH
+          '';
+        };
     };
 }

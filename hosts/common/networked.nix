@@ -1,7 +1,7 @@
-args@{ config, pkgs, ... }:
+{ config, pkgs, ... }:
 {
   imports = [
-    (import ./all.nix args)
+    ./all.nix
   ];
 
   # Enable networking
@@ -12,5 +12,5 @@ args@{ config, pkgs, ... }:
   programs.wireshark.enable = true;
   programs.wireshark.package = pkgs.wireshark;
 
-  environment.systemPackages = import ./pkgs/networked.nix args;
+  environment.systemPackages = import ./pkgs/networked.nix { inherit pkgs; };
 }

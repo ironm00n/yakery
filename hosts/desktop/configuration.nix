@@ -6,7 +6,7 @@ args@{ pkgs, ... }:
 {
   imports = [
     ./hardware-configuration.nix
-    (import ../common/interactive.nix args)
+    ../common/interactive.nix
   ];
 
   host = {
