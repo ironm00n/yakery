@@ -218,7 +218,7 @@ in
 
       "float,title:^(Orbital)$"
 
-      # TODO: make xdg-portals float
+      # TODO?: make xdg-portals float
     ];
 
     layerrule = [

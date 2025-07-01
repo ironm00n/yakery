@@ -22,7 +22,7 @@ args@{ pkgs, ... }:
   bundles.ctf.enable = true;
   bundles.printing.enable = false;
   bundles.virtualisation = {
-    enable = true;
+    enable = false;
     libvirt = true;
     docker = true;
     waydroid = true;

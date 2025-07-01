@@ -25,9 +25,9 @@ in
   host = host;
 
   bundles = {
-    eww.enable = true;
+    eww.enable = false;
     waybar.enable = true;
-    quickshell.enable = true;
+    quickshell.enable = false;
     zsh.enable = true;
     dev.enable = true;
 
