@@ -217,6 +217,7 @@ in
       "workspace special silent, class:xwaylandvideobridge"
 
       "float,title:^(Orbital)$"
+      "float,class:^(waydroid\\.##\\d+)$" # '##' escapes '#'
 
       # TODO?: make xdg-portals float
     ];
