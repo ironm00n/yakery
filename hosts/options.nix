@@ -56,5 +56,11 @@ in
       default = false;
       description = "Whether to use impure out of store symlinks for some dotfiles.";
     };
+
+    home-manager-nixos = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Use the NixOS home-manager module.";
+    };
   };
 }

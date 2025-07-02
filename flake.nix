@@ -68,112 +68,134 @@
     }:
     let
       overlays = import ./overlays/default.nix;
-      lib = nixpkgs.lib;
-      system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system overlays; };
-      treefmtEval = treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix;
-    in
-    let
+      inherit (nixpkgs) lib;
+      all-systems = import systems;
       base-nixpkgs-config = {
         allowUnfree = true;
       };
-      nixConfig = {
-        nixpkgs.overlays = overlays;
-        nixpkgs.config = base-nixpkgs-config;
+      pkgs-map =
+        all-systems
+        |> map (system: {
+          name = system;
+          value = import nixpkgs {
+            inherit system overlays;
+            config = base-nixpkgs-config;
+          };
+        })
+        |> builtins.listToAttrs;
+      eachSystem = f: lib.genAttrs all-systems (system: f pkgs-map.${system});
+      treefmtEval = eachSystem (pkgs: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
+      mk-pkgs-stable =
+        system:
+        import nixpkgs-stable {
+          inherit system;
+          config = base-nixpkgs-config;
+        };
+    in
+    let
+      base-config =
+        { pkgs, host }:
+        {
+          host = host;
+          nixpkgs.pkgs = pkgs;
 
-        nix.settings.experimental-features = [
-          "nix-command"
-          "flakes"
-          "pipe-operators"
-          # "no-url-literals"
-        ];
-      };
-      base-modules = [
-        nixConfig
+          nix.settings.experimental-features = [
+            "nix-command"
+            "flakes"
+            "pipe-operators"
+            "no-url-literals"
+          ];
+        };
+      base-modules = ctx: [
         ./hosts/options.nix
+        (base-config ctx)
         home-manager.nixosModules.home-manager
         binary-ninja.nixosModules.binaryninja
       ];
-      base-system = rec {
+      base-system = system: {
         inherit system;
-        specialArgs = ({
+        specialArgs = {
           inherit inputs system;
-          pkgs-stable = import nixpkgs-stable {
-            inherit system;
-            config = base-nixpkgs-config;
-          };
-        });
+          pkgs-stable = (mk-pkgs-stable system);
+        };
+      };
+      machines = {
+        framework = {
+          system = "x86_64-linux";
+          additionalModules = [
+            nixos-hardware.nixosModules.framework-13-7040-amd
+            ./hosts/framework/configuration.nix
+          ];
+          host = ./hosts/framework/host-cfg.nix;
+        };
+        desktop = {
+          system = "x86_64-linux";
+          additionalModules = [
+            ./hosts/desktop/configuration.nix
+          ];
+          host = ./hosts/desktop/host-cfg.nix;
+        };
       };
     in
     {
-      nixosConfigurations = {
-        framework = lib.nixosSystem (
-          base-system
-          // {
-            modules = base-modules ++ [
-              nixos-hardware.nixosModules.framework-13-7040-amd
-              ./hosts/framework/configuration.nix
-            ];
-          }
-        );
-        desktop = lib.nixosSystem (
-          base-system
-          // {
-            modules = base-modules ++ [
-              ./hosts/desktop/configuration.nix
-            ];
-          }
-        );
-      };
-
-      homeConfigurations = {
-        "ironmoon" = home-manager.lib.homeManagerConfiguration {
-          # todo make this nicer
-          inherit pkgs;
-          extraSpecialArgs = { inherit inputs; };
-          modules = [
-            {
-              home.username = "ironmoon";
-              home.homeDirectory = "/home/ironmoon";
-            }
-            plasma-manager.homeManagerModules.plasma-manager
-            ./users/ironmoon/home-manager.nix
-          ];
-        };
-      };
-
-      formatter.${system} = treefmtEval.config.build.wrapper;
-
-      devShells.${system}.default =
+      nixosConfigurations = lib.mapAttrs (
+        name: machine:
         let
-          quickshell = inputs.quickshell.packages.${system}.default;
-
-          qml2_import = lib.concatStringsSep ":" [
-            "${quickshell}/lib/qt-6/qml"
-            "${pkgs.kdePackages.qtdeclarative}/lib/qt-6/qml"
-            "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
-          ];
+          pkgs = pkgs-map.${machine.system};
+          host = import machine.host { inherit pkgs; };
+          ctx = { inherit pkgs host; };
         in
-        pkgs.mkShell {
-          nativeBuildInputs =
-            [
-              treefmtEval.config.build.wrapper
-            ]
-            ++ (with pkgs; [
-              nixd
-              nixfmt-rfc-style
-              nil
+        lib.nixosSystem (
+          (base-system machine.system)
+          // {
+            modules = (base-modules ctx) ++ machine.additionalModules;
+          }
+        )
+      ) machines;
 
-              lua-language-server
-
-              kdePackages.qtdeclarative # qmlls
-              quickshell
-            ]);
-
-          shellHook = ''
-            export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
-            export QML2_IMPORT_PATH=${qml2_import}:$QML2_IMPORT_PATH
-          '';
+      packages = eachSystem (pkgs: {
+        homeConfigurations = import ./nix/home-manager-standalone.nix {
+          inherit pkgs inputs lib;
+          inherit machines mk-pkgs-stable;
         };
+      });
+
+      formatter = eachSystem (pkgs: treefmtEval.${pkgs.system}.config.build.wrapper);
+
+      devShells = eachSystem (pkgs: {
+        default =
+          let
+            quickshell = inputs.quickshell.packages.${pkgs.system}.default;
+
+            qml2_import = lib.concatStringsSep ":" [
+              "${quickshell}/lib/qt-6/qml"
+              "${pkgs.kdePackages.qtdeclarative}/lib/qt-6/qml"
+              "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
+            ];
+          in
+          pkgs.mkShell {
+            nativeBuildInputs =
+              [
+                treefmtEval.${pkgs.system}.config.build.wrapper
+              ]
+              ++ (with pkgs; [
+                nixd
+                nixfmt-rfc-style
+                nil
+
+                lua-language-server
+
+                kdePackages.qtdeclarative # qmlls
+                quickshell
+
+                nix-tree
+              ]);
+
+            shellHook = ''
+              export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
+              export QML2_IMPORT_PATH=${qml2_import}:$QML2_IMPORT_PATH
+            '';
+          };
+      });
     };
 }

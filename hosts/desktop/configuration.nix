@@ -2,19 +2,12 @@
 # your system.  Help is available in the configuration.nix(5) man page
 # and in the NixOS manual (accessible by running ‘nixos-help’).
 
-args@{ pkgs, ... }:
+{ pkgs, ... }:
 {
   imports = [
     ./hardware-configuration.nix
     ../common/interactive.nix
   ];
-
-  host = {
-    id = "desktop-2070super"; # TODO: get better id
-    hostname = "desktop";
-    nvidia = true;
-    additional-user-pkgs = import ./additional-user-pkgs.nix args;
-  };
 
   bundles.displaylink.enable = true;
   services.fwupd.enable = true;

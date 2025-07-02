@@ -7,23 +7,18 @@
   ...
 }:
 {
-  home-manager = {
+  home-manager = lib.mkIf config.host.home-manager-nixos {
     backupFileExtension = ".bak";
     useUserPackages = true;
     useGlobalPkgs = true;
     sharedModules = [
-      # needed even when not using fill kde (konsole, dolphin, etc)
+      # needed even when not using full kde (konsole, dolphin, etc)
       inputs.plasma-manager.homeManagerModules.plasma-manager
     ];
-    extraSpecialArgs = {
-      inherit pkgs-stable inputs;
+    extraSpecialArgs = import ./extra-special-args.nix {
+      inherit inputs lib;
+      inherit pkgs pkgs-stable;
       inherit (config) host;
-      # TODO: how to get home-manager's version of config?
-      my-utils = import ./my-utils.nix {
-        inherit lib pkgs inputs;
-        inherit (config) host;
-        inherit (inputs.home-manager.lib) hm;
-      };
     };
     users.ironmoon = ./ironmoon/home-manager.nix;
   };

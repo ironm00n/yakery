@@ -2,21 +2,12 @@
 # your system.  Help is available in the configuration.nix(5) man page
 # and in the NixOS manual (accessible by running ‘nixos-help’).
 
-args@{ pkgs, ... }:
+{ pkgs, ... }:
 {
   imports = [
     ./hardware-configuration.nix
     ../common/interactive.nix
   ];
-
-  host = {
-    id = "framework-13-7040-amd";
-    hostname = "framework";
-    laptop = true;
-    fingerprint = true;
-    additional-user-pkgs = import ./additional-user-pkgs.nix args;
-    out-of-store-symlinks = true;
-  };
 
   bundles.displaylink.enable = true;
   bundles.ctf.enable = true;

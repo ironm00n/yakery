@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   imports = [
     ./networked.nix
@@ -83,7 +88,7 @@
     ladybird.enable = true;
     dconf.enable = true;
     binary-ninja = {
-      enable = true; # TODO, reenable when fixed upstream
+      enable = true;
       package = pkgs.binary-ninja-free-wayland;
     };
   };

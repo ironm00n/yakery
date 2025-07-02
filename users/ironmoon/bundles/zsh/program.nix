@@ -167,6 +167,23 @@ in
           ${optionalString config.host.out-of-store-symlinks "--impure"} \
           |& nom --json
       }
+      home-manager-switch() {
+        ${
+          if config.host.home-manager-nixos then
+            /* zsh */ ''
+              echo "use nixos-switch, or nixos-boot"
+              return 1
+            ''
+          else
+            # TODO: don't hardcode path
+            /* zsh */ ''
+              home-manager switch --flake /etc/nixos \
+                --keep-going --log-format internal-json -v \
+                ${optionalString config.host.out-of-store-symlinks "--impure"} \
+                |& nom --json
+            ''
+        }
+      }
     '')
   ];
 }
