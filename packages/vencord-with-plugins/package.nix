@@ -20,8 +20,8 @@ pkgs.vencord.overrideAttrs (old: {
   src = pkgs.fetchFromGitHub {
     owner = "Vendicated";
     repo = "Vencord";
-    rev = "f6d92e5024d2b1aaa9731406bf0405420a446436";
-    hash = "sha256-ty5597LCYuQRcXVFD9yOpEUqMs2G0IrJr0iHhq+6P84=";
+    rev = "643122e323fd9b36b456b42ef13e159f5b10015e";
+    hash = "sha256-ojy4cRT4Nef8HF+uwxwjbrE210Dkq5yjqmk4tygiNKE=";
   };
 
   preBuild =

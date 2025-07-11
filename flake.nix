@@ -93,18 +93,19 @@
         };
     in
     let
+      use-lix = true;
       base-config =
         { pkgs, host }:
         {
           host = host;
           nixpkgs.pkgs = pkgs;
 
+          nix.package = lib.mkIf use-lix pkgs.lix;
           nix.settings.experimental-features = [
             "nix-command"
             "flakes"
-            "pipe-operators"
             "no-url-literals"
-          ];
+          ] ++ (if use-lix then [ "pipe-operator" ] else [ "pipe-operators" ]);
         };
       base-modules = ctx: [
         ./hosts/options.nix

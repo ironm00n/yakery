@@ -6,8 +6,7 @@
   ];
 
   # Set your time zone.
-  # time.timeZone = "America/New_York";
-  time.timeZone = "America/Los_Angeles";
+  time.timeZone = "America/New_York";
 
   # Select internationalization properties.
   i18n.defaultLocale = "en_US.UTF-8";
