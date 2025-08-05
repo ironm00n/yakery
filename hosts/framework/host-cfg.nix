@@ -6,5 +6,6 @@
   fingerprint = true;
   additional-user-pkgs = import ./additional-user-pkgs.nix { inherit pkgs; };
   out-of-store-symlinks = true;
-  home-manager-nixos = false;
+  # home-manager-nixos = false;
+  home-manager-nixos = true;
 }

@@ -88,8 +88,8 @@ in
       lib.optionals cfg.langs [
         (python3.withPackages (used-python-pkgs))
         # yarn-berry
-        nodejs_22
-        corepack_22
+        nodejs_24
+        corepack_24
         pm2
         ocaml
         ocamlPackages.utop

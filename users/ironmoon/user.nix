@@ -66,14 +66,13 @@
         firefox-devedition
         tor-browser-bundle-bin
         element-desktop
-        ladybird
 
         thunderbird
         birdtray
         libreoffice-qt
         hunspell
         hunspellDicts.en_US
-        gimp
+        gimp3
         inkscape
         krita
         pkgs-stable.blender
