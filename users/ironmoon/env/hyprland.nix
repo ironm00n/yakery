@@ -1,4 +1,4 @@
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 let
   workspaceBinding =
     with builtins;
@@ -43,6 +43,10 @@ in
 
   # conflicts with uwsm
   systemd.enable = false;
+
+  plugins = with pkgs; [
+    hyprlandPlugins.hyprspace
+  ];
 
   settings = {
     source = [
@@ -126,7 +130,7 @@ in
       "SUPER, D, exec, ${fileManager}"
       "SUPER, B, exec, ${browser}"
       "SUPER, Q, killactive,"
-      "SUPER, SHIFT ALT Q, forcekillactive,"
+      "SUPER SHIFT ALT, Q, forcekillactive,"
       "SUPER SHIFT, Delete, exec, uwsm stop"
       "SUPER, F, togglefloating,"
       "SUPER, G, fullscreen,"
