@@ -2,9 +2,9 @@
   description = "ironmoon's NixOS configuration";
 
   inputs = {
-    # nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     # nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
+    # nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
     nixpkgs-stable.url = "github:nixos/nixpkgs/nixos-25.05";
     nixpkgs-24_11.url = "github:nixos/nixpkgs/nixos-24.11"; # needed for twemoji-colr
     systems.url = "github:nix-systems/default";
@@ -123,6 +123,14 @@
         };
       };
       machines = {
+        fw12 = {
+          system = "x86_64-linux";
+          additionalModules = [
+            nixos-hardware.nixosModules.framework-12-13th-gen-intel
+            ./hosts/fw12/configuration.nix
+          ];
+          host = ./hosts/fw12/host-cfg.nix;
+        };
         fw13 = {
           system = "x86_64-linux";
           additionalModules = [

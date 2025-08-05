@@ -120,7 +120,7 @@
         ghidra
         burpsuite
         metasploit
-        ida-free
+        #ida-free
 
         evil-helix
 
