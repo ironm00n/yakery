@@ -77,15 +77,10 @@
       enable = true;
       enableSSHSupport = true;
     };
-    steam = {
-      enable = true;
-      remotePlay.openFirewall = true;
-      dedicatedServer.openFirewall = true;
-      localNetworkGameTransfers.openFirewall = true;
-    };
     partition-manager.enable = true;
     gnome-disks.enable = true;
-    ladybird.enable = true;
+    # FIXME: reenable when fixed
+    ladybird.enable = false;
     dconf.enable = true;
     binary-ninja = {
       enable = true;

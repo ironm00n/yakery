@@ -10,6 +10,8 @@
   ];
 
   bundles.displaylink.enable = true;
+  bundles.gaming.enable = true;
+
   services.fwupd.enable = true;
 
   # Bootloader.

@@ -11,13 +11,14 @@
 
   bundles.displaylink.enable = true;
   bundles.ctf.enable = true;
-  bundles.printing.enable = false;
+  bundles.printing.enable = true;
   bundles.virtualisation = {
     enable = false;
     libvirt = true;
     docker = true;
     waydroid = true;
   };
+  bundles.gaming.enable = true;
 
   boot.loader = {
     efi = {
