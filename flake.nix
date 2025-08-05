@@ -123,13 +123,13 @@
         };
       };
       machines = {
-        framework = {
+        fw13 = {
           system = "x86_64-linux";
           additionalModules = [
             nixos-hardware.nixosModules.framework-13-7040-amd
-            ./hosts/framework/configuration.nix
+            ./hosts/fw13/configuration.nix
           ];
-          host = ./hosts/framework/host-cfg.nix;
+          host = ./hosts/fw13/host-cfg.nix;
         };
         desktop = {
           system = "x86_64-linux";

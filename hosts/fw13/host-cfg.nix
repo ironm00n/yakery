@@ -1,7 +1,7 @@
 { pkgs }:
 {
   id = "framework-13-7040-amd";
-  hostname = "framework";
+  hostname = "fw13";
   laptop = true;
   fingerprint = true;
   additional-user-pkgs = import ./additional-user-pkgs.nix { inherit pkgs; };
