@@ -20,8 +20,9 @@ pkgs.vencord.overrideAttrs (old: {
   src = pkgs.fetchFromGitHub {
     owner = "Vendicated";
     repo = "Vencord";
-    rev = "643122e323fd9b36b456b42ef13e159f5b10015e";
-    hash = "sha256-ojy4cRT4Nef8HF+uwxwjbrE210Dkq5yjqmk4tygiNKE=";
+    rev = "a33e81d1cbd7ab50c0b1e1446c925bf259e671fc";
+    hash = "sha256-7JT8BMKUhIwYMkIwr2mD8IQLDpldcDtAKh6R1tbAKMw=";
+    # hash = pkgs.lib.fakeHash;
   };
 
   preBuild =
@@ -41,5 +42,10 @@ pkgs.vencord.overrideAttrs (old: {
 
   patches = (old.patches or [ ]) ++ [
     ./remove-support-warning.patch
+  ];
+
+  patchFlags = (old.patches or [ ]) ++ [
+    "-p1"
+    "--no-backup-if-mismatch"
   ];
 })
