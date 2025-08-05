@@ -82,10 +82,6 @@
     # FIXME: reenable when fixed
     ladybird.enable = false;
     dconf.enable = true;
-    binary-ninja = {
-      enable = true;
-      package = pkgs.binary-ninja-free-wayland;
-    };
   };
 
   # generate man pages

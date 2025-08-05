@@ -19,6 +19,7 @@
     waydroid = true;
   };
   bundles.gaming.enable = true;
+  bundles.syssec.enable = true;
 
   boot.loader = {
     efi = {
