@@ -22,5 +22,10 @@ in
       enable = true;
       package = pkgs.binary-ninja-free-wayland;
     };
+
+    environment.systemPackages = with pkgs; [
+      gef
+      # pwndbg
+    ];
   };
 }

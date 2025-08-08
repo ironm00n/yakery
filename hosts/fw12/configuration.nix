@@ -41,14 +41,10 @@
   # List packages installed in system profile.
   # You can use https://search.nixos.org/ to find more packages (and options).
   environment.systemPackages = with pkgs; [
-    neovim
-    git
     tpm2-tss
     tpm2-tools
     cryptsetup
     sbctl
-    dmidecode
-    cryptsetup
   ];
 
   services.fwupd.enable = true;

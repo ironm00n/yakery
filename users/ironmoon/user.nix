@@ -40,7 +40,6 @@
         kdePackages.plasma-desktop
 
         kdePackages.kcolorchooser
-        kdePackages.kwallet-pam
         kdePackages.plasma-firewall
         libsForQt5.kde-cli-tools
       ]
@@ -120,7 +119,7 @@
         ghidra
         burpsuite
         metasploit
-        #ida-free
+        ida-free
 
         evil-helix
 

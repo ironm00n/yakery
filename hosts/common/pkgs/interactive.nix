@@ -2,7 +2,8 @@
 
 with pkgs;
 [
-  qemu
+  dmidecode
+  os-prober
 
   exiftool
 
@@ -11,11 +12,6 @@ with pkgs;
   wl-clipboard
   git-filter-repo
   rustup
-
-  os-prober
-
-  gef
-  # pwndbg
 
   emacs-gtk
   vscode.fhs # use the built-in settings sync

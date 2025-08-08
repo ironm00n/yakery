@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 let
@@ -41,5 +42,9 @@ in
     virtualisation.docker.enable = cfg.docker;
 
     virtualisation.waydroid.enable = cfg.waydroid;
+
+    environment.systemPackages = with pkgs; [
+      qemu
+    ];
   };
 }

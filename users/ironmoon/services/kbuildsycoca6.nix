@@ -20,4 +20,19 @@
       ExecStart = "${pkgs.kdePackages.kservice}/bin/kbuildsycoca6";
     };
   };
+
+  systemd.user.paths.kbuildsycoca6 = lib.mkIf config.host.hyprland {
+    Unit = {
+      Description = "Watch for application changes";
+    };
+    Install = {
+      WantedBy = [ "default.target" ];
+    };
+    Path = {
+      PathChanged = [
+        "/run/current-system"
+        "%h/.nix-profile"
+      ];
+    };
+  };
 }
