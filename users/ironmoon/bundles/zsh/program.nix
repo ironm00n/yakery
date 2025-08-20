@@ -35,7 +35,7 @@ in
     icat = "kitten icat";
   };
   history = {
-    size = 100000;
+    size = 1000000;
     path = "${config.xdg.dataHome}/zsh/history";
   };
   antidote = {
