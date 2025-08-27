@@ -1,0 +1,13 @@
+git:
+  showRandomTip: false
+  overrideGpg: true
+  tabWidth: 2
+  paging:
+    colorArg: always
+    pager: |
+      delta --syntax-theme="Visual Studio Dark+" --tabs=2 \
+      --paging=never --line-numbers \
+      --line-numbers-left-format="" --line-numbers-right-format="{np:<4}" \
+      --hyperlinks --hyperlinks-file-link-format="lazygit-edit://{path}:{line}"
+  os:
+    edit: "nvim {{filename}}"

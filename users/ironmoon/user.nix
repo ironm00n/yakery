@@ -87,7 +87,6 @@
         zotero
 
         # https://github.com/ibraheemdev/modern-unix
-        lazygit
         mcfly
         fzf
         broot

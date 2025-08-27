@@ -1,12 +1,15 @@
 {
   config,
   lib,
+  my-utils,
   pkgs,
   pkgs-stable,
   ...
 }:
 let
   inherit (lib) types mkOption mkIf;
+  inherit (my-utils) symlink;
+  inherit (config.xdg) configHome;
   cfg = config.bundles.dev;
   used-python-pkgs =
     python-pkgs: with python-pkgs; [
@@ -121,6 +124,11 @@ in
       ]
       ++ lib.optionals cfg.tooling [
         code-cursor
+        lazygit
       ];
+
+    home.file = mkIf cfg.tooling {
+      "${configHome}/lazygit/config.yml".source = symlink ./lazygit.yml;
+    };
   };
 }
