@@ -35,5 +35,8 @@
       alias = {
         lg = "log --oneline --graph --decorate --all";
       };
+      diff = {
+        colorMoved = "default";
+      };
     };
 }
