@@ -9,5 +9,6 @@ git:
       --paging=never --line-numbers \
       --line-numbers-left-format="" --line-numbers-right-format="{np:<4}" \
       --hyperlinks --hyperlinks-file-link-format="lazygit-edit://{path}:{line}"
-  os:
-    edit: "nvim {{filename}}"
+os:
+  editPreset: "nvim"
+promptToReturnFromSubprocess: false
