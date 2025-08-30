@@ -50,7 +50,8 @@ in
   systemd.enable = false;
 
   plugins = with pkgs; [
-    hyprlandPlugins.hyprspace
+    # hyprlandPlugins.hyprspace
+    hyprlandPlugins.hyprexpo
   ];
 
   settings = {
