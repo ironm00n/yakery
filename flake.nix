@@ -32,7 +32,7 @@
       inputs.flake-utils.follows = "flake-utils";
     };
     quickshell = {
-      url = "git+https://git.outfoxxed.me/outfoxxed/quickshell";
+      url = "git+https://git.outfoxxed.me/quickshell/quickshell";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -95,7 +95,7 @@
         };
     in
     let
-      use-lix = true;
+      use-lix = false;
       base-config =
         { pkgs, host }:
         {
