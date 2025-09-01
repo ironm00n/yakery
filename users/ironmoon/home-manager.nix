@@ -30,6 +30,7 @@ in
     quickshell.enable = false;
     zsh.enable = true;
     dev.enable = true;
+    emacs.enable = true;
 
     discord.enable = true;
   };

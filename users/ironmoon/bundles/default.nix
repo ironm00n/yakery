@@ -5,6 +5,7 @@
 
   ./zsh/default.nix
   ./dev/default.nix
+  ./emacs/default.nix
 
   ./discord/default.nix
 ]

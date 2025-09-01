@@ -33,7 +33,7 @@ let
     bindings ++ moveBindings;
 
   terminal = "kitty";
-  emacs = "emacs";
+  emacs = "doom emacs";
   fileManager = "dolphin";
   browser = "firefox -new-tab";
   menu = "anyrun";
