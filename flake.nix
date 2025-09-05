@@ -176,13 +176,17 @@
       devShells = eachSystem (pkgs: {
         default =
           let
+            # TOOD: reenable when needed
+            enable-quickshell = false;
             quickshell = inputs.quickshell.packages.${pkgs.system}.default;
 
-            qml2_import = lib.concatStringsSep ":" [
-              "${quickshell}/lib/qt-6/qml"
-              "${pkgs.kdePackages.qtdeclarative}/lib/qt-6/qml"
-              "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
-            ];
+            qml2_import =
+              lib.optional enable-quickshell [
+                "${quickshell}/lib/qt-6/qml"
+                "${pkgs.kdePackages.qtdeclarative}/lib/qt-6/qml"
+                "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
+              ]
+              |> lib.concatStringsSep ":";
           in
           pkgs.mkShell {
             nativeBuildInputs =
@@ -196,11 +200,12 @@
 
                 lua-language-server
 
-                kdePackages.qtdeclarative # qmlls
-                quickshell
-
                 nix-tree
-              ]);
+              ])
+              ++ lib.optionals enable-quickshell [
+                pkgs.kdePackages.qtdeclarative # qmlls
+                quickshell
+              ];
 
             shellHook = ''
               export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
