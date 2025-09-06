@@ -24,6 +24,7 @@ with pkgs;
 
   git
   htop
+  btop
   file
 
   ripgrep
