@@ -21,6 +21,8 @@
       efiSysMountPoint = "/boot/efi";
     };
     grub = {
+      gfxmodeEfi = "1280x720"; # really slow otherwise
+      gfxpayloadEfi = "keep";
       efiSupport = true;
       device = "nodev";
       default = "saved";
