@@ -41,7 +41,7 @@
 
         kdePackages.kcolorchooser
         kdePackages.plasma-firewall
-        libsForQt5.kde-cli-tools
+        kdePackages.kde-cli-tools
       ]
       ++ [
         nix-index
@@ -113,12 +113,6 @@
             seclists
           ];
         })
-
-        postman
-        ghidra
-        burpsuite
-        metasploit
-        ida-free
 
         evil-helix
 
