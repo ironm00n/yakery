@@ -13,7 +13,7 @@
     useGlobalPkgs = true;
     sharedModules = [
       # needed even when not using full kde (konsole, dolphin, etc)
-      inputs.plasma-manager.homeManagerModules.plasma-manager
+      inputs.plasma-manager.homeModules.plasma-manager
     ];
     extraSpecialArgs = import ./extra-special-args.nix {
       inherit inputs lib;

@@ -26,7 +26,7 @@ let
           home.username = username;
           home.homeDirectory = "/home/${username}";
         }
-        plasma-manager.homeManagerModules.plasma-manager
+        plasma-manager.homeModules.plasma-manager
       ];
     };
   users = {
