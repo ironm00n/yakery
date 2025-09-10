@@ -35,7 +35,7 @@ let
 in
 lib.cartesianProduct {
   username = lib.attrNames users;
-  machine = lib.attrNames machines;
+  machine = machines |> builtins.filter (m: not (m.no-hm or false)) |> lib.attrNames;
 }
 |> map (
   { username, machine }:

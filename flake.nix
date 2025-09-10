@@ -158,6 +158,14 @@
           ];
           host = ./hosts/desktop/host-cfg.nix;
         };
+        hetzner-cx32-1 = {
+          system = "x86_64-linux";
+          additionalModules = [
+            ./hosts/hetzner-cx32-1/configuration.nix
+          ];
+          host = ./hosts/hetzner-cx32-1/host-cfg.nix;
+          no-hm = true;
+        };
       };
     in
     {
