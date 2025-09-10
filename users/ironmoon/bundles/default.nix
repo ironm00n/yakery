@@ -7,6 +7,7 @@
   ./dev/default.nix
   ./sec/default.nix
   ./emacs/default.nix
+  ./nvim/default.nix
 
   ./discord/default.nix
 ]

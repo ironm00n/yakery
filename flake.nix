@@ -34,6 +34,18 @@
       url = "git+https://git.outfoxxed.me/quickshell/quickshell";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # transitive from nixvim
+    nuschtosSearch = {
+      url = "github:NuschtOS/search";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
+    nixvim = {
+      url = "github:nix-community/nixvim";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.systems.follows = "systems";
+      inputs.nuschtosSearch.follows = "nuschtosSearch";
+    };
   };
 
   nixConfig = {
@@ -65,6 +77,7 @@
       binary-ninja,
       systems,
       flake-utils,
+      nixvim,
       ...
     }:
     let
@@ -168,6 +181,7 @@
           inherit pkgs inputs lib;
           inherit machines mk-pkgs-stable;
         };
+        nvim = import ./nix/nvim/default.nix { inherit (nixvim.legacyPackages.${pkgs.system}) makeNixvim; };
       });
 
       formatter = eachSystem (pkgs: treefmtEval.${pkgs.system}.config.build.wrapper);

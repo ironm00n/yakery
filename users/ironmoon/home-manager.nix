@@ -9,6 +9,7 @@ let
   my-modules = import ./modules/default.nix;
   bundles = import ./bundles/default.nix;
   importWith = path: import path args;
+  fw12 = "framework-12-13th-gen-intel";
 in
 {
   imports =
@@ -30,7 +31,10 @@ in
     quickshell.enable = false;
     zsh.enable = true;
     dev.enable = true;
+    dev.jetbrains = host.id != fw12;
+    sec.enable = host.id != fw12;
     emacs.enable = true;
+    nvim.enable = host.id == fw12;
 
     discord.enable = true;
   };
