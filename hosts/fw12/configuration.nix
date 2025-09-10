@@ -49,6 +49,9 @@
 
   services.fwupd.enable = true;
 
+  boot.initrd.kernelModules = [ "pinctrl_tigerlake" ];
+  boot.kernelModules = [ "soc_button_array" ];
+
   # This option defines the first version of NixOS you have installed on this particular machine,
   # and is used to maintain compatibility with application data (e.g. databases) created on older NixOS versions.
   #
