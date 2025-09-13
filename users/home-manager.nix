@@ -12,6 +12,7 @@
     useUserPackages = true;
     useGlobalPkgs = true;
     sharedModules = [
+      inputs.nixvim.homeModules.nixvim
       # needed even when not using full kde (konsole, dolphin, etc)
       inputs.plasma-manager.homeModules.plasma-manager
     ];
