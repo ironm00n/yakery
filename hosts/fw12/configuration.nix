@@ -34,9 +34,15 @@
     tctiEnvironment.enable = true;
   };
 
-  environment.etc."crypttab".text = ''
-    cryptroot UUID=06c30faa-28d3-4881-8e82-d2089f2fd760 - tpm2-device=auto,tpm2-pcrs=0+1+7,discard
-  '';
+  boot.initrd.luks.devices.cryptroot = {
+    device = "/dev/disk/by-uuid/06c30faa-28d3-4881-8e82-d2089f2fd760";
+    crypttabExtraOpts = [
+      "tpm2-device=auto"
+      #"tpm2-pcrs=0+1+7"
+      "tpm2-pcrs=7"
+    ];
+    allowDiscards = true;
+  };
 
   # List packages installed in system profile.
   # You can use https://search.nixos.org/ to find more packages (and options).
