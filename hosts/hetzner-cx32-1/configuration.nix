@@ -21,19 +21,33 @@
   };
 
   networking = {
-    interfaces.enp1s0.ipv6.addresses = [
-      {
-        address = "2a01:4f8:c0c:1982::2";
-        prefixLength = 64;
-      }
-    ];
+    interfaces.enp1s0 = {
+      ipv6.addresses = [
+        {
+          address = "2a01:4f8:c0c:1982::1";
+          prefixLength = 64;
+        }
+      ];
+      ipv4.addresses = [
+        {
+          address = "91.98.113.48";
+          prefixLength = 32;
+        }
+      ];
+    };
     defaultGateway6 = {
       address = "fe80::1";
+      interface = "enp1s0";
+    };
+    defaultGateway = {
+      address = "172.31.1.1";
       interface = "enp1s0";
     };
     nameservers = [
       "2606:4700:4700::1111"
       "2606:4700:4700::1001"
+      "1.1.1.1"
+      "1.0.0.1"
     ];
   };
 
