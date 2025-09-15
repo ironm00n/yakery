@@ -1,19 +1,17 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.gaming;
 in
 {
   options.bundles.gaming = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable gaming-specific system mofifications.";
-    };
+    enable = mkEnableOption "gaming";
+    vr = mkEnableOption "vr";
   };
 
   config = mkIf cfg.enable {
@@ -25,5 +23,12 @@ in
     };
 
     hardware.xone.enable = true;
+
+    environment.systemPackages =
+      with pkgs;
+      [ ]
+      ++ (lib.optionals cfg.vr [
+        bs-manager
+      ]);
   };
 }
