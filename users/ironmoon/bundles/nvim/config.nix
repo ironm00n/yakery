@@ -1,7 +1,23 @@
+# TODO:
+# - spellcheck
+
+let
+  my-hl = false;
+in
 {
+  highlight = if my-hl then import ./highlight.nix else { };
+
   clipboard.providers.wl-copy.enable = true;
-  colorschemes.catppuccin.enable = true;
-  # colorschemes.vscode.enable = true;
+  colorschemes.catppuccin = {
+    enable = !my-hl;
+    settings = {
+      no_bold = true;
+      styles = {
+        comments = [ ];
+        conditionals = [ ];
+      };
+    };
+  };
 
   globals = {
     mapleader = " ";

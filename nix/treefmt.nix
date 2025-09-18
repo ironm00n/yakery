@@ -6,6 +6,7 @@
     "*.opam"
     "*.zip"
     "*.tar.gz"
+    "users/ironmoon/bundles/nvim/highlight.nix"
   ];
   programs = {
     deadnix.enable = false;
