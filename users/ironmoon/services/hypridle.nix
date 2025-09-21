@@ -1,4 +1,4 @@
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 let
   durations = { laptop, desktop }: builtins.floor (if config.host.laptop then laptop else desktop);
 in
@@ -7,8 +7,8 @@ in
   settings = {
     general = {
       lock_cmd = "pidof hyprlock || hyprlock";
-      on_lock_cmd = "dunstctl set-paused true";
-      on_unlock_cmd = "dunstctl set-paused false";
+      on_lock_cmd = "${lib.getExe' pkgs.dunst "dunstctl"} set-paused true";
+      on_unlock_cmd = "${lib.getExe' pkgs.dunst "dunstctl"} set-paused false";
       before_sleep_cmd = "loginctl lock-session";
       after_sleep_cmd = "hyprctl dispatch dpms on";
     };
@@ -17,19 +17,19 @@ in
       [
         {
           timeout = durations {
-            laptop = 0.5 * 60;
+            laptop = 1 * 60;
             desktop = 5 * 60;
           };
-          on-timeout = "brightnessctl -s set 10";
-          on-resume = "brightnessctl -r";
+          on-timeout = "${lib.getExe pkgs.brightnessctl} -s set 40%-";
+          on-resume = "${lib.getExe pkgs.brightnessctl} -r";
         }
         {
           timeout = durations {
             laptop = 2.5 * 60;
             desktop = 10 * 60;
           };
-          on-timeout = "brightnessctl -sd rgb:kbd_backlight set 0";
-          on-resume = "brightnessctl -rd rgb:kbd_backlight";
+          on-timeout = "${lib.getExe pkgs.brightnessctl} -sd rgb:kbd_backlight set 0";
+          on-resume = "${lib.getExe pkgs.brightnessctl} -rd rgb:kbd_backlight";
         }
         {
           timeout = durations {
