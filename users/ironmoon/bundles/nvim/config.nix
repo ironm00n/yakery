@@ -31,6 +31,7 @@ in
 
   plugins = {
     lualine.enable = true;
+    bufferline.enable = true;
     which-key.enable = true;
     whitespace.enable = true;
     telescope = {
@@ -91,10 +92,12 @@ in
         };
       };
     };
-    lspconfig = {
-      enable = true;
-    };
+    lspconfig.enable = true;
     direnv.enable = true;
+    comment.enable = true;
+    nvim-autopairs.enable = true;
+    gitsigns.enable = true;
+    toggleterm.enable = true;
   };
 
   keymaps = [
@@ -114,6 +117,28 @@ in
       key = "<leader>d";
       action.__raw = "function() vim.diagnostic.open_float() end";
       options.silent = true;
+    }
+    {
+      mode = "n";
+      key = "<leader>t";
+      action = "<cmd>ToggleTerm direction=float<CR>";
+    }
+    {
+      mode = "t";
+      key = "<esc>";
+      action = "<C-\\><C-n>";
+    }
+    {
+      mode = "n";
+      key = "<leader>x";
+      action = "<cmd>x<CR>";
+    }
+    {
+      mode = "n";
+      key = "<leader>/";
+      action.__raw = ''
+        function() require("Comment.api").toggle.linewise.current() end
+      '';
     }
   ];
 
