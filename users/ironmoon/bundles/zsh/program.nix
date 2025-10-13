@@ -122,14 +122,17 @@ in
       zstyle '*' single-ignored show
       # end stolen
 
-      export GROFF_NO_SGR=1
-      export LESS_TERMCAP_ue=$'\e[00m'
-      export LESS_TERMCAP_se=$'\e[00m'
-      export LESS_TERMCAP_mb=$'\e[01;31m'
-      export LESS_TERMCAP_md=$'\e[01;31m'
-      export LESS_TERMCAP_me=$'\e[00m'
-      export LESS_TERMCAP_so=$'\e[01;33m\e[44m'
-      export LESS_TERMCAP_us=$'\e[01;32m'
+      man() {
+        GROFF_NO_SGR=1 \
+        LESS_TERMCAP_ue=$'\e[00m' \
+        LESS_TERMCAP_se=$'\e[00m' \
+        LESS_TERMCAP_mb=$'\e[01;31m' \
+        LESS_TERMCAP_md=$'\e[01;31m' \
+        LESS_TERMCAP_me=$'\e[00m' \
+        LESS_TERMCAP_so=$'\e[01;33m\e[44m' \
+        LESS_TERMCAP_us=$'\e[01;32m' \
+        "${lib.getExe pkgs.man-db}" "$@"
+      }
     ''
     (mkAfter /* zsh */ ''
       vimd() {
