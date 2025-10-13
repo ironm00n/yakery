@@ -12,3 +12,14 @@ git:
 os:
   editPreset: "nvim"
 promptToReturnFromSubprocess: false
+customCommands:
+  - key: n
+    context: files
+    command: "git add -N {{.SelectedFile.Name | quote}}"
+    description: "Mark file as intent-to-add"
+  - key: '<c-s>'
+    context: files
+    command: "printf '\x1b[0m'; git diff --color=always --stat {{.SelectedPath | quote}}"
+    output: popup
+    description: "View git diff stat"
+    outputTitle: "Diff Stats"
