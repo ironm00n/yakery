@@ -4,4 +4,5 @@
   hostname = "fw12";
   laptop = true;
   additional-user-pkgs = import ./additional-user-pkgs.nix { inherit pkgs; };
+  lightweight = true;
 }

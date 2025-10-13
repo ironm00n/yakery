@@ -13,10 +13,11 @@
   bundles.ctf.enable = true;
   bundles.printing.enable = true;
   bundles.virtualisation = {
-    enable = false;
+    enable = true;
     libvirt = true;
     docker = true;
-    waydroid = true;
+    waydroid = false;
+  };
   bundles.gaming = {
     enable = true;
     vr = true;

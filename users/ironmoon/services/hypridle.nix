@@ -1,4 +1,9 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   durations = { laptop, desktop }: builtins.floor (if config.host.laptop then laptop else desktop);
 in

@@ -24,7 +24,8 @@ in
     };
 
     environment.systemPackages = with pkgs; [
-      gef
+      # FIXME: broken
+      # gef
       # pwndbg
     ];
   };

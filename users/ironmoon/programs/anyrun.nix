@@ -22,7 +22,6 @@
     showResultsImmediately = false;
     maxEntries = null;
 
-    # TODO: https://github.com/anyrun-org/anyrun/issues/211#issuecomment-2822584485
     plugins = with pkgs; [
       "${anyrun}/lib/libapplications.so"
       "${anyrun}/lib/librink.so"
@@ -41,13 +40,13 @@
     "dictionary.ron".text = /* ron */ ''
       Config(
         prefix: ":def",
-        max_entries: 5,
+        max_entries: 10,
       )
     '';
     "symbols.ron".text = /* ron */ ''
       Config(
         prefix: ":sym",
-        max_entries: 3,
+        max_entries: 10,
         symbols: {
           "shrug": "¯\\_(ツ)_/¯",
         },

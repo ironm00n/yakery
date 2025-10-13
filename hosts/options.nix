@@ -62,5 +62,11 @@ in
       default = true;
       description = "Use the NixOS home-manager module.";
     };
+
+    lightweight = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Use a lightweight setup.";
+    };
   };
 }

@@ -31,8 +31,8 @@ in
     quickshell.enable = false;
     zsh.enable = true;
     dev.enable = true;
-    dev.jetbrains = host.id != fw12;
-    sec.enable = host.id != fw12;
+    dev.jetbrains = !host.lightweight;
+    sec.enable = !host.lightweight;
     emacs.enable = true;
     nvim.enable = host.id == fw12;
 

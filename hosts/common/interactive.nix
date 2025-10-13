@@ -4,6 +4,9 @@
   pkgs,
   ...
 }:
+let
+  inherit (lib) mkDefault;
+in
 {
   imports = [
     ./networked.nix
@@ -13,8 +16,8 @@
     ../../users/ironmoon/user.nix
   ];
 
-  bundles.fonts.enable = true;
-  bundles.mullvad-vpn.enable = false;
+  bundles.fonts.enable = mkDefault true;
+  bundles.mullvad-vpn.enable = mkDefault true;
   bundles.nvidia.enable = config.host.nvidia;
 
   # SECURITY: this is fine for single user, personal systems.

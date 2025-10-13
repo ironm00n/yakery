@@ -51,7 +51,8 @@ in
 
   plugins = with pkgs; [
     # hyprlandPlugins.hyprspace
-    hyprlandPlugins.hyprexpo
+    # FIXME: crashes
+    # hyprlandPlugins.hyprexpo
   ];
 
   settings = {
@@ -123,9 +124,9 @@ in
       middle_click_paste = false;
     };
 
-    gestures = {
-      workspace_swipe = true;
-    };
+    gesture = [
+      "3, horizontal, workspace"
+    ];
 
     render.explicit_sync = lib.mkIf config.host.nvidia 0;
 
@@ -218,7 +219,8 @@ in
 
     windowrulev2 = [
       # Ignore maximize requests from apps.
-      "suppressevent maximize, class:.*"
+      # "suppressevent maximize, class:.*"
+      "suppressevent maximize, class:negative:^\\.virt-manager-wrapped$"
       # Fix some dragging issues with XWayland
       "nofocus,class:^$,title:^$,xwayland:1,floating:1,fullscreen:0,pinned:0"
 
@@ -236,5 +238,10 @@ in
       "blur, (anyrun)"
       "ignorezero, (anyrun)"
     ];
+
+    plugin = {
+      # FIXME: causing crashes
+      # hyprexpo-gesture = [ "3, vertical, expo" ];
+    };
   };
 }
