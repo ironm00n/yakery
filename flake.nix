@@ -46,6 +46,10 @@
       inputs.systems.follows = "systems";
       inputs.nuschtosSearch.follows = "nuschtosSearch";
     };
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   nixConfig = {
@@ -78,6 +82,7 @@
       systems,
       flake-utils,
       nixvim,
+      disko,
       ...
     }:
     let
@@ -164,6 +169,15 @@
             ./hosts/hetzner-cx32-1/configuration.nix
           ];
           host = ./hosts/hetzner-cx32-1/host-cfg.nix;
+          no-hm = true;
+        };
+        ovh-vps1-1 = {
+          system = "x86_64-linux";
+          additionalModules = [
+            disko.nixosModules.disko
+            ./hosts/ovh-vps1-1/configuration.nix
+          ];
+          host = ./hosts/ovh-vps1-1/host-cfg.nix;
           no-hm = true;
         };
       };
