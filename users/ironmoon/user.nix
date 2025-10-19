@@ -36,6 +36,7 @@ in
         kdePackages.dolphin
         kdePackages.kdegraphics-thumbnailers # previews
         kdePackages.konsole
+        kdePackages.ark
 
         # still want breeze
         kdePackages.breeze
