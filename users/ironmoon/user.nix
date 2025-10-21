@@ -53,7 +53,6 @@ in
         kdePackages.kcolorchooser
         kdePackages.plasma-firewall
         kdePackages.kde-cli-tools
-        slack
       ]
       ++ lib.optionals creative [
         kdePackages.kdenlive
@@ -74,6 +73,7 @@ in
         xournalpp
         zotero
         zoom-us
+        slack
       ]
       ++ [
         # TODO: https://github.com/NixOS/nixpkgs/issues/371479
