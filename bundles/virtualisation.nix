@@ -33,6 +33,12 @@ in
       default = false;
       description = "Enable Waydroid.";
     };
+
+    virtualbox = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Enable virtualbox.";
+    };
   };
 
   config = mkIf cfg.enable {
@@ -46,5 +52,8 @@ in
     environment.systemPackages = with pkgs; [
       qemu
     ];
+
+    virtualisation.virtualbox.host.enable = cfg.virtualbox;
+    users.extraGroups.vboxusers.members = mkIf cfg.virtualbox [ "ironmoon" ];
   };
 }
