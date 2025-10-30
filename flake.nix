@@ -163,12 +163,12 @@
           ];
           host = ./hosts/desktop/host-cfg.nix;
         };
-        hetzner-cx32-1 = {
+        hetzner-cx33-1 = {
           system = "x86_64-linux";
           additionalModules = [
-            ./hosts/hetzner-cx32-1/configuration.nix
+            ./hosts/hetzner-cx33-1/configuration.nix
           ];
-          host = ./hosts/hetzner-cx32-1/host-cfg.nix;
+          host = ./hosts/hetzner-cx33-1/host-cfg.nix;
           no-hm = true;
         };
         ovh-vps1-1 = {
