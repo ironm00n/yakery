@@ -22,7 +22,7 @@ in
   };
 
   config = mkIf cfg.enable {
-    programs.nixvim = (import ./config.nix) // {
+    programs.nixvim = (import ./config.nix { inherit pkgs; }) // {
       enable = true;
     };
   };

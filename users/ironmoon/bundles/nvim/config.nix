@@ -1,8 +1,31 @@
 # TODO:
 # - spellcheck
-
+{ pkgs, ... }:
 let
   my-hl = false;
+
+  tree-sitter-pyret = pkgs.tree-sitter.buildGrammar {
+    language = "pyret";
+    version = "0.0.0+";
+    src = pkgs.fetchFromGitHub {
+      owner = "ironm00n";
+      repo = "tree-sitter-pyret";
+      rev = "faeac9ce224b63e363de46c8ba816a4b4f930993";
+      hash = "sha256-BZTTh6DGTiZk8fTcl2wz1YLzFm/WLJntrRxEMX5dEMQ=";
+    };
+  };
+
+  tree-sitter-wasm = pkgs.tree-sitter.buildGrammar {
+    language = "wat";
+    version = "0.0.0+rev=2ca28a9";
+    src = pkgs.fetchFromGitHub {
+      owner = "wasm-lsp";
+      repo = "tree-sitter-wasm";
+      rev = "2ca28a9f9d709847bf7a3de0942a84e912f59088";
+      hash = "sha256-a1l4RsGpRQfUxEjwewyKiV0G7J2DHZW6+y1HnjREYAs=";
+    };
+    location = "wat";
+  };
 in
 {
   highlight = if my-hl then import ./highlight.nix else { };
@@ -29,6 +52,11 @@ in
     tabstop = 2;
   };
 
+  extraFiles = {
+    "queries/pyret/fold.scm".source = ./queries/pyret/folds.scm;
+    "queries/pyret/highlights.scm".source = ./queries/pyret/highlights.scm;
+  };
+
   plugins = {
     lualine.enable = true;
     bufferline.enable = true;
@@ -45,6 +73,10 @@ in
     };
     treesitter = {
       enable = true;
+        grammarPackages = pkgs.vimPlugins.nvim-treesitter.passthru.allGrammars ++ [
+          tree-sitter-pyret
+          tree-sitter-wasm
+        ];
       settings = {
         folding = true;
         highlight = {
@@ -149,6 +181,7 @@ in
       ocamllsp.enable = true;
       ocamllsp.package = null;
       nil_ls.enable = true;
+      wasm_language_tools.enable = true;
     };
   };
 
