@@ -42,6 +42,7 @@ in
         kdePackages.breeze
         kdePackages.breeze-gtk
         kdePackages.breeze-icons
+        kdePackages.qt6ct
 
         networkmanagerapplet
         nwg-displays

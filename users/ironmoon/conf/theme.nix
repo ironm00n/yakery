@@ -10,10 +10,7 @@
 
   qt = {
     enable = true;
-    style = {
-      name = "BreezeDark";
-      package = pkgs.kdePackages.breeze;
-    };
+    platformTheme.name = "qt6ct";
   };
 
   gtk = {
