@@ -42,6 +42,8 @@ with pkgs;
   helix
   gh
 
+  inotify-tools
+
   man-pages
   tldr
 
