@@ -72,7 +72,10 @@ in
         obsidian
         xournalpp
         zotero
-        zoom-us
+        (zoom-us.override {
+          hyprlandXdgDesktopPortalSupport = config.host.hyprland;
+          plasma6XdgDesktopPortalSupport = config.host.kde;
+        })
         slack
       ]
       ++ [

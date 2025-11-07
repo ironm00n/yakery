@@ -1,4 +1,5 @@
 [
+  ./hyprland/default.nix
   ./eww/default.nix
   ./waybar/default.nix
   ./quickshell/default.nix

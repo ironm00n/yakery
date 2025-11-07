@@ -26,6 +26,8 @@ in
   host = host;
 
   bundles = {
+    hyprland.enable = host.hyprland;
+
     eww.enable = false;
     waybar.enable = true;
     quickshell.enable = false;
@@ -68,7 +70,6 @@ in
   };
 
   programs.plasma = importWith ./env/plasma.nix;
-  wayland.windowManager.hyprland = importWith ./env/hyprland.nix;
 
   # The state version is required and should stay at the version you
   # originally installed.

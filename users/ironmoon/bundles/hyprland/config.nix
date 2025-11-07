@@ -2,7 +2,6 @@
   config,
   lib,
   pkgs,
-  ...
 }:
 let
   workspaceBinding =
@@ -44,7 +43,7 @@ let
   colorPick = "hyprpicker -a -n -q";
 in
 {
-  enable = config.host.hyprland;
+  enable = true;
 
   # conflicts with uwsm
   systemd.enable = false;
