@@ -2,7 +2,7 @@
 # your system.  Help is available in the configuration.nix(5) man page
 # and in the NixOS manual (accessible by running ‘nixos-help’).
 
-{ pkgs, ... }:
+{ pkgs, lib, ... }:
 {
   imports = [
     ./hardware-configuration.nix
@@ -23,6 +23,10 @@
     vr = true;
   };
   bundles.syssec.enable = true;
+  bundles.mullvad-vpn.enable = false;
+
+  # TODO: remove once graphics issues are fixed:
+  boot.kernelPackages = lib.mkForce pkgs.linuxPackages;
 
   boot.loader = {
     efi = {

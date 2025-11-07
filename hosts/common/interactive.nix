@@ -17,7 +17,6 @@ in
   ];
 
   bundles.fonts.enable = mkDefault true;
-  bundles.mullvad-vpn.enable = mkDefault true;
   bundles.nvidia.enable = config.host.nvidia;
 
   # SECURITY: this is fine for single user, personal systems.
@@ -28,7 +27,7 @@ in
   ];
 
   # use latest kernel
-  boot.kernelPackages = pkgs.linuxPackages_latest;
+  boot.kernelPackages = mkDefault pkgs.linuxPackages_latest;
 
   # bluetooth
   hardware.bluetooth = {
