@@ -153,7 +153,7 @@ in
         google-chrome
         # firefox enabled with home-manager
         firefox-devedition
-        tor-browser-bundle-bin
+        tor-browser
 
         element-desktop
         signal-desktop

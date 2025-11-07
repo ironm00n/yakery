@@ -73,10 +73,10 @@ in
     };
     treesitter = {
       enable = true;
-        grammarPackages = pkgs.vimPlugins.nvim-treesitter.passthru.allGrammars ++ [
-          tree-sitter-pyret
-          tree-sitter-wasm
-        ];
+      grammarPackages = pkgs.vimPlugins.nvim-treesitter.passthru.allGrammars ++ [
+        tree-sitter-pyret
+        tree-sitter-wasm
+      ];
       settings = {
         folding = true;
         highlight = {

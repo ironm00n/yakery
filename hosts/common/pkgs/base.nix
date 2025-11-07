@@ -31,7 +31,7 @@ with pkgs;
   fd
   delta
   dust
-  moar # much nicer pager
+  moor # much nicer pager
 
   gcc
   gdb

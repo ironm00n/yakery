@@ -43,6 +43,7 @@ in
 
   config = mkIf cfg.enable {
     virtualisation.libvirtd.enable = cfg.libvirt;
+    virtualisation.libvirtd.qemu.swtpm.enable = cfg.libvirt;
     programs.virt-manager.enable = cfg.libvirt;
 
     virtualisation.docker.enable = cfg.docker;

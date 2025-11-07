@@ -2,11 +2,14 @@
   config,
   lib,
   pkgs,
+  inputs,
+  system,
   ...
 }:
 let
   inherit (lib) types mkOption mkIf;
   cfg = config.bundles.syssec;
+  inherit (inputs) binary-ninja pwndbg;
 in
 {
   options.bundles.syssec = {
@@ -18,15 +21,11 @@ in
   };
 
   config = mkIf cfg.enable {
-    programs.binary-ninja = {
-      enable = true;
-      package = pkgs.binary-ninja-free-wayland;
-    };
-
     environment.systemPackages = with pkgs; [
-      # FIXME: broken
-      # gef
-      # pwndbg
+      gef
+
+      binary-ninja.packages.${system}.binary-ninja-free-wayland
+      pwndbg.packages.${system}.pwndbg
     ];
   };
 }

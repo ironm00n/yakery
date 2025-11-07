@@ -67,17 +67,16 @@ in
       "wl-paste --type image --watch cliphist -max-items 100000 store"
     ];
 
-    env =
-      [
-        "XCURSOR_SIZE,24"
-        "HYPRCURSOR_SIZE,24"
-        "NIXOS_OZONE_WL,1"
-        "XDG_MENU_PREFIX,plasma-"
-      ]
-      ++ lib.optionals config.host.nvidia [
-        "LIBVA_DRIVER_NAME,nvidia"
-        "__GLX_VENDOR_LIBRARY_NAME,nvidia"
-      ];
+    env = [
+      "XCURSOR_SIZE,24"
+      "HYPRCURSOR_SIZE,24"
+      "NIXOS_OZONE_WL,1"
+      "XDG_MENU_PREFIX,plasma-"
+    ]
+    ++ lib.optionals config.host.nvidia [
+      "LIBVA_DRIVER_NAME,nvidia"
+      "__GLX_VENDOR_LIBRARY_NAME,nvidia"
+    ];
 
     general = {
       gaps_in = 0;
@@ -184,7 +183,8 @@ in
       "SUPER CTRL, right, workspace, m+1"
       "SUPER CTRL ALT, left, workspace, r-1"
       "SUPER CTRL ALT, right, workspace, r+1"
-    ] ++ workspaceBinding;
+    ]
+    ++ workspaceBinding;
 
     binde = [
       # zooming, inspired by https://reddit.com/comments/1c61h25/-/m444x7r

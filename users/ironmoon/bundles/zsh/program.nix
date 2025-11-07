@@ -73,8 +73,7 @@ in
       ZSH_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
       mkdir -p "$ZSH_CACHE_DIR"
     '')
-    /* zsh */
-    ''
+    /* zsh */ ''
       if ! (($IS_TTY)); then
         [[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh
       fi

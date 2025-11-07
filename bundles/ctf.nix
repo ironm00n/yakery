@@ -32,8 +32,7 @@ in
       zsteg
       steghide
 
-      # TODO: reenable
-      # sonic-visualiser
+      sonic-visualiser
     ];
 
     # WARNING nix-ld: this should only be used for hacky situations such as CTFs
@@ -68,8 +67,6 @@ in
         libxkbcommon
         alsa-lib
         # at-spi2-core
-
-        kdePackages.full
       ];
     };
   };

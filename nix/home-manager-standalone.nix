@@ -7,7 +7,7 @@
 }:
 let
   inherit (inputs) home-manager plasma-manager;
-  pkgs-stable = mk-pkgs-stable pkgs.system;
+  pkgs-stable = mk-pkgs-stable pkgs.stdenv.hostPlatform.system;
 
   # FIXME: figure out how to play nicely with specializations
   # fornow, assume we are using hyprland
@@ -35,7 +35,7 @@ let
 in
 lib.cartesianProduct {
   username = lib.attrNames users;
-  machine = machines |> builtins.filter (m: not (m.no-hm or false)) |> lib.attrNames;
+  machine = machines |> builtins.filter (m: !(m.no-hm or false)) |> lib.attrNames;
 }
 |> map (
   { username, machine }:

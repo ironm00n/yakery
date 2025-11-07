@@ -1,4 +1,5 @@
 args@{
+  lib,
   pkgs,
   host,
   my-utils,
@@ -12,16 +13,15 @@ let
   fw12 = "framework-12-13th-gen-intel";
 in
 {
-  imports =
-    [
-      ../../hosts/options.nix
-      ./services/network-manager-applet.nix
-      ./services/kbuildsycoca6.nix
-      ./conf/theme.nix
-      ./conf/xdg.nix
-    ]
-    ++ my-modules
-    ++ bundles;
+  imports = [
+    ../../hosts/options.nix
+    ./services/network-manager-applet.nix
+    ./services/kbuildsycoca6.nix
+    ./conf/theme.nix
+    ./conf/xdg.nix
+  ]
+  ++ my-modules
+  ++ bundles;
 
   host = host;
 
@@ -40,9 +40,9 @@ in
   };
 
   home.sessionVariables = {
-    PAGER = "${pkgs.moar}/bin/moar --no-linenumbers";
-    EDITOR = "${pkgs.neovim}/bin/nvim";
-    VISUAL = "${pkgs.neovim}/bin/nvim";
+    PAGER = "${lib.getExe pkgs.moor} --no-linenumbers";
+    EDITOR = "${lib.getExe pkgs.neovim}";
+    VISUAL = "${lib.getExe pkgs.neovim}";
     ELECTRON_OZONE_PLATFORM_HINT = "auto";
   };
 
@@ -64,6 +64,7 @@ in
     hypridle = importWith ./services/hypridle.nix;
     hyprpaper = importWith ./services/hyprpaper.nix;
     hyprpolkitagent = importWith ./services/hyprpolkitagent.nix;
+    syncthing = importWith ./services/syncthing.nix;
   };
 
   programs.plasma = importWith ./env/plasma.nix;

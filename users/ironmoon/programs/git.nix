@@ -1,19 +1,19 @@
 { pkgs, ... }:
 {
   enable = true;
-  userName = "IRONM00N";
-  userEmail = "me@ironmoon.dev";
   signing = {
     signByDefault = true;
     key = null;
   };
-  extraConfig =
+  settings =
     let
       gh-helper = {
         helper = "!${pkgs.gh}/bin/gh auth git-credential";
       };
     in
     {
+      user.name = "IRONM00N";
+      user.email = "me@ironmoon.dev";
       "credential \"https://github.com\"" = gh-helper;
       "credential \"https://gist.github.com\"" = gh-helper;
       "credential \"https://github.khoury.northeastern.edu\"" = gh-helper;

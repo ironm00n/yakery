@@ -7,7 +7,12 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib)
+    types
+    mkOption
+    mkIf
+    lowPrio
+    ;
   inherit (my-utils) symlink;
   inherit (config.xdg) configHome;
   cfg = config.bundles.dev;
@@ -109,8 +114,8 @@ in
         treefmt
 
         jdk
-        (pkgs.lowPrio jdk11)
-        (pkgs.lowPrio jdk17)
+        (lowPrio jdk11)
+        (lowPrio jdk17)
 
         typescript
         typescript-language-server

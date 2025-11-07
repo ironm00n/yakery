@@ -9,7 +9,7 @@
     update_check_interval = 0;
     scrollback_lines = 20000;
     enable_audio_bell = false;
-    # scrollback_pager = "moar --no-linenumbers"; # todo: INPUT_LINE_NUMBER
+    # scrollback_pager = "moor --no-linenumbers"; # todo: INPUT_LINE_NUMBER
     bold_font = "JetBrainsMono Nerd Font:style=ExtraBold";
   };
 }

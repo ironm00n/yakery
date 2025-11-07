@@ -25,11 +25,6 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    binary-ninja = {
-      url = "github:ironm00n/nix-binary-ninja";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
-    };
     quickshell = {
       url = "git+https://git.outfoxxed.me/quickshell/quickshell";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -49,6 +44,15 @@
     disko = {
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+    # NOTE: the following have their own instance of nixpkgs since their
+    # dependencies are quite finicky
+    binary-ninja = {
+      url = "github:jchv/nix-binary-ninja";
+      inputs.flake-utils.follows = "flake-utils";
+    };
+    pwndbg = {
+      url = "github:pwndbg/pwndbg";
     };
   };
 
@@ -78,7 +82,6 @@
       plasma-manager,
       nixos-hardware,
       treefmt-nix,
-      binary-ninja,
       systems,
       flake-utils,
       nixvim,
@@ -102,8 +105,16 @@
           };
         })
         |> builtins.listToAttrs;
-      eachSystem = f: lib.genAttrs all-systems (system: f pkgs-map.${system});
-      treefmtEval = eachSystem (pkgs: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
+      eachSystem =
+        f:
+        lib.genAttrs all-systems (
+          system:
+          f {
+            inherit system;
+            pkgs = pkgs-map.${system};
+          }
+        );
+      treefmtEval = eachSystem ({ pkgs, ... }: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
       mk-pkgs-stable =
         system:
         import nixpkgs-stable {
@@ -124,13 +135,13 @@
             "nix-command"
             "flakes"
             "no-url-literals"
-          ] ++ (if use-lix then [ "pipe-operator" ] else [ "pipe-operators" ]);
+          ]
+          ++ (if use-lix then [ "pipe-operator" ] else [ "pipe-operators" ]);
         };
       base-modules = ctx: [
         ./hosts/options.nix
         (base-config ctx)
         home-manager.nixosModules.home-manager
-        binary-ninja.nixosModules.binaryninja
       ];
       base-system = system: {
         inherit system;
@@ -198,22 +209,22 @@
         )
       ) machines;
 
-      packages = eachSystem (pkgs: {
+      packages = eachSystem ({ system, pkgs }: {
         homeConfigurations = import ./nix/home-manager-standalone.nix {
           inherit pkgs inputs lib;
           inherit machines mk-pkgs-stable;
         };
-        nvim = import ./nix/nvim/default.nix { inherit (nixvim.legacyPackages.${pkgs.system}) makeNixvim; };
+        nvim = import ./nix/nvim/default.nix { inherit (nixvim.legacyPackages.${system}) makeNixvim; };
       });
 
-      formatter = eachSystem (pkgs: treefmtEval.${pkgs.system}.config.build.wrapper);
+      formatter = eachSystem ({ system, ... }: treefmtEval.${system}.config.build.wrapper);
 
-      devShells = eachSystem (pkgs: {
+      devShells = eachSystem ({ system, pkgs }: {
         default =
           let
             # TOOD: reenable when needed
             enable-quickshell = false;
-            quickshell = inputs.quickshell.packages.${pkgs.system}.default;
+            quickshell = inputs.quickshell.packages.${system}.default;
 
             qml2_import =
               lib.optional enable-quickshell [
@@ -224,23 +235,22 @@
               |> lib.concatStringsSep ":";
           in
           pkgs.mkShell {
-            nativeBuildInputs =
-              [
-                treefmtEval.${pkgs.system}.config.build.wrapper
-              ]
-              ++ (with pkgs; [
-                nixd
-                nixfmt-rfc-style
-                nil
+            nativeBuildInputs = [
+              treefmtEval.${system}.config.build.wrapper
+            ]
+            ++ (with pkgs; [
+              nixd
+              nixfmt-rfc-style
+              nil
 
-                lua-language-server
+              lua-language-server
 
-                nix-tree
-              ])
-              ++ lib.optionals enable-quickshell [
-                pkgs.kdePackages.qtdeclarative # qmlls
-                quickshell
-              ];
+              nix-tree
+            ])
+            ++ lib.optionals enable-quickshell [
+              pkgs.kdePackages.qtdeclarative # qmlls
+              quickshell
+            ];
 
             shellHook = ''
               export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)

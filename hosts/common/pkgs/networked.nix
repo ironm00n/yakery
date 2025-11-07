@@ -11,4 +11,6 @@ with pkgs;
 
   # sets up server for remote development
   vscode-extensions.ms-vscode-remote.remote-ssh
+
+  wireguard-tools
 ]

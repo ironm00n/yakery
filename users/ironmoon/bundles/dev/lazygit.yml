@@ -2,13 +2,13 @@ git:
   showRandomTip: false
   overrideGpg: true
   tabWidth: 2
-  paging:
-    colorArg: always
-    pager: |
-      delta --syntax-theme="Visual Studio Dark+" --tabs=2 \
-      --paging=never --line-numbers \
-      --line-numbers-left-format="" --line-numbers-right-format="{np:<4}" \
-      --hyperlinks --hyperlinks-file-link-format="lazygit-edit://{path}:{line}"
+  pagers:
+    - colorArg: always
+      pager: |
+        delta --syntax-theme="Visual Studio Dark+" --tabs=2 \
+        --paging=never --line-numbers \
+        --line-numbers-left-format="" --line-numbers-right-format="{np:<4}" \
+        --hyperlinks --hyperlinks-file-link-format="lazygit-edit://{path}:{line}"
 os:
   editPreset: "nvim"
 promptToReturnFromSubprocess: false
@@ -19,7 +19,7 @@ customCommands:
     description: "Mark file as intent-to-add"
   - key: '<c-s>'
     context: files
-    command: "printf '\x1b[0m'; git diff --color=always --stat {{.SelectedPath | quote}}"
+    command: "printf '\e[0m'; git diff --color=always --stat {{.SelectedPath | quote}}"
     output: popup
     description: "View git diff stat"
     outputTitle: "Diff Stats"
