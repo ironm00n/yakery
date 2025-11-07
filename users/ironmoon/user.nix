@@ -135,8 +135,7 @@ in
         minecraft-server
 
         bytecode-viewer
-        # FIXME: broken
-        # avogadro2
+        avogadro2
         openbabel
       ]
       ++ [

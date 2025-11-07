@@ -86,12 +86,12 @@ in
     };
     neo-tree = {
       enable = true;
-      filesystem.filteredItems = {
-        visible = true;
-        hideDotfiles = false;
-        hideByName = [
-          ".git"
-        ];
+      settings = {
+        filesystem.filtered_items = {
+          visible = true;
+          hide_dot_files = false;
+          hide_by_name = [".git"];
+        };
       };
     };
     web-devicons = {
