@@ -5,30 +5,32 @@
 { inputs, system, ... }:
 let
   pkgs = inputs.nixpkgs-24_11.legacyPackages.${system};
+  inherit (pkgs) fetchFromGitHub buildNpmPackage;
 
-  twemoji = pkgs.fetchFromGitHub {
+  version = "17.0.2-1";
+  twemoji = fetchFromGitHub {
     name = "twemoji";
-    owner = "IRONM00N";
+    owner = "ironm00n";
     repo = "twemoji";
-    rev = "188c19556b1c41c4009dffdb36ad19dbdbf50eb2";
-    hash = "sha256-wZLuob2Ap9Dm9c0T8rl/HgldrPJz+CXORu9UkiME3e8=";
+    rev = "4c6904ff90f808f104f6086caf46be05c1ce1fae";
+    hash = "sha256-Eeyzw5Ke6QJduC9il/vBMXiCtqTNK5mOvc9TPzica+8=";
   };
 
   # changes in fork:
   # - change FONT_NAME to "Twemoji COLR" in Makefile
   # - change font name Gruntfile.js
   # - update package-lock.json to have `integrity` and `resolved` fields
-  twemoji-colr = pkgs.fetchFromGitHub {
+  twemoji-colr = fetchFromGitHub {
     name = "twemoji-colr";
-    owner = "IRONM00N";
+    owner = "ironm00n";
     repo = "twemoji-colr";
     rev = "b2f2b905de0d484336e4de8859f449afa111f089";
     hash = "sha256-iRHtmyCEzGYS1US4uB2laTmC6OhYO0FL0tJ/O1xhxcs=";
   };
 in
-pkgs.buildNpmPackage (final: {
+buildNpmPackage (final: {
   pname = "twemoji-colr";
-  version = "15.1.1";
+  inherit version;
 
   srcs = [
     twemoji

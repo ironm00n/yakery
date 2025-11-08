@@ -4,32 +4,33 @@
 { pkgs, pkgs-stable, ... }:
 
 let
-  noto-fonts-color-emoji = pkgs.noto-fonts-color-emoji;
-  lib = pkgs-stable.lib;
-  fetchFromGitHub = pkgs-stable.fetchFromGitHub;
-in
-pkgs-stable.stdenv.mkDerivation rec {
-  pname = "twemoji-cbdt";
-  version = "15.1.1";
+  inherit (pkgs) noto-fonts-color-emoji;
+  inherit (pkgs-stable) lib stdenv fetchFromGitHub;
 
-  twemojiSrc = fetchFromGitHub {
+  version = "17.0.2-1";
+  # Fork: removes (incorrect?) changes to family emojis (3a4779dbd4b12106a8594d4ce305dce1957c13cd)
+  twemoji = fetchFromGitHub {
     name = "twemoji";
-    owner = "IRONM00N";
+    owner = "ironm00n";
     repo = "twemoji";
-    rev = "188c19556b1c41c4009dffdb36ad19dbdbf50eb2";
-    hash = "sha256-wZLuob2Ap9Dm9c0T8rl/HgldrPJz+CXORu9UkiME3e8=";
+    rev = "4c6904ff90f808f104f6086caf46be05c1ce1fae";
+    hash = "sha256-Eeyzw5Ke6QJduC9il/vBMXiCtqTNK5mOvc9TPzica+8=";
   };
+in
+stdenv.mkDerivation {
+  pname = "twemoji-cbdt";
+  inherit version;
 
   srcs = [
     noto-fonts-color-emoji.src
-    twemojiSrc
+    twemoji
   ];
 
   sourceRoot = noto-fonts-color-emoji.src.name;
 
   postUnpack = ''
-    chmod -R +w ${twemojiSrc.name}
-    mv ${twemojiSrc.name} ${noto-fonts-color-emoji.src.name}
+    chmod -R +w ${twemoji.name}
+    mv ${twemoji.name} ${noto-fonts-color-emoji.src.name}
   '';
 
   nativeBuildInputs = with pkgs-stable; [
@@ -68,7 +69,7 @@ pkgs-stable.stdenv.mkDerivation rec {
 
       # sed '${templateSubstitutions}' NotoColorEmoji.tmpl.ttx.tmpl > TwemojiCBDT.tmpl.ttx.tmpl
       sed '${templateSubstitutions}' NotoColorEmoji.tmpl.ttx.tmpl > TwitterColorEmoji.tmpl.ttx.tmpl
-      pushd ${twemojiSrc.name}/assets/72x72/
+      pushd ${twemoji.name}/assets/72x72/
       for png in *.png; do
           mv $png emoji_u''${png//-/_}
       done
@@ -78,7 +79,7 @@ pkgs-stable.stdenv.mkDerivation rec {
   makeFlags = [
     # "EMOJI=TwemojiColorCBDT"
     "EMOJI=TwitterColorEmoji"
-    "EMOJI_SRC_DIR=${twemojiSrc.name}/assets/72x72"
+    "EMOJI_SRC_DIR=${twemoji.name}/assets/72x72"
     "BODY_DIMENSIONS=76x72"
     "BYPASS_SEQUENCE_CHECK=True"
   ];

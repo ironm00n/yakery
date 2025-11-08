@@ -4,6 +4,7 @@ let
     "widget.use-xdg-desktop-portal.file-picker" = 1;
     "browser.tabs.groups.enabled" = true;
     "ui.key.menuAccessKeyFocuses" = false;
+    "font.name-list.emoji" = "Twemoji COLR";
   };
 in
 {

@@ -31,8 +31,13 @@ in
           twemoji-colr = import ../packages/twemoji-colr/package.nix args;
           twemoji-cbdt = import ../packages/twemoji-cbdt/package.nix args;
         in
-        with pkgs;
         [
+
+          twemoji-colr
+          twemoji-cbdt
+
+        ]
+        ++ (with pkgs; [
           # default minus noto-fonts-color-emoji
           dejavu_fonts
           freefont_ttf
@@ -50,9 +55,7 @@ in
           source-code-pro
           lato
           open-sans
-          twemoji-colr
-          twemoji-cbdt
-        ];
+        ]);
       fontconfig.defaultFonts.emoji = [ "Twemoji COLR" ];
       # fontconfig.localConf = ''
       #   <?xml version="1.0"?>
