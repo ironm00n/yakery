@@ -4,6 +4,7 @@
   ./waybar/default.nix
   ./quickshell/default.nix
 
+  ./kitty/default.nix
   ./zsh/default.nix
   ./dev/default.nix
   ./sec/default.nix

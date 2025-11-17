@@ -28,6 +28,8 @@ in
   bundles = {
     hyprland.enable = host.hyprland;
 
+    kitty.enable = true;
+
     eww.enable = false;
     waybar.enable = true;
     quickshell.enable = false;
@@ -57,7 +59,6 @@ in
     direnv = importWith ./programs/direnv.nix;
 
     hyprlock = importWith ./programs/hyprlock.nix;
-    kitty = importWith ./programs/kitty.nix;
     anyrun = importWith ./programs/anyrun.nix;
   };
 
