@@ -25,8 +25,8 @@ in
 
   config = mkIf cfg.enable {
     environment.systemPackages = with pkgs; [
-      hashcat
-      # john # the ripper
+      hashcat # FIXME: CL_PLATFORM_NOT_FOUND_KHR
+      john # the ripper
       hash-identifier
       binwalk
       zsteg
@@ -38,7 +38,7 @@ in
     # WARNING nix-ld: this should only be used for hacky situations such as CTFs
     # otherwise this negates the benefits of nix
     programs.nix-ld = {
-      enable = true;
+      enable = cfg.ld;
       libraries = with pkgs; [
         # Add any missing dynamic libraries for unpackaged programs
         # here, NOT in environment.systemPackages

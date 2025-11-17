@@ -11,6 +11,7 @@
 
   bundles.displaylink.enable = true;
   bundles.ctf.enable = true;
+  bundles.ctf.ld = false;
   bundles.printing.enable = true;
   bundles.virtualisation = {
     enable = true;
