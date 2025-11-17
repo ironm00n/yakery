@@ -4,10 +4,14 @@
 let
   my-hl = false;
 
-  tree-sitter-pyret = pkgs.tree-sitter.buildGrammar {
+  inherit (pkgs.tree-sitter) buildGrammar;
+  inherit (pkgs) fetchFromGitHub;
+
+  # doesn't package queries
+  tree-sitter-pyret = buildGrammar {
     language = "pyret";
-    version = "0.0.0+";
-    src = pkgs.fetchFromGitHub {
+    version = "0.0.0";
+    src = fetchFromGitHub {
       owner = "ironm00n";
       repo = "tree-sitter-pyret";
       rev = "faeac9ce224b63e363de46c8ba816a4b4f930993";
@@ -15,10 +19,11 @@ let
     };
   };
 
-  tree-sitter-wasm = pkgs.tree-sitter.buildGrammar {
+  # doesn't package queries
+  tree-sitter-wasm = buildGrammar {
     language = "wat";
     version = "0.0.0+rev=2ca28a9";
-    src = pkgs.fetchFromGitHub {
+    src = fetchFromGitHub {
       owner = "wasm-lsp";
       repo = "tree-sitter-wasm";
       rev = "2ca28a9f9d709847bf7a3de0942a84e912f59088";
@@ -26,6 +31,44 @@ let
     };
     location = "wat";
   };
+
+  tree-sitter-kitty = buildGrammar {
+    language = "kitty";
+    version = "0.0.0+rev=2e9b602";
+    src = fetchFromGitHub {
+      owner = "OXY2DEV";
+      repo = "tree-sitter-kitty";
+      rev = "2e9b602ca676cac63887cca5a4535106f3475c82";
+      hash = "sha256-9knYf4/0G8zX2grWJi6U/1TQmUWQCjdMK3Vd/fw93C0=";
+    };
+    patchPhase = ''
+      mkdir -p queries/kitty
+      mv queries/*.scm queries/kitty/
+    '';
+  };
+
+  tree-sitter-zsh = buildGrammar {
+    language = "zsh";
+    version = "0.42.0";
+    src = fetchFromGitHub {
+      owner = "georgeharker";
+      repo = "tree-sitter-zsh";
+      rev = "v0.42.0";
+      hash = "sha256-atPMgFt23gmhKorBnMuwmn2eLpWLfE/7dyD05CBg2cc=";
+    };
+    patchPhase = ''
+      mkdir -p queries/zsh
+      rm queries/*.scm
+      mv nvim-queries/*.scm queries/zsh/
+    '';
+  };
+
+  tree-sitter-plugins = [
+    tree-sitter-pyret
+    tree-sitter-wasm
+    tree-sitter-kitty
+    tree-sitter-zsh
+  ];
 in
 {
   highlight = if my-hl then import ./highlight.nix else { };
@@ -73,24 +116,76 @@ in
     };
     treesitter = {
       enable = true;
-      grammarPackages = pkgs.vimPlugins.nvim-treesitter.passthru.allGrammars ++ [
-        tree-sitter-pyret
-        tree-sitter-wasm
-      ];
+      grammarPackages = pkgs.vimPlugins.nvim-treesitter.passthru.allGrammars ++ tree-sitter-plugins;
       settings = {
         folding = true;
         highlight = {
           enable = true;
         };
       };
+      luaConfig.post = ''
+        do
+          local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
+          parser_config.pyret = {
+            install_info = {
+              url = "${tree-sitter-pyret}",
+              files = {"src/parser.c", "src/scanner.c"},
+            }
+          }
+          parser_config.kitty = {
+            install_info = {
+              url = "${tree-sitter-kitty}",
+              file = {"src/parser.c"},
+            }
+          }
+
+          vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
+            pattern = "*.conf",
+            callback = function (event)
+              local path = event.match;
+              if string.match(path, "kitty%.conf$") then
+                vim.bo[event.buf].ft = "kitty";
+              end
+            end
+          });
+        end
+      '';
     };
+    ts-context-commentstring = {
+      enable = true;
+      autoLoad = true;
+      settings = {
+        enable_autocmd = false;
+        languages = {
+          kitty = "# %s";
+          pyret = {
+            __default = "# %s";
+            __multiline = "#| %s |#";
+          };
+        };
+      };
+    };
+    comment = {
+      enable = true;
+      settings.pre_hook = "require('ts_context_commentstring.integrations.comment_nvim').create_pre_hook()";
+    };
+    treesitter-refactor = {
+      enable = true;
+      settings = {
+        smart_rename = {
+          enable = true;
+          keymaps.smart_rename = "gtr";
+        };
+      };
+    };
+
     neo-tree = {
       enable = true;
       settings = {
         filesystem.filtered_items = {
           visible = true;
           hide_dot_files = false;
-          hide_by_name = [".git"];
+          hide_by_name = [ ".git" ];
         };
       };
     };
@@ -126,11 +221,12 @@ in
     };
     lspconfig.enable = true;
     direnv.enable = true;
-    comment.enable = true;
     nvim-autopairs.enable = true;
     gitsigns.enable = true;
     toggleterm.enable = true;
   };
+
+  extraPlugins = tree-sitter-plugins;
 
   keymaps = [
     {
@@ -182,6 +278,8 @@ in
       ocamllsp.package = null;
       nil_ls.enable = true;
       wasm_language_tools.enable = true;
+      rust_analyzer.enable = true;
+      rust_analyzer.package = null;
     };
   };
 
