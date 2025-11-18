@@ -1,4 +1,4 @@
-{ config, ... }:
+{ config, lib, ... }:
 let
   base00 = "#181818"; # #181818
   base01 = "#2b2e37"; # #2b2e37
@@ -90,13 +90,13 @@ in
         "spacing" = 0;
       };
 
-      # "cpu" = {
-      #   "format" = "{usage}% ";
-      # };
       "cpu" = {
         "interval" = 1;
         "format" =
-          "{icon0}{icon1}{icon2}{icon3}{icon4}{icon5}{icon6}{icon7}{icon8}{icon9}{icon10}{icon11}{icon12}{icon13}{icon14}{icon15}";
+          if config.host.cpu-cores != null then
+            config.host.cpu-cores |> builtins.genList (i: "{icon${builtins.toString i}}")  |> lib.concatStrings
+          else
+            "{usage}% ";
         "format-icons" = [
           " "
           "<span color='#69ff94'>▁</span>" # #69ff94

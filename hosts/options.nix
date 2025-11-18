@@ -68,5 +68,11 @@ in
       default = false;
       description = "Use a lightweight setup.";
     };
+
+    cpu-cores = mkOption {
+      type = types.nullOr types.number;
+      default = null;
+      description = "Number of CPU cores for waybar etc.";
+    };
   };
 }

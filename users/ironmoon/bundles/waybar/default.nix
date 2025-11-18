@@ -2,7 +2,7 @@
   config,
   lib,
   ...
-}:
+}@args:
 let
   inherit (lib) types mkOption mkIf;
   cfg = config.bundles.waybar;
@@ -17,6 +17,6 @@ in
   };
 
   config = mkIf cfg.enable {
-    programs.waybar = import ./program.nix { inherit config; };
+    programs.waybar = import ./program.nix args;
   };
 }

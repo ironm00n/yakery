@@ -4,4 +4,5 @@
   hostname = "desktop";
   nvidia = true;
   additional-user-pkgs = import ./additional-user-pkgs.nix { inherit pkgs; };
+  cpu-cores = 16;
 }

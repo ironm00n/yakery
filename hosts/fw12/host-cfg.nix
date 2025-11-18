@@ -5,4 +5,5 @@
   laptop = true;
   additional-user-pkgs = import ./additional-user-pkgs.nix { inherit pkgs; };
   lightweight = true;
+  cpu-cores = 8;
 }
