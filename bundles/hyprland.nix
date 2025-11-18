@@ -55,7 +55,6 @@ in
     environment.systemPackages = with pkgs; [
       hyprland
       hyprpicker
-      kitty
       wofi
       cliphist
       brightnessctl

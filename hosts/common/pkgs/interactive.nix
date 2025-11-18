@@ -13,6 +13,7 @@ with pkgs;
   git-filter-repo
   rustup
 
+  kitty
   emacs-gtk
   vscode.fhs # use the built-in settings sync
   zed-editor
