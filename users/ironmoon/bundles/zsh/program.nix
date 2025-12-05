@@ -8,6 +8,7 @@ let
     mkMerge
     mkBefore
     mkAfter
+    mkOrder
     getExe
     ;
   inherit (lib.strings) optionalString;
@@ -20,7 +21,7 @@ in
   enableCompletion = true;
   completionInit = ''
     autoload -zU compinit
-    compinit -C -u -d "$ZSH_CACHE_DIR/zcompdump"
+    _global_compinit
   '';
   shellAliases = {
     ll = "ls -l";
@@ -41,17 +42,52 @@ in
   antidote = {
     enable = true;
     plugins = [
+      # FIXME: p10k is still being loaded in TTY
       "romkatv/powerlevel10k"
       "zsh-users/zsh-syntax-highlighting"
       "zsh-users/zsh-autosuggestions"
       "zsh-users/zsh-history-substring-search"
     ];
   };
-  # This ensures that the Powerlevel10k instant prompt is enabled
-  # it also defines the $IS_TTY variable, which is used to determine if we are in a TTY
-  # so that we don't try rendering weird characters in a basic TTY terminal
   initContent = mkMerge [
+    # This ensures that the Powerlevel10k instant prompt is enabled
+    # it also defines the $IS_TTY variable, which is used to determine if we are in a TTY
+    # so that we don't try rendering weird characters in a basic TTY terminal
     (mkBefore /* zsh */ ''
+      typeset -U fpath
+      typeset -g _DIRENV_COMPINIT_KEY
+      typeset -ga _GLOBAL_FPATH
+
+      _global_compinit() {
+        compinit -u -d "$ZSH_CACHE_DIR/zcompdump"
+      }
+
+      # this ensures autocompletions are loaded for flakes
+      # TODO(2025-12-05): remove if https://github.com/direnv/direnv/issues/443 is resolved
+      _direnv_compinit() {
+        if [[ -z "$DIRENV_DIR" ]]; then
+          if [[ -n "$_DIRENV_COMPINIT_KEY" ]]; then
+            fpath=("''${_GLOBAL_FPATH[@]}")
+            _global_compinit
+            unset _DIRENV_COMPINIT_KEY
+          fi
+          return
+        fi
+        local key="$DIRENV_DIR|$XDG_DATA_DIRS"
+        [[ "$key" == "$_DIRENV_COMPINIT_KEY" ]] && return
+        _DIRENV_COMPINIT_KEY="$key"
+
+        fpath=("''${_GLOBAL_FPATH[@]}")
+        local d
+        for d in ''${(s/:/)XDG_DATA_DIRS}; do
+          [[ -d "$d/zsh/site-functions" ]]         && fpath+=("$d/zsh/site-functions")
+          [[ -d "$d/zsh/$ZSH_VERSION/functions" ]] && fpath+=("$d/zsh/$ZSH_VERSION/functions")
+          [[ -d "$d/zsh/vendor-completions" ]]     && fpath+=("$d/zsh/vendor-completions")
+        done
+        local hash=$(print -r -- "$key" | shasum | cut -d' ' -f1)
+        compinit -u -d "$ZSH_CACHE_DIR/zcompdump-direnv-$hash"
+      }
+
       case $(tty) in
         (/dev/tty[1-9]) IS_TTY=1;;
                     (*) IS_TTY=0;;
@@ -66,12 +102,20 @@ in
         fi
 
         emulate zsh -c "$(${getExe pkgs.direnv} hook zsh)"
+        # NOTE: `precmd_functions` and `chpwd_functions` are defined by executing `direnv hook zsh`
+        typeset -ga precmd_functions chpwd_functions
+        precmd_functions+=(_direnv_compinit)
+        chpwd_functions+=(_direnv_compinit)
       else
         eval "$(${getExe pkgs.direnv} hook zsh)"
       fi
 
       ZSH_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
       mkdir -p "$ZSH_CACHE_DIR"
+    '')
+    # this is placed directly after populating fpath from NIX_PROFILES
+    (mkOrder 521 /* zsh */ ''
+      _GLOBAL_FPATH=("''${fpath[@]}")
     '')
     /* zsh */ ''
       if ! (($IS_TTY)); then
@@ -155,6 +199,12 @@ in
       }
       nixos-update() {
         nix flake update --flake /etc/nixos
+      }
+      nixos-test() {
+        sudo nixos-rebuild test "''${1:+--specialisation}" "''${1:+$1}" \
+          --keep-going --log-format=internal-json -v \
+          ${optionalString config.host.out-of-store-symlinks "--impure"} \
+          |& nom --json
       }
       # TODO: use current specialisation
       nixos-switch() {
