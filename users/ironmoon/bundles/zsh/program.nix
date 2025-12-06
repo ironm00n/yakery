@@ -67,6 +67,11 @@ in
       _direnv_compinit() {
         if [[ -z "$DIRENV_DIR" ]]; then
           if [[ -n "$_DIRENV_COMPINIT_KEY" ]]; then
+            local cmd func
+            for func in "''${(@v)_comps}"; do
+              unfunction "$func" 2>/dev/null
+            done
+
             fpath=("''${_GLOBAL_FPATH[@]}")
             _global_compinit
             unset _DIRENV_COMPINIT_KEY
@@ -219,23 +224,25 @@ in
           ${optionalString config.host.out-of-store-symlinks "--impure"} \
           |& nom --json
       }
-      home-manager-switch() {
-        ${
-          if config.host.home-manager-nixos then
-            /* zsh */ ''
+      ${
+        if config.host.home-manager-nixos then
+          /* zsh */ ''
+            home-manager-switch() {
               echo "use nixos-switch, or nixos-boot"
               return 1
-            ''
-          else
-            # TODO: don't hardcode path
-            /* zsh */ ''
+            }
+          ''
+        else
+          # TODO: don't hardcode path
+          /* zsh */ ''
+            home-manager-switch() {
               home-manager switch --flake /etc/nixos \
                 --keep-going --log-format internal-json -v \
                 ${optionalString config.host.out-of-store-symlinks "--impure"} \
                 |& nom --json
-            ''
-        }
+            }
+          ''
       }
-    '')
+      '')
   ];
 }
