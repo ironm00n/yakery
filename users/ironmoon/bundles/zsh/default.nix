@@ -6,17 +6,13 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   inherit (my-utils) symlink;
   cfg = config.bundles.zsh;
 in
 {
   options.bundles.zsh = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable zsh config.";
-    };
+    enable = mkEnableOption "zsh";
   };
 
   config = mkIf cfg.enable {

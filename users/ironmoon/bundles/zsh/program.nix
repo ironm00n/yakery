@@ -6,7 +6,6 @@
 let
   inherit (lib)
     mkMerge
-    mkBefore
     mkAfter
     mkOrder
     getExe
@@ -17,12 +16,6 @@ in
   enable = true;
   defaultKeymap = "emacs";
 
-  # note that i am using antidote over built=in homemanager for highlighting etc
-  enableCompletion = true;
-  completionInit = ''
-    autoload -zU compinit
-    _global_compinit
-  '';
   shellAliases = {
     ll = "ls -l";
     la = "ls -lAh";
@@ -39,21 +32,43 @@ in
     size = 1000000;
     path = "${config.xdg.dataHome}/zsh/history";
   };
-  antidote = {
+  syntaxHighlighting = {
     enable = true;
-    plugins = [
-      # FIXME: p10k is still being loaded in TTY
-      "romkatv/powerlevel10k"
-      "zsh-users/zsh-syntax-highlighting"
-      "zsh-users/zsh-autosuggestions"
-      "zsh-users/zsh-history-substring-search"
+  };
+  autosuggestion = {
+    enable = true;
+  };
+  historySubstringSearch = {
+    enable = true;
+    searchUpKey = [
+      "^[[A"
+      "^[OA"
+    ];
+    searchDownKey = [
+      "^[[B"
+      "^[OB"
     ];
   };
+  enableCompletion = true;
+  completionInit = /* zsh */ ''
+    autoload -zU compinit
+    _global_compinit
+  '';
   initContent = mkMerge [
-    # This ensures that the Powerlevel10k instant prompt is enabled
-    # it also defines the $IS_TTY variable, which is used to determine if we are in a TTY
-    # so that we don't try rendering weird characters in a basic TTY terminal
-    (mkBefore /* zsh */ ''
+    # When in a TTY we should be careful, ZSH is our login shell its best we fall back to
+    # safer operations
+    (mkOrder 480 /* zsh */ ''
+      case $(tty) in
+        (/dev/tty[1-9]) IS_TTY=1;;
+                    (*) IS_TTY=0;;
+      esac
+    '')
+    # Here we create a hook to ensure zsh completions are properly enabled for applications
+    # only loaded in a direnv enviroment.
+    # In `mkShell`, pkgs provided to `nativeBuildInputs` have their `/share` added to
+    # `$XDG_DATA_DIRS`, which we can add to `fpath` if applicable
+    # TODO(2025-12-05): remove if https://github.com/direnv/direnv/issues/443 is resolved
+    (mkOrder 490 /* zsh */ ''
       typeset -U fpath
       typeset -g _DIRENV_COMPINIT_KEY
       typeset -ga _GLOBAL_FPATH
@@ -62,8 +77,6 @@ in
         compinit -u -d "$ZSH_CACHE_DIR/zcompdump"
       }
 
-      # this ensures autocompletions are loaded for flakes
-      # TODO(2025-12-05): remove if https://github.com/direnv/direnv/issues/443 is resolved
       _direnv_compinit() {
         if [[ -z "$DIRENV_DIR" ]]; then
           if [[ -n "$_DIRENV_COMPINIT_KEY" ]]; then
@@ -92,14 +105,17 @@ in
         local hash=$(print -r -- "$key" | shasum | cut -d' ' -f1)
         compinit -u -d "$ZSH_CACHE_DIR/zcompdump-direnv-$hash"
       }
-
-      case $(tty) in
-        (/dev/tty[1-9]) IS_TTY=1;;
-                    (*) IS_TTY=0;;
-      esac
-
+    '')
+    (mkOrder 501 /* zsh */ ''
+      ZSH_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
+      mkdir -p "$ZSH_CACHE_DIR"
+    '')
+    # Ensure that the Powerlevel10k instant prompt is enabled before doing anything time consuming.
+    # Additionally, we need to be careful with its interaction with direnv see:
+    # https://github.com/romkatv/powerlevel10k/issues/702#issuecomment-626222730
+    # The direnv completion support is only enabled in non-TTYs
+    (mkOrder 500 /* zsh */ ''
       if ! (($IS_TTY)); then
-        # see: https://github.com/romkatv/powerlevel10k/issues/702#issuecomment-626222730
         emulate zsh -c "$(${getExe pkgs.direnv} export zsh)"
 
         if [[ -r "''${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-''${(%):-%n}.zsh" ]]; then
@@ -114,13 +130,15 @@ in
       else
         eval "$(${getExe pkgs.direnv} hook zsh)"
       fi
-
-      ZSH_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/zsh"
-      mkdir -p "$ZSH_CACHE_DIR"
     '')
     # this is placed directly after populating fpath from NIX_PROFILES
     (mkOrder 521 /* zsh */ ''
       _GLOBAL_FPATH=("''${fpath[@]}")
+    '')
+    (mkOrder 550 /* zsh */ ''
+      if ! (($IS_TTY)); then
+        source ${pkgs.zsh-powerlevel10k}/share/zsh-powerlevel10k/powerlevel10k.zsh-theme
+      fi
     '')
     /* zsh */ ''
       if ! (($IS_TTY)); then
@@ -134,11 +152,6 @@ in
       bindkey '^[[1;5C' forward-word      # ctrl + right
 
       bindkey '^[[Z' reverse-menu-complete
-
-      bindkey '^[[A' history-substring-search-up
-      bindkey '^[OA' history-substring-search-up
-      bindkey '^[[B' history-substring-search-down
-      bindkey '^[OB' history-substring-search-down
 
       # stolen from oh-my-zsh
       WORDCHARS='''
@@ -179,7 +192,7 @@ in
         LESS_TERMCAP_me=$'\e[00m' \
         LESS_TERMCAP_so=$'\e[01;33m\e[44m' \
         LESS_TERMCAP_us=$'\e[01;32m' \
-        "${lib.getExe pkgs.man-db}" "$@"
+        "${getExe pkgs.man-db}" "$@"
       }
     ''
     (mkAfter /* zsh */ ''
@@ -211,7 +224,6 @@ in
           ${optionalString config.host.out-of-store-symlinks "--impure"} \
           |& nom --json
       }
-      # TODO: use current specialisation
       nixos-switch() {
         sudo nixos-rebuild switch "''${1:+--specialisation}" "''${1:+$1}" \
           --keep-going --log-format=internal-json -v \
