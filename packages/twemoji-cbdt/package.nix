@@ -1,11 +1,14 @@
 # based on the twitter-color-emoji package (https://github.com/NixOS/nixpkgs/blob/nixos-unstable/pkgs/by-name/tw/twitter-color-emoji/package.nix)
 # acts as a fallback for platforms that don't support COLR/CPAL
 # uses pkgs-stable to avoid excessive rebuilds
-{ pkgs, pkgs-stable, ... }:
+{ inputs, system, ... }:
 
 let
+  # TODO: go back to using latest version of `noto-fonts-color-emoji`
+  pkgs = inputs.nixpkgs-25_05.legacyPackages.${system};
+
   inherit (pkgs) noto-fonts-color-emoji;
-  inherit (pkgs-stable) lib stdenv fetchFromGitHub;
+  inherit (pkgs) lib stdenv fetchFromGitHub;
 
   version = "17.0.2-1";
   # Fork: removes (incorrect?) changes to family emojis (3a4779dbd4b12106a8594d4ce305dce1957c13cd)
@@ -33,7 +36,7 @@ stdenv.mkDerivation {
     mv ${twemoji.name} ${noto-fonts-color-emoji.src.name}
   '';
 
-  nativeBuildInputs = with pkgs-stable; [
+  nativeBuildInputs = with pkgs; [
     cairo
     imagemagick
     pkg-config

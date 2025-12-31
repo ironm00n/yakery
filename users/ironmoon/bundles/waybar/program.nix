@@ -94,7 +94,7 @@ in
         "interval" = 1;
         "format" =
           if config.host.cpu-cores != null then
-            config.host.cpu-cores |> builtins.genList (i: "{icon${builtins.toString i}}")  |> lib.concatStrings
+            config.host.cpu-cores |> builtins.genList (i: "{icon${builtins.toString i}}") |> lib.concatStrings
           else
             "{usage}% ";
         "format-icons" = [

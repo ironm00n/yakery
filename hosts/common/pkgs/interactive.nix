@@ -2,6 +2,8 @@
 
 with pkgs;
 [
+  comma
+
   dmidecode
   os-prober
 
@@ -11,7 +13,6 @@ with pkgs;
 
   wl-clipboard
   git-filter-repo
-  rustup
 
   kitty
   emacs-gtk

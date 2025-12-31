@@ -17,7 +17,7 @@
     enable = true;
     libvirt = true;
     docker = true;
-    waydroid = false;
+    waydroid = true;
   };
   bundles.gaming = {
     enable = true;

@@ -120,13 +120,16 @@ in
         typescript
         typescript-language-server
       ]
-      ++ lib.optionals cfg.jetbrains [
-        pkgs-stable.jetbrains.idea-ultimate
-        pkgs-stable.jetbrains.datagrip
-        pkgs-stable.jetbrains.webstorm
-        pkgs-stable.jetbrains.pycharm-professional
-        pkgs-stable.jetbrains.clion
-      ]
+      ++ lib.optionals cfg.jetbrains (
+        with pkgs-stable.jetbrains;
+        [
+          idea
+          datagrip
+          webstorm
+          pycharm
+          clion
+        ]
+      )
       ++ lib.optionals cfg.tooling [
         code-cursor
         lazygit
