@@ -14,6 +14,7 @@
     ./hardware-configuration.nix
     ./disks.nix
     ../common/server.nix
+    ./personal-site.nix
   ];
 
   boot.loader = {
@@ -35,9 +36,6 @@
       size = 1 * 1024;
     }
   ];
-
-  # TODO: personal-site
-  # TODO: certbot
 
   system.stateVersion = "25.11";
 }
