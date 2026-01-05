@@ -185,6 +185,24 @@
           host = ./hosts/ovh-vps1-1/host-cfg.nix;
           no-hm = true;
         };
+        oracle-e2-1-micro-1 = {
+          system = "x86_64-linux";
+          additionalModules = [
+            disko.nixosModules.disko
+            ./hosts/oracle-e2-1-micro-1/configuration.nix
+          ];
+          host = ./hosts/oracle-e2-1-micro-1/host-cfg.nix;
+          no-hm = true;
+        };
+        oracle-e2-1-micro-2 = {
+          system = "x86_64-linux";
+          additionalModules = [
+            disko.nixosModules.disko
+            ./hosts/oracle-e2-1-micro-2/configuration.nix
+          ];
+          host = ./hosts/oracle-e2-1-micro-2/host-cfg.nix;
+          no-hm = true;
+        };
       };
     in
     {
