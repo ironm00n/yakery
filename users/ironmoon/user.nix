@@ -111,6 +111,7 @@ in
         glances
         gtop
         jq
+        lf
 
         ripgrep-all
         pkg-config
