@@ -77,7 +77,6 @@ in
     };
     gnupg.agent = {
       enable = true;
-      enableSSHSupport = true;
     };
     partition-manager.enable = true;
     gnome-disks.enable = true;
