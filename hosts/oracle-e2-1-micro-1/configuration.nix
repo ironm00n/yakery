@@ -14,6 +14,7 @@
     ./hardware-configuration.nix
     ./disks.nix
     ../common/server.nix
+    ./haste-server.nix
   ];
 
   boot.loader = {
@@ -35,8 +36,6 @@
       size = 1 * 1024;
     }
   ];
-
-  # TODO: haste-server
 
   system.stateVersion = "25.11";
 }

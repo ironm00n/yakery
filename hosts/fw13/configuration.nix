@@ -24,7 +24,7 @@
     vr = true;
   };
   bundles.syssec.enable = true;
-  bundles.mullvad-vpn.enable = false;
+  bundles.mullvad-vpn.enable = true;
 
   # TODO: remove once graphics issues are fixed:
   boot.kernelPackages = lib.mkForce pkgs.linuxPackages;
