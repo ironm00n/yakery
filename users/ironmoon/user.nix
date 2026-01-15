@@ -94,6 +94,8 @@ in
         shellcheck
         hunspell
         hunspellDicts.en_US
+
+        (pkgs.callPackage ../../packages/hytale { })
       ]
       ++ lib.optionals utils [
         # https://github.com/ibraheemdev/modern-unix

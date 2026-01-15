@@ -108,9 +108,6 @@ in
         nil
         nixfmt-rfc-style
         texlive.combined.scheme-full
-        arduino-ide
-        direnv
-        nix-direnv
         treefmt
 
         jdk
@@ -131,6 +128,9 @@ in
         ]
       )
       ++ lib.optionals cfg.tooling [
+        direnv
+        nix-direnv
+        arduino-ide
         code-cursor
         lazygit
       ];
