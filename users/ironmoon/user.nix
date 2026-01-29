@@ -56,7 +56,7 @@ in
         kdePackages.kde-cli-tools
       ]
       ++ lib.optionals creative [
-        kdePackages.kdenlive
+        pkgs-stable.kdePackages.kdenlive
         gimp3
         inkscape
         krita
@@ -139,8 +139,8 @@ in
         minecraft-server
 
         bytecode-viewer
-        avogadro2
-        openbabel
+        pkgs-stable.avogadro2
+        pkgs-stable.openbabel
       ]
       ++ [
         vlc

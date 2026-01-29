@@ -22,7 +22,7 @@ in
 
   systemd = {
     enable = true;
-    target = "wayland-session@Hyprland.target";
+    target = "wayland-session@hyprland.desktop.target";
   };
 
   settings = {

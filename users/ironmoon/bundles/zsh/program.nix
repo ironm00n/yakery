@@ -15,6 +15,7 @@ in
 {
   enable = true;
   defaultKeymap = "emacs";
+  dotDir = "${config.xdg.configHome}/zsh";
 
   shellAliases = {
     ll = "ls -l";

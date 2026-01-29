@@ -12,6 +12,6 @@
     deadnix.enable = false;
     nixfmt.enable = true;
     jsonfmt.enable = true;
-    mdformat.enable = true;
+    # mdformat.enable = true;
   };
 }

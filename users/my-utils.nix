@@ -18,7 +18,7 @@ rec {
     let
       name = hm.strings.storeFileName (baseNameOf path);
     in
-    runCommandLocal name { } ''ln -s ${escapeShellArg path} $out'';
+    runCommandLocal name { } "ln -s ${escapeShellArg path} $out";
 
   symlink =
     file:

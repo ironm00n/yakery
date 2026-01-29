@@ -63,7 +63,7 @@ let
     '';
   };
 
-  tree-sitter-plugins = [
+  tree-sitter-grammars = [
     tree-sitter-pyret
     tree-sitter-wasm
     tree-sitter-kitty
@@ -93,10 +93,12 @@ in
     expandtab = true;
     shiftwidth = 2;
     tabstop = 2;
+    foldlevel = 99;
+    foldlevelstart = 99;
   };
 
   extraFiles = {
-    "queries/pyret/fold.scm".source = ./queries/pyret/folds.scm;
+    "queries/pyret/folds.scm".source = ./queries/pyret/folds.scm;
     "queries/pyret/highlights.scm".source = ./queries/pyret/highlights.scm;
   };
 
@@ -116,29 +118,12 @@ in
     };
     treesitter = {
       enable = true;
-      grammarPackages = pkgs.vimPlugins.nvim-treesitter.passthru.allGrammars ++ tree-sitter-plugins;
-      settings = {
-        folding = true;
-        highlight = {
-          enable = true;
-        };
-      };
+      grammarPackages = pkgs.vimPlugins.nvim-treesitter.passthru.allGrammars ++ tree-sitter-grammars;
+      folding.enable = true;
+      highlight.enable = true;
+      indent.enable = true;
       luaConfig.post = ''
         do
-          local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
-          parser_config.pyret = {
-            install_info = {
-              url = "${tree-sitter-pyret}",
-              files = {"src/parser.c", "src/scanner.c"},
-            }
-          }
-          parser_config.kitty = {
-            install_info = {
-              url = "${tree-sitter-kitty}",
-              file = {"src/parser.c"},
-            }
-          }
-
           vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
             pattern = "*.conf",
             callback = function (event)
@@ -169,8 +154,9 @@ in
       enable = true;
       settings.pre_hook = "require('ts_context_commentstring.integrations.comment_nvim').create_pre_hook()";
     };
+    # TODO: keep an eye on https://github.com/nvim-treesitter/nvim-treesitter-locals
     treesitter-refactor = {
-      enable = true;
+      enable = false; # FIXME: broken "You cannot include two different versions of nvim-treesitter, perhaps you included a legacy plugin together with a new one?"
       settings = {
         smart_rename = {
           enable = true;
@@ -226,7 +212,7 @@ in
     toggleterm.enable = true;
   };
 
-  extraPlugins = tree-sitter-plugins;
+  extraPlugins = tree-sitter-grammars;
 
   keymaps = [
     {

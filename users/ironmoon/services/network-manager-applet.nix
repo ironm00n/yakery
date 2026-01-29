@@ -9,14 +9,15 @@
       Description = "Network Manager applet";
       Requires = [ "tray.target" ];
       After = [
-        "graphical-session-pre@Hyprland.target"
+        "wayland-session-pre@hyprland.desktop.target"
         "tray.target"
       ];
-      PartOf = [ "graphical-session@Hyprland.target" ];
+      # TODO: do we need to restrict this to hyprland?
+      PartOf = [ "graphical-session" ];
     };
 
     Install = {
-      WantedBy = [ "graphical-session@Hyprland.target" ];
+      WantedBy = [ "graphical-session" ];
     };
 
     Service = {

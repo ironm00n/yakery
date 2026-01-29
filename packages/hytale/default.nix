@@ -49,7 +49,7 @@ let
       inherit name;
       src = fetchurl {
         url = "https://launcher.hytale.com/builds/release/linux/amd64/hytale-launcher-latest.flatpak";
-        hash = "sha256-GRkA9piBoPoCLoxM5zZTIv7ocdIClvsavGnjah0JJME=";
+        hash = "sha256-14Yd4hMipAtdzr8msHugfqJHtr8slLBd1/shX4qJ9WM=";
       };
     };
 

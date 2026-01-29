@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  pkgs-stable,
   ...
 }:
 let
@@ -32,7 +33,7 @@ in
       zsteg
       steghide
 
-      sonic-visualiser
+      pkgs-stable.sonic-visualiser
     ];
 
     # WARNING nix-ld: this should only be used for hacky situations such as CTFs

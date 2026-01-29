@@ -115,7 +115,7 @@ in
     # https://wiki.hyprland.org/Configuring/Variables/#misc
     misc = {
       disable_hyprland_logo = true; # default wallpaper
-      disable_splash_rendering = true; # splash test
+      disable_splash_rendering = true; # splash text
       focus_on_activate = true;
       # disable_autoreload = true;
 
@@ -216,26 +216,29 @@ in
       ", XF86AudioPrev, exec, playerctl previous"
     ];
 
-    windowrulev2 = [
-      # Ignore maximize requests from apps.
-      # "suppressevent maximize, class:.*"
-      "suppressevent maximize, class:negative:^\\.virt-manager-wrapped$"
-      # Fix some dragging issues with XWayland
-      "nofocus,class:^$,title:^$,xwayland:1,floating:1,fullscreen:0,pinned:0"
+    windowrule = [
+      {
+        name = "suppress-maximize-events";
+        "match:class" = ".*";
+        "suppress_event" = "maximize";
+      }
+      {
+        name = "fix-xwayland-drags";
+        "match:class" = "^$";
+        "match:title" = "^$";
+        "match:xwayland" = true;
+        "match:float" = true;
+        "match:fullscreen" = true;
+        "match:pin" = false;
 
-      "opacity 0, class:xwaylandvideobridge"
-      "noanim, class:xwaylandvideobridge"
-      "workspace special silent, class:xwaylandvideobridge"
-
-      "float,title:^(Orbital)$"
-      "float,class:^(waydroid\\.##\\d+)$" # '##' escapes '#'
-
+        no_focus = true;
+      }
       # TODO?: make xdg-portals float
+      # TODO: mess with rules for waydroid
     ];
 
     layerrule = [
-      "blur, (anyrun)"
-      "ignorezero, (anyrun)"
+      "dim_around on, match:namespace anyrun"
     ];
 
     plugin = {

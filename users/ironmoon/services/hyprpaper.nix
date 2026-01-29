@@ -19,9 +19,13 @@ in
   enable = config.host.hyprland;
 
   settings = {
-    ipc = "on";
-
-    preload = [ used_paper ];
-    wallpaper = [ ", ${used_paper}" ];
+    wallpaper = [
+      {
+        monitor = "";
+        path = used_paper;
+        fit_mode = "cover";
+      }
+    ];
+    splash = false;
   };
 }
