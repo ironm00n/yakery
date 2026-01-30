@@ -210,6 +210,7 @@ in
     nvim-autopairs.enable = true;
     gitsigns.enable = true;
     toggleterm.enable = true;
+    lean.enable = true;
   };
 
   extraPlugins = tree-sitter-grammars;
