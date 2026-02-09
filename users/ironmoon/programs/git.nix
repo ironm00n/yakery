@@ -38,5 +38,8 @@
       diff = {
         colorMoved = "default";
       };
+      format = {
+        pretty = "fuller";
+      };
     };
 }

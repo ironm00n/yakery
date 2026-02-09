@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/jesseduffield/lazygit/master/schema/config.json
 git:
   showRandomTip: false
   overrideGpg: true
@@ -9,6 +10,11 @@ git:
         --paging=never --line-numbers \
         --line-numbers-left-format="" --line-numbers-right-format="{np:<4}" \
         --hyperlinks --hyperlinks-file-link-format="lazygit-edit://{path}:{line}"
+  # change --pretty=medium to --pretty=fuller
+  # TODO: do we want this? 
+  branchLogCmd: git log --graph --color=always --abbrev-commit --decorate --date=relative --pretty=fuller {{branchName}} --
+  allBranchesLogCmds:
+    - git log --graph --all --color=always --abbrev-commit --decorate --date=relative --pretty=fuller
 os:
   editPreset: "nvim"
 promptToReturnFromSubprocess: false
@@ -23,3 +29,13 @@ customCommands:
     output: popup
     description: "View git diff stat"
     outputTitle: "Diff Stats"
+  # copied from docs:
+  - key: 'P'
+    command: "git push {{.SelectedRemote.Name}} {{.SelectedLocalCommit.Sha}}:{{.SelectedLocalBranch.Name}}"
+    context: "commits"
+    loadingText: "Pushing commit..."
+    description: "Push a specific commit (and any preceding)"
+
+# notes:
+# - <c-w> to toggle ignoring whitespace
+# - <c-l> to change 
