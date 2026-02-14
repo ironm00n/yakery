@@ -32,6 +32,7 @@ in
       with pkgs;
       [ ]
       ++ lib.optionals config.host.hyprland [
+        # HACK: see fix kde-colorscheme service
         kdePackages.kservice
         kdePackages.dolphin
         kdePackages.kdegraphics-thumbnailers # previews
@@ -149,6 +150,7 @@ in
 
         evil-helix
 
+        # HACK: see fix kde-colorscheme service
         kdePackages.kate
         kdePackages.kcalc
         kdePackages.ksystemlog

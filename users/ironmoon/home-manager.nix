@@ -17,6 +17,7 @@ in
     ../../hosts/options.nix
     ./services/network-manager-applet.nix
     ./services/kbuildsycoca6.nix
+    ./services/fix-kde-colorscheme.nix
     ./conf/theme.nix
     ./conf/xdg.nix
   ]
@@ -36,6 +37,7 @@ in
     zsh.enable = true;
     dev.enable = true;
     dev.jetbrains = !host.lightweight;
+    dev.langs = host.id != fw12;
     sec.enable = !host.lightweight;
     emacs.enable = true;
     nvim.enable = host.id == fw12;
