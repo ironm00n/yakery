@@ -1,139 +1,158 @@
 {
+  lib,
   stdenv,
-  fetchurl,
-
-  ostree,
-  flatpak,
+  fetchzip,
   buildFHSEnv,
-
-  pkgs,
+  makeWrapper,
+  makeDesktopItem,
+  writeScript,
+  gtk3,
+  nss,
+  libsecret,
+  libsoup_3,
+  gdk-pixbuf,
+  glib,
+  webkitgtk_4_1,
+  xdg-utils,
+  temurin-bin-25,
+  libGL,
+  alsa-lib,
+  udev,
+  libx11,
+  libxcursor,
+  libxrandr,
+  libxi,
+  icu,
+  openssl,
+  version ? null,
+  hytaleHashes ? null,
 }:
+
 let
-  unpackFlatpack =
-    { name, src }:
-    stdenv.mkDerivation {
-      inherit name src;
+  sources = lib.importJSON ./pin.json;
 
-      nativeBuildInputs = [
-        ostree
-        flatpak
-      ];
+  finalVersion = if version != null then version else sources.version;
+  finalHytaleHashes = if hytaleHashes != null then hytaleHashes else sources.hashes;
 
-      unpackPhase = ''
-        runHook preUnpack
-
-        mkdir repo
-
-        echo "Initializing repository..."
-        ostree init --repo=repo --mode=archive
-
-        echo "Importing image..."
-        flatpak build-import-bundle repo $src
-
-        launcher_ref="$(ostree refs --repo=repo | grep com.hypixel.HytaleLauncher | head -n1)"
-
-        echo "Checking out image $launcher_ref..."
-        ostree checkout --repo=repo --user-mode "$launcher_ref" $out
-
-        runHook postUnpack
-      '';
-
-      dontBuild = true;
-      dontConfigure = true;
-      dontInstall = true;
-    };
-
-  hytale-launcher-unwrapped = stdenv.mkDerivation rec {
+  # TODO: add icon once a stable versioned source is available
+  desktopItem = makeDesktopItem {
     name = "hytale-launcher";
-    src = unpackFlatpack {
-      inherit name;
-      src = fetchurl {
-        url = "https://launcher.hytale.com/builds/release/linux/amd64/hytale-launcher-latest.flatpak";
-        hash = "sha256-14Yd4hMipAtdzr8msHugfqJHtr8slLBd1/shX4qJ9WM=";
-      };
-    };
-
-    installPhase = ''
-      cp -r $src/files $out
-
-      chmod -R +w $out
-      cp -r $src/export/share $out
-
-      sed -i "s#/app/bin/hytale-launcher#$out/bin/hytale-launcher#g" $out/bin/hytale-launcher-wrapper
-    '';
-
-    dontBuild = true;
-    dontConfigure = true;
+    desktopName = "Hytale Launcher";
+    exec = "hytale-launcher";
+    comment = "Official launcher for Hytale";
+    categories = [ "Game" ];
+    terminal = false;
+    startupWMClass = "com.hypixel.HytaleLauncher";
   };
 
-  hytale-launcher-fhs-env = buildFHSEnv {
-    name = "hytale-launcher-wrapper";
+  os = if stdenv.hostPlatform.system == "x86_64-linux" then "linux" else "darwin";
+  arch = if stdenv.hostPlatform.system == "x86_64-linux" then "amd64" else "arm64";
 
-    runScript = pkgs.writeScript "hytale-launcher-wrapper-preconfigure" ''
-      export LD_LIBRARY_PATH=/run/opengl-driver/lib:/run/opengl-driver-32/lib:$LD_LIBRARY_PATH
-      export LIBGL_DRIVERS_PATH=/run/opengl-driver/lib/dri:/run/opengl-driver-32/lib/dri
-      export __EGL_VENDOR_LIBRARY_DIRS=/run/opengl-driver/share/glvnd/egl_vendor.d:/run/opengl-driver-32/share/glvnd/egl_vendor.d
+  src = fetchzip {
+    url = "https://launcher.hytale.com/builds/release/${os}/${arch}/hytale-launcher-${finalVersion}.zip";
+    hash =
+      finalHytaleHashes.${stdenv.hostPlatform.system}
+        or (throw "unsupported system: ${stdenv.hostPlatform.system}");
+    stripRoot = false;
+  };
 
-      # Otherwise WebkitGTK just crashes with:
-      # Failed to create GBM buffer of size 1026x640: Invalid argument. <- X11
-      # Gdk-Message: 17:26:21.876: Error 71 (Protocol error) dispatching to Wayland display. <- Wayland
-      export WEBKIT_DISABLE_COMPOSITING_MODE=1
+  fhsEnv = buildFHSEnv {
+    pname = "hytale-launcher";
+    version = finalVersion;
 
-      if [[ "$HYTALE_FHS_BASH" -eq 1 ]]; then
-        exec bash "$@"
-      fi
-
-      exec "${hytale-launcher-unwrapped}/bin/hytale-launcher-wrapper" "$@"
-    '';
-
-    # https://github.com/NixOS/nixpkgs/issues/372135
-    extraBwrapArgs = [
-      "--ro-bind-try /etc/egl/egl_external_platform.d /etc/egl/egl_external_platform.d"
+    targetPkgs = pkgs: [
+      # launcher dependencies (webkit/tauri)
+      gtk3
+      nss
+      libsecret
+      libsoup_3
+      gdk-pixbuf
+      glib
+      webkitgtk_4_1
+      xdg-utils
+      # java runtime for the game (temurin 25 recommended by official docs)
+      temurin-bin-25
+      # graphics
+      libGL
+      # audio
+      alsa-lib
+      # input/display
+      udev
+      libx11
+      libxcursor
+      libxrandr
+      libxi
+      # .NET runtime dependencies :(
+      icu
+      openssl
+      # misc
+      stdenv.cc.cc.lib
     ];
 
-    targetPkgs =
-      pkgs: with pkgs; [
-        # Launcher
-        glib
-        gtk3
-        webkitgtk_4_1
-        gdk-pixbuf
-        libsoup_3
+    runScript = "${src}/hytale-launcher";
 
-        # Game
-        alsa-lib
-        vulkan-loader
+    extraBwrapArgs = [
+      "--setenv __NV_DISABLE_EXPLICIT_SYNC 1"
+      "--setenv WEBKIT_DISABLE_DMABUF_RENDERER 1"
+      # taken from the flatpak at https://launcher.hytale.com/builds/release/linux/amd64/hytale-launcher-latest.flatpak
+      "--setenv WEBKIT_DISABLE_COMPOSITING_MODE 1"
+      "--setenv DESKTOP_STARTUP_ID com.hypixel.HytaleLauncher"
+      "--setenv JAVA_HOME ${temurin-bin-25}"
+    ];
 
-        libGL
+    extraInstallCommands = ''
+      mkdir -p $out/share/applications
+      cp ${desktopItem}/share/applications/*.desktop $out/share/applications/
+    '';
 
-        udev
-        libudev0-shim
+    passthru = {
+      inherit src;
+      updateScript = ./update.sh;
+    };
 
-        wayland
-        wayland-protocols
-        libxkbcommon
-        libdecor
+    meta = {
+      description = "Official launcher for Hytale";
+      longDescription = ''
+        Official launcher for Hytale, an upcoming block-based game from Hypixel Studios.
 
-        icu
-        pipewire
-        openssl_3
-
-        xorg.libX11
-        xorg.libXext
+        Note: The launcher's built-in auto-update mechanism will not work on NixOS
+        due to the immutable nature of the Nix store. You may see an error message
+        about "failed to remove existing executable: read-only file system", this
+        is expected and the launcher will continue to work. Updates must be applied
+        by updating the nixpkgs package.
+      '';
+      homepage = "https://hytale.com";
+      license = lib.licenses.unfreeRedistributable;
+      maintainers = with lib.maintainers; [
+        gepbird
+        karol-broda
+        liquidnya
       ];
+      mainProgram = "hytale-launcher";
+      platforms = [
+        "x86_64-linux"
+        "aarch64-darwin"
+      ];
+      sourceProvenance = with lib.sourceTypes; [ binaryNativeCode ];
+    };
+  };
+
+  darwinPackage = stdenv.mkDerivation {
+    pname = "hytale-launcher";
+    version = finalVersion;
+    inherit src;
+
+    nativeBuildInputs = [ makeWrapper ];
+
+    installPhase = ''
+      runHook preInstall
+      mkdir -p "$out/Applications" "$out/bin"
+      cp -r hytale-launcher.app "$out/Applications/"
+      makeWrapper "$out/Applications/hytale-launcher.app/Contents/MacOS/hytale-launcher" "$out/bin/hytale-launcher"
+      runHook postInstall
+    '';
+
+    inherit (fhsEnv) passthru meta;
   };
 in
-stdenv.mkDerivation {
-  name = "hytale-launcher";
-  phases = [ "installPhase" ];
-
-  installPhase = ''
-    runHook preInstall
-
-    mkdir -p $out/bin
-    ln -s ${hytale-launcher-fhs-env}/bin/hytale-launcher-wrapper $out/bin/hytale-launcher-wrapper
-    ln -s ${hytale-launcher-unwrapped}/share $out/share
-
-    runHook postInstall
-  '';
-}
+if stdenv.hostPlatform.isDarwin then darwinPackage else fhsEnv
