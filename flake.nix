@@ -52,18 +52,16 @@
 
   nixConfig = {
     extra-substituters = [
-      "https://nixpkgs-unfree.cachix.org"
-      "https://numtide.cachix.org"
       "https://ironmoon.cachix.org"
+      "https://numtide.cachix.org"
       "https://hyprland.cachix.org"
-      "https://anmonteiro.nix-cache.workers.dev"
+      "https://nix-community.cachix.org"
     ];
     extra-trusted-public-keys = [
-      "nixpkgs-unfree.cachix.org-1:hqvoInulhbV4nJ9yJOEr+4wxhDV4xq2d1DK7S6Nj6rs="
-      "numtide.cachix.org-1:2ps1kLBUWjxIneOy1Ik6cQjb41X0iXVXeHigGmycPPE="
       "ironmoon.cachix.org-1:wowGL4TAzZPBO0fCqOekQLFqim3iXzdR+hIrK/tUadI="
+      "numtide.cachix.org-1:2ps1kLBUWjxIneOy1Ik6cQjb41X0iXVXeHigGmycPPE="
       "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIBMioiJM7ypFP8PwtkuGc="
-      "ocaml.nix-cache.com-1:/xI2h2+56rwFfKyyFVbkJSeGqSIYMC/Je+7XXqGKDIY="
+      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
     ];
   };
 
