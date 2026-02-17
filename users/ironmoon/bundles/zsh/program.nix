@@ -220,13 +220,13 @@ in
         nix flake update --flake /etc/nixos
       }
       nixos-test() {
-        sudo nixos-rebuild test "''${1:+--specialisation}" "''${1:+$1}" \
+        sudo nixos-rebuild test ''${1:+--specialisation} ''${1:+"$1"} \
           --keep-going --log-format=internal-json -v \
           ${optionalString config.host.out-of-store-symlinks "--impure"} \
           |& nom --json
       }
       nixos-switch() {
-        sudo nixos-rebuild switch "''${1:+--specialisation}" "''${1:+$1}" \
+        sudo nixos-rebuild switch ''${1:+--specialisation} ''${1:+"$1"} \
           --keep-going --log-format=internal-json -v \
           ${optionalString config.host.out-of-store-symlinks "--impure"} \
           |& nom --json
