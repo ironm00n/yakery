@@ -13,6 +13,7 @@
   imports = [
     ./hardware-configuration.nix
     ../common/server.nix
+    ./zitadel.nix
   ];
 
   boot.loader.grub = {
