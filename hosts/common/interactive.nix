@@ -67,6 +67,7 @@ in
   # services
   services.openssh.enable = true;
   services.udisks2.enable = true; # for calibre
+  services.netbird.enable = lib.mkDefault true;
 
   programs = {
     firefox = import ./programs/firefox.nix;

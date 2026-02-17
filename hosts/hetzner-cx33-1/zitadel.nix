@@ -1,29 +1,35 @@
-{ config, lib, inputs, ... }:
+{
+  config,
+  lib,
+  inputs,
+  ...
+}:
 let
   domain = "ironmoon.dev";
+  sopsFile = inputs.secrets.lib.zitadel;
 in
 {
   sops.age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
   sops.secrets.zitadel-master-key = {
-    sopsFile = inputs.secrets.lib.zitadel;
+    inherit sopsFile;
+    key = "master_key";
     owner = "zitadel";
     group = "zitadel";
-    key = "master_key";
   };
   sops.secrets.zitadel-admin-steps = {
-    sopsFile = inputs.secrets.lib.zitadel;
+    inherit sopsFile;
+    key = "admin_steps";
     owner = "zitadel";
     group = "zitadel";
-    key = "admin_steps";
   };
   sops.secrets.zitadel-settings = {
-    sopsFile = inputs.secrets.lib.zitadel;
+    inherit sopsFile;
+    key = "settings";
     owner = "zitadel";
     group = "zitadel";
-    key = "settings";
   };
   sops.secrets.zitadel-postgres-env = {
-    sopsFile = inputs.secrets.lib.zitadel;
+    inherit sopsFile;
     key = "postgres_env";
   };
 

@@ -79,5 +79,10 @@ in
       type = types.bool;
       description = "Use a secrets manager for this device.";
     };
+
+    default-sops = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+    };
   };
 }

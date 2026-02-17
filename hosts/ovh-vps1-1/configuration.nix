@@ -14,6 +14,7 @@
     ./hardware-configuration.nix
     ./disks.nix
     ../common/server.nix
+    ./netbird.nix
   ];
 
   boot.loader.grub = {
@@ -30,7 +31,7 @@
     ];
     defaultGateway6 = {
       address = "2604:2dc0:202:300::1";
-      interface = "enp1s0";
+      interface = "ens3";
     };
     nameservers = [
       "2606:4700:4700::1111"

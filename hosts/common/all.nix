@@ -1,4 +1,9 @@
-{ pkgs, ... }:
+{
+  pkgs,
+  config,
+  lib,
+  ...
+}:
 {
   # all bundles are behind an `enable` option
   imports = [
@@ -23,4 +28,9 @@
   };
 
   environment.systemPackages = import ./pkgs/base.nix { inherit pkgs; };
+
+  sops = lib.mkIf (config.host.default-sops != null) {
+    defaultSopsFile = config.host.default-sops;
+    age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+  };
 }
