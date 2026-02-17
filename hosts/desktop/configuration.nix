@@ -49,12 +49,8 @@
     };
   };
 
-  environment.systemPackages = with pkgs; [
-    autossh
-  ];
-
   services.minecraft-server = {
-    enable = true;
+    enable = false;
     eula = true;
     openFirewall = true;
     package = pkgs.papermc;
@@ -81,13 +77,6 @@
       PermitRootLogin = "no";
     };
   };
-  services.autossh.sessions = [
-    {
-      name = "security-nightmare";
-      user = "ironmoon";
-      extraArguments = "-M 0 -N -R 6922:localhost:22 ironmoon@ssh.ironmoon.dev";
-    }
-  ];
 
   # services.pulseaudio.enable = true;
   # security.rtkit.enable = true;
