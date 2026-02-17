@@ -2,8 +2,6 @@
 
 with pkgs;
 [
-  comma
-
   dmidecode
   os-prober
 
