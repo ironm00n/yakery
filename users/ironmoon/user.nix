@@ -89,23 +89,7 @@ in
         playerctl
 
         comma
-        (nix-index.override {
-          nix-index-unwrapped = pkgs.nix-index-unwrapped.overrideAttrs (
-            old:
-            assert pkgs.lib.assertMsg (old.version == "0.1.9") "patch no longer needed";
-            {
-              pname = "${old.pname}-patched";
-              version = "${old.version}-patched";
-              src = pkgs.fetchFromGitHub {
-                owner = "nix-community";
-                repo = "nix-index";
-                rev = "8c84f67a33c4c26ec12f166cb5f63a77fafebe21";
-                hash = "sha256-8ZMKtBbsBPbccEWH1XHCYsxXX4hckHXwQNr5OzGrU0Q=";
-              };
-              cargoHash = "";
-            }
-          );
-        })
+        nix-index
 
         home-manager
         nix-output-monitor
