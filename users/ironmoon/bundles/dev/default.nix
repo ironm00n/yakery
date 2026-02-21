@@ -131,8 +131,12 @@ in
         direnv
         nix-direnv
         arduino-ide
-        code-cursor
         lazygit
+
+        claude-code
+        code-cursor
+        antigravity-fhs
+        windsurf
       ];
 
     home.file = mkIf cfg.tooling {
