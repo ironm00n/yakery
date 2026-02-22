@@ -79,6 +79,7 @@ in
           plasma6XdgDesktopPortalSupport = config.host.kde;
         })
         slack
+        zulip
       ]
       ++ [
         # TODO: https://github.com/NixOS/nixpkgs/issues/371479
