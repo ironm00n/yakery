@@ -42,7 +42,7 @@ in
   # setup inspired by https://lukadeka.com/blog/setting-up-netbird-with-zitadel-on-nixos/
   services.zitadel = {
     enable = true;
-    openFirewall = true;
+    openFirewall = false;
 
     user = "zitadel";
     group = "zitadel";
@@ -71,7 +71,7 @@ in
   };
   virtualisation.oci-containers.containers.zitadel-db = {
     image = "postgres:17";
-    ports = [ "5432:5432" ];
+    ports = [ "127.0.0.1:5432:5432" ];
     environmentFiles = [ config.sops.secrets.zitadel-postgres-env.path ];
     volumes = [
       "/var/lib/zitadel-db:/var/lib/postgresql/data"
