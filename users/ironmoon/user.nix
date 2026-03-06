@@ -134,7 +134,7 @@ in
           withGUI = true;
         })
 
-        (calibre.override {
+        (pkgs-stable.calibre.override {
           unrarSupport = true; # .cbr, .cbz
         })
         epubcheck

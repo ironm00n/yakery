@@ -135,20 +135,7 @@ in
 
         claude-code
         code-cursor
-        (antigravity.overrideAttrs (
-          old:
-          let
-            version = "1.18.4";
-            vscodeVersion = "1.107.0";
-            url = "https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.18.4-5780041996042240/linux-x64/Antigravity.tar.gz";
-            sha256 = "f97d790d1fb74e8ccb9ddb6af301a2b60391aed22f633f1a2baf86862aa65826";
-          in
-          {
-            pname = "${old.pname}-patched";
-            inherit version vscodeVersion;
-            src = fetchurl { inherit url sha256; };
-          }
-        )).fhs
+        antigravity.fhs
         windsurf
       ];
 
