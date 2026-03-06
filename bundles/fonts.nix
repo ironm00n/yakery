@@ -55,6 +55,9 @@ in
           source-code-pro
           lato
           open-sans
+
+          noto-fonts-lgc-plus
+          symbola
         ]);
       fontconfig.defaultFonts.emoji = [ "Twemoji COLR" ];
       # fontconfig.localConf = ''
