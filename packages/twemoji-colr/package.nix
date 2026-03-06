@@ -20,12 +20,13 @@ let
   # - change FONT_NAME to "Twemoji COLR" in Makefile
   # - change font name Gruntfile.js
   # - update package-lock.json to have `integrity` and `resolved` fields
+  # - fixes terminal rendering in kitty
   twemoji-colr = fetchFromGitHub {
     name = "twemoji-colr";
     owner = "ironm00n";
     repo = "twemoji-colr";
-    rev = "b2f2b905de0d484336e4de8859f449afa111f089";
-    hash = "sha256-iRHtmyCEzGYS1US4uB2laTmC6OhYO0FL0tJ/O1xhxcs=";
+    rev = "a32fd02b30df24d9abb18270d3b91d08f5a74340";
+    hash = "sha256-XDu6Z9iW+/I6xT02hMU7Btb3Ovu0jUrilUODv9oAuws=";
   };
 in
 buildNpmPackage (final: {
