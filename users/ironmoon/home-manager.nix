@@ -35,6 +35,7 @@ in
     waybar.enable = true;
     quickshell.enable = false;
     zsh.enable = true;
+    mime-apps.enable = true;
     dev.enable = true;
     dev.jetbrains = !host.lightweight;
     dev.langs = host.id != fw12;

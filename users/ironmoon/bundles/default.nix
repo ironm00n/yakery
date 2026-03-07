@@ -12,4 +12,5 @@
   ./nvim
 
   ./discord
+  ./mime-apps
 ]
