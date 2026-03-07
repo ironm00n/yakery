@@ -10,6 +10,7 @@ let
   my-modules = import ./modules/default.nix;
   bundles = import ./bundles/default.nix;
   importWith = path: import path args;
+  fw13 = "framework-13-7040-amd";
   fw12 = "framework-12-13th-gen-intel";
 in
 {
@@ -43,6 +44,7 @@ in
     emacs.enable = true;
     nvim.enable = host.id == fw12;
 
+    syncthing.enable = true;
     discord.enable = true;
   };
 
@@ -70,7 +72,6 @@ in
     hypridle = importWith ./services/hypridle.nix;
     hyprpaper = importWith ./services/hyprpaper.nix;
     hyprpolkitagent = importWith ./services/hyprpolkitagent.nix;
-    syncthing = importWith ./services/syncthing.nix;
   };
 
   programs.plasma = importWith ./env/plasma.nix;

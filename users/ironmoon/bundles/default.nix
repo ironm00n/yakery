@@ -11,6 +11,7 @@
   ./emacs
   ./nvim
 
+  ./syncthing
   ./discord
   ./mime-apps
 ]
