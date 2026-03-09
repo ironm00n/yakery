@@ -80,6 +80,7 @@ in
         })
         slack
         zulip
+        pdfpc
       ]
       ++ [
         # TODO: https://github.com/NixOS/nixpkgs/issues/371479
