@@ -58,6 +58,9 @@ in
 
           noto-fonts-lgc-plus
           symbola
+
+          lmodern
+          source-sans
         ]);
       fontconfig.defaultFonts.emoji = [ "Twemoji COLR" ];
       # fontconfig.localConf = ''
