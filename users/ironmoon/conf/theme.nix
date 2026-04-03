@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, config, ... }:
 {
   home.pointerCursor = {
     enable = true;
@@ -26,6 +26,8 @@
     };
     gtk2.force = true;
   };
+
+  gtk.gtk4.theme = config.gtk.theme;
 
   dconf = {
     enable = true;
