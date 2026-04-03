@@ -49,7 +49,6 @@ with pkgs;
 
   docker
 
-  neofetch
   hyfetch
 
   zip
