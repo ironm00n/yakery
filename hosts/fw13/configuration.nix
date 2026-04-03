@@ -26,9 +26,6 @@
   bundles.syssec.enable = true;
   bundles.mullvad-vpn.enable = true;
 
-  # TODO: remove once graphics issues are fixed:
-  boot.kernelPackages = lib.mkForce pkgs.linuxPackages;
-
   boot.loader = {
     efi = {
       canTouchEfiVariables = true;
