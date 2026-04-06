@@ -133,22 +133,17 @@ in
         arduino-ide
         lazygit
 
-        (claude-code.overrideAttrs (
+        (claude-code-bin.overrideAttrs (
           finalAttrs:
           let
-            version = "2.1.91";
+            version = "2.1.92";
+            baseUrl = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases";
           in
           {
             inherit version;
-            src = fetchzip {
-              url = "https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-${version}.tgz";
-              hash = "sha256-u7jdM6hTYN05ZLPz630Yj7gI0PeCSArg4O6ItQRAMy4=";
-            };
-            # HACK: buildNpmPackage is based on args not finalAttrs :/
-            npmDeps = fetchNpmDeps {
-              inherit (finalAttrs) src postPatch;
-              name = "claude-code-${version}-npm-deps";
-              hash = "sha256-izy3dQProZIdUF5Z11fvGQOm/TBcWGhDK8GvNs8gG5E=";
+            src = fetchurl {
+              url = "${baseUrl}/${version}/linux-x64/claude";
+              sha256 = "e22324514967ff2d5e9f91f0ee37e4675bf8b6dfec27fafb19cb25cc5b23fcaf";
             };
           }
         ))
