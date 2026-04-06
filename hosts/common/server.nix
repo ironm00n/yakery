@@ -9,6 +9,12 @@
     ./networked.nix
   ];
 
+  nix.gc = {
+    automatic = true;
+    dates = "weekly";
+    options = "--delete-older-than 30d";
+  };
+
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINwM9VwbXPGLu2f+jIiARWaFWfmi0wSF5Ul5Eptn+qGU ironmoon@desktop"
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIzgk/d8OoaYUVpCs+JvvVmIMqjnddQkgyGyjL46NM3k ironmoon@fw13"
