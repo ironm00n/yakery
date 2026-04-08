@@ -1,5 +1,6 @@
 [Added Associations]
 application/pdf=okularApplication_pdf.desktop;org.kde.okular.desktop;calibre-gui.desktop;okular-3.desktop;okular-2.desktop;okular.desktop;firefox.desktop;
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=writer.desktop;
 application/x-extension-htm=firefox.desktop;
 application/x-extension-html=firefox.desktop;
 application/x-extension-shtml=firefox.desktop;
@@ -36,8 +37,8 @@ x-scheme-handler/mailto=thunderbird.desktop;userapp-Thunderbird-1X23W2.desktop;
 x-scheme-handler/mid=userapp-Thunderbird-1X23W2.desktop;
 
 [Default Applications]
-text/plain=org.kde.kwrite.desktop
 application/pdf=org.kde.okular.desktop
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=writer.desktop;
 application/x-extension-htm=firefox.desktop
 application/x-extension-html=firefox.desktop
 application/x-extension-shtml=firefox.desktop
@@ -68,6 +69,7 @@ audio/x-wav=vlc.desktop
 inode/directory=org.kde.dolphin.desktop
 message/rfc822=thunderbird.desktop
 text/html=firefox.desktop
+text/plain=org.kde.kwrite.desktop
 x-scheme-handler/bitwarden=bitwarden.desktop
 x-scheme-handler/chrome=firefox.desktop
 x-scheme-handler/discord=vesktop.desktop
@@ -75,6 +77,7 @@ x-scheme-handler/http=firefox.desktop
 x-scheme-handler/https=firefox.desktop
 x-scheme-handler/mailto=thunderbird.desktop
 x-scheme-handler/mid=thunderbird.desktop
-x-scheme-handler/slack=slack.desktop
 x-scheme-handler/sgnl=signal.desktop
 x-scheme-handler/signalcaptcha=signal.desktop
+x-scheme-handler/slack=slack.desktop
+x-scheme-handler/claude-cli=claude-code-url-handler.desktop
