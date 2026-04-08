@@ -95,9 +95,18 @@ in
       with pkgs;
       lib.optionals cfg.langs [
         (python3.withPackages (used-python-pkgs))
-        # yarn-berry
-        nodejs_24
-        corepack_24
+        (runCommand "nodejs-wrapped"
+          {
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+          }
+          ''
+            mkdir -p $out/bin
+            for bin in ${pkgs.nodejs_24}/bin/*; do
+              makeWrapper "$bin" "$out/bin/$(basename "$bin")" \
+                --prefix LD_LIBRARY_PATH : "${pkgs.lib.makeLibraryPath [ pkgs.libuuid ]}"
+            done
+          ''
+        )
         pm2
         ocaml
         ocamlPackages.utop
