@@ -59,6 +59,11 @@ in
       enableACME = true;
       forceSSL = true;
 
+      # this is redundant since it's already a *.foo
+      extraConfig = ''
+        add_header Strict-Transport-Security "max-age=63072000" always;
+      '';
+
       locations."/" = {
         proxyPass = "http://127.0.0.1:8080";
         proxyWebsockets = true;
