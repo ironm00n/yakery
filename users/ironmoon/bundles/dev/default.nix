@@ -18,6 +18,8 @@ let
   cfg = config.bundles.dev;
   used-python-pkgs =
     python-pkgs: with python-pkgs; [
+      z3-solver
+
       pandas
       matplotlib
       flask
@@ -145,14 +147,15 @@ in
         (claude-code-bin.overrideAttrs (
           finalAttrs:
           let
-            version = "2.1.92";
+            # https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.111/manifest.json
+            version = "2.1.111";
             baseUrl = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases";
           in
           {
             inherit version;
             src = fetchurl {
               url = "${baseUrl}/${version}/linux-x64/claude";
-              sha256 = "e22324514967ff2d5e9f91f0ee37e4675bf8b6dfec27fafb19cb25cc5b23fcaf";
+              sha256 = "5d4df970040b0f83aac434ae540b409126a4778a379e8c9b4c793560e3bfa060";
             };
           }
         ))
