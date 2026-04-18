@@ -18,6 +18,8 @@ let
   cfg = config.bundles.dev;
   used-python-pkgs =
     python-pkgs: with python-pkgs; [
+      z3-solver
+
       pandas
       matplotlib
       flask
