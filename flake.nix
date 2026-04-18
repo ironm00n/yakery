@@ -134,10 +134,10 @@
           nixpkgs.pkgs = pkgs;
 
           nix.package = lib.mkIf use-lix pkgs.lix;
+          nix.settings.lint-url-literals = "fatal";
           nix.settings.experimental-features = [
             "nix-command"
             "flakes"
-            "no-url-literals"
           ]
           ++ (if use-lix then [ "pipe-operator" ] else [ "pipe-operators" ]);
         };
