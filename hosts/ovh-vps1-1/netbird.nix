@@ -43,6 +43,7 @@ in
     { key = "relay_secret_container"; }
     { key = "relay_secret"; }
     { key = "setup_env"; }
+    { key = "idp_mgmt_client_secret"; }
   ];
 
   services.netbird.server = {
@@ -82,17 +83,33 @@ in
       oidcConfigEndpoint = "https://auth.${domain}/.well-known/openid-configuration";
 
       settings = {
-        Signal.URI = "${netbirdDomain}:443";
-
         HttpConfig.AuthAudience = clientId;
-        IdpManagerConfig.ClientConfig.ClientID = clientId;
-        DeviceAuthorizationFlow.ProviderConfig = {
-          Audience = clientId;
-          ClientID = clientId;
+
+        IdpManagerConfig = {
+          ManagerType = "zitadel";
+
+          ClientConfig = {
+            ClientID = "netbird";
+            ClientSecret._secret = secret "idp_mgmt_client_secret";
+            GrantType = "client_credentials";
+            TokenEndpoint = "https://auth.${domain}/oauth/v2/token";
+          };
+
+          ExtraConfig = {
+            ManagementEndpoint = "https://auth.${domain}/management/v1";
+          };
+        };
+        DeviceAuthorizationFlow = {
+          Provider = "hosted";
+          ProviderConfig = {
+            Audience = clientId;
+            ClientID = clientId;
+          };
         };
         PKCEAuthorizationFlow.ProviderConfig = {
           Audience = clientId;
           ClientID = clientId;
+          scope = "openid profile email offline_access api";
         };
 
         TURNConfig = {
