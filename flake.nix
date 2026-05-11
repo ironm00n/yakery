@@ -203,6 +203,15 @@
           host = ./hosts/ovh-vps1-1/host-cfg.nix;
           no-hm = true;
         };
+        oracle-a1-flex-1 = {
+          system = "aarch64-linux";
+          additionalModules = [
+            disko.nixosModules.disko
+            ./hosts/oracle-a1-flex-1/configuration.nix
+          ];
+          host = ./hosts/oracle-a1-flex-1/host-cfg.nix;
+          no-hm = true;
+        };
         oracle-e2-1-micro-1 = {
           system = "x86_64-linux";
           additionalModules = [
