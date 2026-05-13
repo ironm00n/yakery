@@ -3,22 +3,30 @@
   lib,
   config,
   inputs,
+  my-lib,
   ...
 }:
 let
   dbPort = 5432;
-  sopsFile = inputs.secrets.lib.forgejo;
   clientId = "371976088601034753";
   conf = config.services.forgejo;
+
+  forgejo-secrets =
+    my-lib.sops.mkSecrets
+      {
+        inherit config;
+        sopsFile = inputs.secrets.lib.forgejo;
+        prefix = "forgejo";
+        separator = "-";
+        usergroup = "forgejo";
+      }
+      [
+        "client_secret"
+      ];
+  get-forgejo-secret = forgejo-secrets.get-path;
 in
 {
-  sops.age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
-  sops.secrets.forgejo-client-secret = {
-    inherit sopsFile;
-    key = "client_secret";
-    owner = "forgejo";
-    group = "forgejo";
-  };
+  sops.secrets = forgejo-secrets.secrets;
 
   services.forgejo = {
     enable = true;
@@ -137,7 +145,7 @@ in
       Group = "forgejo";
       RemainAfterExit = true;
       LoadCredential = [
-        "client-secret:${config.sops.secrets.forgejo-client-secret.path}"
+        "client-secret:${get-forgejo-secret "client_secret"}"
       ];
     };
 

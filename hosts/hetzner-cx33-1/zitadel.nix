@@ -2,36 +2,35 @@
   config,
   lib,
   inputs,
+  my-lib,
   ...
 }:
 let
   domain = "ironmoon.dev";
-  sopsFile = inputs.secrets.lib.zitadel;
+  zitadel-secrets =
+    my-lib.sops.mkSecrets
+      {
+        inherit config;
+        sopsFile = inputs.secrets.lib.zitadel;
+        prefix = "zitadel";
+        separator = "-";
+        owner = "zitadel";
+        group = "zitadel";
+      }
+      [
+        "master_key"
+        "admin_steps"
+        "settings"
+        {
+          key = "postgres_env";
+          owner = null;
+          group = null;
+        }
+      ];
+  get-zitadel-secret = zitadel-secrets.get-path;
 in
 {
-  sops.age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
-  sops.secrets.zitadel-master-key = {
-    inherit sopsFile;
-    key = "master_key";
-    owner = "zitadel";
-    group = "zitadel";
-  };
-  sops.secrets.zitadel-admin-steps = {
-    inherit sopsFile;
-    key = "admin_steps";
-    owner = "zitadel";
-    group = "zitadel";
-  };
-  sops.secrets.zitadel-settings = {
-    inherit sopsFile;
-    key = "settings";
-    owner = "zitadel";
-    group = "zitadel";
-  };
-  sops.secrets.zitadel-postgres-env = {
-    inherit sopsFile;
-    key = "postgres_env";
-  };
+  sops.secrets = zitadel-secrets.secrets;
 
   users.users.zitadel = {
     isSystemUser = true;
@@ -47,9 +46,9 @@ in
     user = "zitadel";
     group = "zitadel";
 
-    masterKeyFile = config.sops.secrets.zitadel-master-key.path;
-    extraStepsPaths = [ config.sops.secrets.zitadel-admin-steps.path ];
-    extraSettingsPaths = [ config.sops.secrets.zitadel-settings.path ];
+    masterKeyFile = get-zitadel-secret "master_key";
+    extraStepsPaths = [ (get-zitadel-secret "admin_steps") ];
+    extraSettingsPaths = [ (get-zitadel-secret "settings") ];
 
     tlsMode = "external";
     settings = {
@@ -72,7 +71,7 @@ in
   virtualisation.oci-containers.containers.zitadel-db = {
     image = "postgres:17";
     ports = [ "127.0.0.1:5432:5432" ];
-    environmentFiles = [ config.sops.secrets.zitadel-postgres-env.path ];
+    environmentFiles = [ (get-zitadel-secret "postgres_env") ];
     volumes = [
       "/var/lib/zitadel-db:/var/lib/postgresql/data"
     ];
