@@ -157,6 +157,7 @@
         ];
       my-lib = {
         sops = import ./lib/sops.nix { inherit lib; };
+        systemd = import ./lib/systemd.nix { inherit lib; };
       };
       base-system = system: {
         inherit system;
