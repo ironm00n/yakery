@@ -76,33 +76,19 @@ in
       "/var/lib/zitadel-db:/var/lib/postgresql/data"
     ];
   };
-  networking.firewall.allowedTCPPorts = [
-    80
-    443
-  ];
 
   # Ensure the mounted directory for the database exists
   system.activationScripts.makeZitadelDir = lib.stringAfter [ "var" ] ''
     mkdir -p /var/lib/zitadel-db
   '';
 
-  services.nginx.enable = true;
-  services.nginx.virtualHosts."auth.${domain}" = {
-    forceSSL = true;
-    enableACME = true;
-    locations."/" = {
-      proxyPass = "http://127.0.0.1:39995";
-      proxyWebsockets = true;
-      extraConfig = ''
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-      '';
+  bundles.reverse-proxy = {
+    enable = true;
+    openFirewall = true;
+    acme-email = "me@ironmoon.dev";
+    hosts."auth.${domain}" = {
+      port = 39995;
+      websockets = true;
     };
-  };
-
-  security.acme = {
-    acceptTerms = true;
-    defaults.email = "me@ironmoon.dev";
   };
 }

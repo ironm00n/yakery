@@ -186,39 +186,16 @@ in
 
   systemd.services.forgejo.requires = [ "postgresql.target" ];
 
-  security.acme = {
-    acceptTerms = true;
-    defaults.email = "me@ironmoon.dev";
-  };
-
-  services.nginx = {
+  bundles.reverse-proxy = {
     enable = true;
-    recommendedTlsSettings = true;
-    recommendedOptimisation = true;
-    recommendedGzipSettings = true;
-    recommendedProxySettings = true;
-
-    virtualHosts."code.ironmoon.dev" = {
-      enableACME = true;
-      forceSSL = true;
-
-      locations."/" = {
-        proxyPass = "http://127.0.0.1:${toString conf.settings.server.HTTP_PORT}";
-        extraConfig = ''
-          client_max_body_size 512M;
-          proxy_read_timeout 300s;
-        '';
-      };
-    };
-    virtualHosts."_default_" = {
-      default = true;
-      rejectSSL = true;
-      locations."/".return = "444";
+    openFirewall = true;
+    acme-email = "me@ironmoon.dev";
+    hosts."code.ironmoon.dev" = {
+      port = conf.settings.server.HTTP_PORT;
+      extraLocationConfig = ''
+        client_max_body_size 512M;
+        proxy_read_timeout 300s;
+      '';
     };
   };
-
-  networking.firewall.allowedTCPPorts = [
-    80
-    443
-  ];
 }

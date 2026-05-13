@@ -73,28 +73,10 @@ in
     '';
   };
 
-  services.nginx = {
+  bundles.reverse-proxy = {
     enable = true;
-    recommendedProxySettings = true;
-    recommendedTlsSettings = true;
-
-    virtualHosts."haste.tanzanite.dev" = {
-      enableACME = true;
-      forceSSL = true;
-
-      locations."/" = {
-        proxyPass = "http://127.0.0.1:8080";
-      };
-    };
+    openFirewall = true;
+    acme-email = "me@ironmoon.dev";
+    hosts."haste.tanzanite.dev".port = 8080;
   };
-
-  security.acme = {
-    acceptTerms = true;
-    defaults.email = "owen@duckham.dev";
-  };
-
-  networking.firewall.allowedTCPPorts = [
-    80
-    443
-  ];
 }
