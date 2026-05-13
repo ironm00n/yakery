@@ -155,10 +155,13 @@
         ] ++ lib.optionals use-hm [
           home-manager.nixosModules.home-manager
         ];
+      my-lib = {
+        sops = import ./lib/sops.nix { inherit lib; };
+      };
       base-system = system: {
         inherit system;
         specialArgs = {
-          inherit inputs system;
+          inherit inputs system my-lib;
           pkgs-stable = (mk-pkgs-stable system);
         };
       };

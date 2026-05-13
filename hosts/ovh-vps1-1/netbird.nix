@@ -1,7 +1,7 @@
 {
   config,
   inputs,
-  lib,
+  my-lib,
   ...
 }:
 # based on https://lukadeka.com/blog/setting-up-netbird-with-zitadel-on-nixos/
@@ -10,41 +10,25 @@ let
   netbirdDomain = "vpn.${domain}";
   clientId = "360244641284554753";
 
-  sopsFile = inputs.secrets.lib.netbird;
-  mkNetbirdSecrets =
-    secret:
-    secret
-    |> builtins.map (
-      {
-        key,
-        usergroup ? null,
-        owner ? usergroup,
-        group ? usergroup,
-      }:
-      {
-        name = "netbird_${key}";
-        value = {
-          inherit sopsFile;
-          inherit key owner group;
-        };
-      }
-    )
-    |> builtins.listToAttrs;
-  secret = key: config.sops.secrets.${"netbird_" + key}.path;
-in
-{
-  sops.age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
-  sops.secrets = mkNetbirdSecrets [
+  netbird = my-lib.sops.mkSecrets {
+    inherit config;
+    sopsFile = inputs.secrets.lib.netbird;
+    prefix = "netbird";
+  } [
     {
       key = "turn_password";
       usergroup = "turnserver";
     }
-    { key = "data_store_encryption_key"; }
-    { key = "relay_secret_container"; }
-    { key = "relay_secret"; }
-    { key = "setup_env"; }
-    { key = "idp_mgmt_client_secret"; }
+    "data_store_encryption_key"
+    "relay_secret_container"
+    "relay_secret"
+    "setup_env"
+    "idp_mgmt_client_secret"
   ];
+  get-netbird-secret = netbird.get-path;
+in
+{
+  sops.secrets = netbird.secrets;
 
   services.netbird.server = {
     enable = true;
@@ -54,7 +38,7 @@ in
     coturn = {
       enable = true;
       domain = netbirdDomain;
-      passwordFile = secret "turn_password";
+      passwordFile = get-netbird-secret "turn_password";
     };
 
     signal = {
@@ -90,7 +74,7 @@ in
 
           ClientConfig = {
             ClientID = "netbird";
-            ClientSecret._secret = secret "idp_mgmt_client_secret";
+            ClientSecret._secret = get-netbird-secret "idp_mgmt_client_secret";
             GrantType = "client_credentials";
             TokenEndpoint = "https://auth.${domain}/oauth/v2/token";
           };
@@ -113,12 +97,12 @@ in
         };
 
         TURNConfig = {
-          Secret._secret = secret "turn_password";
+          Secret._secret = get-netbird-secret "turn_password";
           CredentialsTTL = "12h";
           TimeBasedCredentials = false;
           Turns = [
             {
-              Password._secret = secret "turn_password";
+              Password._secret = get-netbird-secret "turn_password";
               Proto = "udp";
               URI = "turn:${netbirdDomain}:3478";
               Username = "netbird";
@@ -128,16 +112,16 @@ in
         Relay = {
           Addresses = [ "rels://${netbirdDomain}:33080" ];
           CredentialsTTL = "24h";
-          Secret._secret = secret "relay_secret";
+          Secret._secret = get-netbird-secret "relay_secret";
         };
-        DataStoreEncryptionKey._secret = secret "data_store_encryption_key";
+        DataStoreEncryptionKey._secret = get-netbird-secret "data_store_encryption_key";
       };
     };
   };
 
   # Make the env available to the systemd service
   systemd.services.netbird-management.serviceConfig = {
-    EnvironmentFile = secret "setup_env";
+    EnvironmentFile = get-netbird-secret "setup_env";
   };
 
   # Override ACME settings to get a cert
@@ -167,7 +151,7 @@ in
       NB_TLS_KEY_FILE = "/certs/key.pem";
     };
     environmentFiles = [
-      (secret "relay_secret_container")
+      (get-netbird-secret "relay_secret_container")
     ];
   };
 
