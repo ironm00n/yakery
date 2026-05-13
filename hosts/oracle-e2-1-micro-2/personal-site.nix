@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ lib, pkgs, my-lib, ... }:
 
 let
   siteUser = "personal-site";
@@ -29,7 +29,7 @@ in
       NODE_ENV = "production";
     };
 
-    serviceConfig = {
+    serviceConfig = my-lib.systemd.hardening.network // {
       Type = "simple";
       User = siteUser;
       Group = siteGroup;
@@ -40,11 +40,8 @@ in
       Restart = "always";
       RestartSec = 2;
 
-      NoNewPrivileges = true;
-      PrivateTmp = true;
-      ProtectSystem = "strict";
-      ProtectHome = true;
       ReadWritePaths = [ workDir ];
+      MemoryDenyWriteExecute = false; # V8 JIT
     };
   };
 

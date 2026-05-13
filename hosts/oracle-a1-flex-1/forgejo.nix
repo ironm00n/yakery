@@ -139,7 +139,7 @@ in
     requires = [ "forgejo.service" ];
     wantedBy = [ "multi-user.target" ];
 
-    serviceConfig = {
+    serviceConfig = my-lib.systemd.hardening.network // {
       Type = "oneshot";
       User = "forgejo";
       Group = "forgejo";
