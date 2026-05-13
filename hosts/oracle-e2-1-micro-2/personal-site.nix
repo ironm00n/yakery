@@ -48,41 +48,14 @@ in
     };
   };
 
-  services.nginx = {
+  bundles.reverse-proxy = {
     enable = true;
-    recommendedProxySettings = true;
-    recommendedTlsSettings = true;
-
-    virtualHosts."owen.foo" = {
-      serverAliases = [ "owen.duckham.dev" ];
-
-      enableACME = true;
-      forceSSL = true;
-
-      # this is redundant since it's already a *.foo
-      extraConfig = ''
-        add_header Strict-Transport-Security "max-age=63072000" always;
-      '';
-
-      locations."/" = {
-        proxyPass = "http://127.0.0.1:8080";
-        proxyWebsockets = true;
-        extraConfig = ''
-          proxy_read_timeout 90s;
-          proxy_connect_timeout 90s;
-          proxy_send_timeout 90s;
-        '';
-      };
+    openFirewall = true;
+    acme-email = "owen@duckham.dev";
+    hosts."owen.foo" = {
+      port = 8080;
+      aliases = [ "owen.duckham.dev" ];
+      hsts.enable = true; # not strictly needed
     };
   };
-
-  security.acme = {
-    acceptTerms = true;
-    defaults.email = "owen@duckham.dev";
-  };
-
-  networking.firewall.allowedTCPPorts = [
-    80
-    443
-  ];
 }

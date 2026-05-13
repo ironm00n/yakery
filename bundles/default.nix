@@ -11,6 +11,7 @@
     ./printing.nix
     ./virtualisation.nix
     ./gaming.nix
+    ./reverse-proxy.nix
 
     ./displaylink.nix
   ];

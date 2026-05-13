@@ -124,15 +124,12 @@ in
     EnvironmentFile = get-netbird-secret "setup_env";
   };
 
-  # Override ACME settings to get a cert
-  services.nginx.virtualHosts = lib.mkMerge [
-    {
-      "${netbirdDomain}" = {
-        enableACME = true;
-        forceSSL = true;
-      };
-    }
-  ];
+  # ACME on top of the vhost the netbird module already created
+  bundles.reverse-proxy = {
+    enable = true;
+    acme-email = "me@ironmoon.dev";
+    hosts.${netbirdDomain} = { }; # intentionally doesn't specify port
+  };
 
   # Run the Netbird relay with TLS to allow relaying over TCP
   virtualisation.oci-containers.containers.netbird-relay = {
@@ -173,9 +170,4 @@ in
       to = 40050;
     }
   ];
-
-  security.acme = {
-    acceptTerms = true;
-    defaults.email = "me@ironmoon.dev";
-  };
 }
