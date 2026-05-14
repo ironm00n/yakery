@@ -1,32 +1,33 @@
 {
   config,
   lib,
+  my-lib,
   pkgs,
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
+  inherit (my-lib) mkDisableOption;
   cfg = config.bundles.discord;
 in
 {
   options.bundles.discord = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enables discord.";
-    };
+    enable = mkEnableOption "Discord";
+    vesktop = mkDisableOption "Vesktop";
+    vencord = mkEnableOption "inject Vencord into official clients";
+    official = mkEnableOption "official clients";
   };
 
   config = mkIf cfg.enable {
     home.packages =
       let
         discord = pkgs.discord.override {
-          withVencord = true;
+          withVencord = cfg.vencord;
         };
         discord-ptb = pkgs.discord-ptb;
         discord-canary = pkgs.discord-canary.override {
-          withOpenASAR = true;
-          withVencord = true;
+          withOpenASAR = cfg.vencord;
+          withVencord = cfg.vencord;
         };
 
         # fork of vgskye/ventex
@@ -46,11 +47,13 @@ in
           userPlugins = [ katex-plugin ];
         };
       in
-      [
+      lib.optionals cfg.vesktop [
+        vesktop
+      ]
+      ++ lib.optionals cfg.official [
         discord
         discord-ptb
         discord-canary
-        vesktop
       ];
   };
 }

@@ -1,24 +1,16 @@
 {
   config,
   lib,
-  my-utils,
   pkgs,
-  pkgs-stable,
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
-  inherit (my-utils) symlink;
-  inherit (config.xdg) configHome;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.sec;
 in
 {
   options.bundles.sec = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable security stuff.";
-    };
+    enable = mkEnableOption "security stuff";
   };
 
   config = mkIf cfg.enable {

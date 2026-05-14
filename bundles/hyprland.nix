@@ -6,16 +6,12 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.hyprland;
 in
 {
   options.bundles.hyprland = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable hyprland related config.";
-    };
+    enable = mkEnableOption "hyprland related config";
   };
 
   config = mkIf cfg.enable {

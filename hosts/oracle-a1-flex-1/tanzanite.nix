@@ -22,7 +22,6 @@ in
     createHome = true;
     openssh.authorizedKeys.keys = config.users.users.root.openssh.authorizedKeys.keys;
     packages = with pkgs; [
-      pm2
       nodejs
       yarn
       git

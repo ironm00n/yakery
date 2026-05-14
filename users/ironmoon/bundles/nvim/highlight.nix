@@ -95,7 +95,7 @@ in
   "@variable".link = "Identifier";
   #"@variable.builtin" = {};
 
-"@variable.parameter" = { italic = true; };
+  "@variable.parameter" = { italic = true; };
 
   "@constructor" = { fg = a.yellow_orange; };
 

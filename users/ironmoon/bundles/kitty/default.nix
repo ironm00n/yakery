@@ -7,18 +7,14 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   inherit (my-utils) symlink;
   cfg = config.bundles.kitty;
   inherit (config.xdg) configHome;
 in
 {
   options.bundles.kitty = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable kitty.";
-    };
+    enable = mkEnableOption "kitty";
   };
 
   config = mkIf cfg.enable {

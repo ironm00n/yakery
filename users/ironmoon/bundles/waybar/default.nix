@@ -4,16 +4,12 @@
   ...
 }@args:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.waybar;
 in
 {
   options.bundles.waybar = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable waybar.";
-    };
+    enable = mkEnableOption "waybar";
   };
 
   config = mkIf cfg.enable {

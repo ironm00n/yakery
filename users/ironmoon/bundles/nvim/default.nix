@@ -5,16 +5,12 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.nvim;
 in
 {
   options.bundles.nvim = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable neovim.";
-    };
+    enable = mkEnableOption "neovim";
   };
 
   config = mkIf cfg.enable {

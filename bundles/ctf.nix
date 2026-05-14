@@ -6,22 +6,13 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.ctf;
 in
 {
   options.bundles.ctf = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "CTF related tools and config.";
-    };
-
-    ld = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable nix-ld for CTFs.";
-    };
+    enable = mkEnableOption "CTF related tools and config";
+    ld = mkEnableOption "nix-ld for CTFs";
   };
 
   config = mkIf cfg.enable {

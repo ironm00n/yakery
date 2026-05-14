@@ -155,10 +155,7 @@
         ] ++ lib.optionals use-hm [
           home-manager.nixosModules.home-manager
         ];
-      my-lib = {
-        sops = import ./lib/sops.nix { inherit lib; };
-        systemd = import ./lib/systemd.nix { inherit lib; };
-      };
+      my-lib = import ./lib {inherit lib; };
       base-system = system: {
         inherit system;
         specialArgs = {

@@ -63,7 +63,8 @@ in
       oauth2_client = {
         ENABLE_AUTO_REGISTRATION = true;
         UPDATE_AVATAR = true;
-        NICKNAME = "preferred_username";
+        # TODO: https://codeberg.org/forgejo/forgejo/pulls/12504
+        # USERNAME = "preferred_username";
         ACCOUNT_LINKING = "disabled";
       };
 
@@ -192,6 +193,7 @@ in
     acme-email = "me@ironmoon.dev";
     hosts."code.ironmoon.dev" = {
       port = conf.settings.server.HTTP_PORT;
+      aliases = [ "c.irm.is" ];
       extraLocationConfig = ''
         client_max_body_size 512M;
         proxy_read_timeout 300s;

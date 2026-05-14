@@ -6,18 +6,14 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   inherit (my-utils) symlink;
   cfg = config.bundles.eww;
   ewwDir = "${config.xdg.configHome}/eww";
 in
 {
   options.bundles.eww = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable eww bar.";
-    };
+    enable = mkEnableOption "eww bar";
   };
 
   config = mkIf cfg.enable {

@@ -3,6 +3,7 @@
   config,
   pkgs-stable,
   lib,
+  my-lib,
   pkgs,
   ...
 }:
@@ -21,7 +22,7 @@
     ];
     extraSpecialArgs = import ./extra-special-args.nix {
       inherit inputs lib;
-      inherit pkgs pkgs-stable;
+      inherit pkgs pkgs-stable my-lib;
       inherit (config) host;
     };
     users.ironmoon = ./ironmoon/home-manager.nix;

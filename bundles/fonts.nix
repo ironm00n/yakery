@@ -3,24 +3,19 @@
 args@{
   config,
   lib,
+  my-lib,
   pkgs,
   ...
 }:
 let
-  inherit (lib)
-    types
-    mkOption
-    mkIf
-    ;
+  inherit (lib) mkEnableOption mkIf;
+  inherit (my-lib) mkDisableOption;
   cfg = config.bundles.fonts;
 in
 {
   options.bundles.fonts = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable font customizations.";
-    };
+    enable = mkEnableOption "font customizations";
+    emoji = mkDisableOption "emoji fonts";
   };
 
   config = mkIf cfg.enable {
@@ -31,11 +26,9 @@ in
           twemoji-colr = import ../packages/twemoji-colr/package.nix args;
           twemoji-cbdt = import ../packages/twemoji-cbdt/package.nix args;
         in
-        [
-
+        lib.optionals cfg.emoji [
           twemoji-colr
           twemoji-cbdt
-
         ]
         ++ (with pkgs; [
           # default minus noto-fonts-color-emoji

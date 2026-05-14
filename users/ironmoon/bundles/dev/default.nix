@@ -1,18 +1,15 @@
 {
   config,
   lib,
+  my-lib,
   my-utils,
   pkgs,
   pkgs-stable,
   ...
 }:
 let
-  inherit (lib)
-    types
-    mkOption
-    mkIf
-    lowPrio
-    ;
+  inherit (lib) mkEnableOption mkIf lowPrio;
+  inherit (my-lib) mkDisableOption;
   inherit (my-utils) symlink;
   inherit (config.xdg) configHome;
   cfg = config.bundles.dev;
@@ -64,32 +61,35 @@ let
       pynvim
       # jd-gui # removed
     ];
+
+  inherit (pkgs) claude-code-bin fetchurl;
+
+  pinned-claude-code = claude-code-bin.overrideAttrs (
+    finalAttrs:
+    let
+      # https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest
+      # https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.141/manifest.json
+      version = "2.1.141";
+      baseUrl = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases";
+    in
+    {
+      inherit version;
+      src = fetchurl {
+        url = "${baseUrl}/${version}/linux-x64/claude";
+        sha256 = "832be26e8f15b2ae99e520a22b034fc4bfad1cb5b84de6b706487072c56bb42e";
+      };
+    }
+  );
+  claude-code = if cfg.pinned-claude then pinned-claude-code else claude-code-bin;
 in
 {
   options.bundles.dev = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable global dev stuff.";
-    };
-
-    langs = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Enable Langauges.";
-    };
-
-    jetbrains = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Enable Jetbrains products.";
-    };
-
-    tooling = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Enable dev tooling (IDEs, editors, etc).";
-    };
+    enable = mkEnableOption "global dev stuff";
+    langs = mkDisableOption "languages";
+    jetbrains = mkDisableOption "Jetbrains products";
+    tooling = mkDisableOption "dev tooling (IDEs, editors, etc)";
+    pinned-claude = mkEnableOption "pin claude-code version manually";
+    other-llm = mkDisableOption "enable rarely used llm tooling";
   };
 
   config = mkIf cfg.enable {
@@ -144,21 +144,9 @@ in
         arduino-ide
         lazygit
 
-        (claude-code-bin.overrideAttrs (
-          finalAttrs:
-          let
-            # https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.111/manifest.json
-            version = "2.1.111";
-            baseUrl = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases";
-          in
-          {
-            inherit version;
-            src = fetchurl {
-              url = "${baseUrl}/${version}/linux-x64/claude";
-              sha256 = "5d4df970040b0f83aac434ae540b409126a4778a379e8c9b4c793560e3bfa060";
-            };
-          }
-        ))
+        claude-code
+      ]
+      ++ lib.optionals cfg.other-llm [
         code-cursor
         antigravity.fhs
         windsurf

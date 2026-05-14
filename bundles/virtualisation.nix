@@ -5,40 +5,16 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.virtualisation;
 in
 {
   options.bundles.virtualisation = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable virtualisation.";
-    };
-
-    libvirt = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable libvirt.";
-    };
-
-    docker = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable Docker.";
-    };
-
-    waydroid = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable Waydroid.";
-    };
-
-    virtualbox = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable virtualbox.";
-    };
+    enable = mkEnableOption "virtualisation";
+    libvirt = mkEnableOption "libvirt.";
+    docker = mkEnableOption "Docker";
+    waydroid = mkEnableOption "Waydroid";
+    virtualbox = mkEnableOption "VirtualBox";
   };
 
   config = mkIf cfg.enable {

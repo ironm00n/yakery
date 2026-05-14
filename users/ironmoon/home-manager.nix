@@ -40,6 +40,7 @@ in
     dev.enable = true;
     dev.jetbrains = !host.lightweight;
     dev.langs = host.id != fw12;
+    dev.pinned-claude = host.id == fw13;
     sec.enable = !host.lightweight;
     emacs.enable = true;
     nvim.enable = host.id == fw12;
