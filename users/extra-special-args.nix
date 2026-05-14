@@ -1,12 +1,13 @@
 {
   inputs,
   lib,
+  my-lib,
   host,
   pkgs,
   pkgs-stable,
 }:
 {
-  inherit pkgs-stable inputs;
+  inherit pkgs-stable inputs my-lib;
   inherit host;
   # TODO: how to get home-manager's version of config?
   my-utils = import ./my-utils.nix {

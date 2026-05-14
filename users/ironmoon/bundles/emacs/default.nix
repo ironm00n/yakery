@@ -6,16 +6,17 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   inherit (my-utils) symlink;
   inherit (config) xdg;
   cfg = config.bundles.emacs;
 
+  # TODO: pin to versioned releases on next release (> 2.1.0)
   doomemacs = pkgs.fetchFromGitHub {
     owner = "doomemacs";
     repo = "doomemacs";
-    rev = "09f104795de1faa2cfed95694c1a37d0def1ec1b"; # release(modules): 25.10.0-dev
-    hash = "sha256-yrf5f5OyODhxOV9+7HFyo1j7cgoE1DERu2xzA74RX90=";
+    rev = "6be3337b49867bd86f90fe5ca4beeb6b38afaddb"; # fix(evil): tab ex commands
+    hash = "sha256-7ErKUgw6Ch7hP1oBjMSos8xXRD+rxxjaOldRn+TcClo=";
   };
 
   doomDir = "${xdg.configHome}/doom";
@@ -24,11 +25,7 @@ let
 in
 {
   options.bundles.emacs = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable (doom) emacs.";
-    };
+    enable = mkEnableOption "(doom) emacs";
   };
 
   config = mkIf cfg.enable {

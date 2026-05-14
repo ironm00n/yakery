@@ -4,16 +4,12 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.printing;
 in
 {
   options.bundles.printing = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable printing.";
-    };
+    enable = mkEnableOption "printing (paper)";
   };
 
   config = mkIf cfg.enable {

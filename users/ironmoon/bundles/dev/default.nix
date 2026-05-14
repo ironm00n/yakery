@@ -1,18 +1,15 @@
 {
   config,
   lib,
+  my-lib,
   my-utils,
   pkgs,
   pkgs-stable,
   ...
 }:
 let
-  inherit (lib)
-    types
-    mkOption
-    mkIf
-    lowPrio
-    ;
+  inherit (lib) mkEnableOption mkIf lowPrio;
+  inherit (my-lib) mkDisableOption;
   inherit (my-utils) symlink;
   inherit (config.xdg) configHome;
   cfg = config.bundles.dev;
@@ -67,29 +64,11 @@ let
 in
 {
   options.bundles.dev = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable global dev stuff.";
-    };
-
-    langs = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Enable Langauges.";
-    };
-
-    jetbrains = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Enable Jetbrains products.";
-    };
-
-    tooling = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Enable dev tooling (IDEs, editors, etc).";
-    };
+    enable = mkEnableOption "global dev stuff";
+    langs = mkDisableOption "languages";
+    jetbrains = mkDisableOption "Jetbrains products";
+    tooling = mkDisableOption "dev tooling (IDEs, editors, etc)";
+    other-llm = mkDisableOption "enable rarely used llm tooling";
   };
 
   config = mkIf cfg.enable {
@@ -145,6 +124,8 @@ in
         lazygit
 
         claude-code
+      ]
+      ++ lib.optionals cfg.other-llm [
         code-cursor
         antigravity.fhs
         windsurf

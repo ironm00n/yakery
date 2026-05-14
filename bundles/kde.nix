@@ -6,16 +6,12 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.kde;
 in
 {
   options.bundles.kde = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable KDE related config.";
-    };
+    enable = mkEnableOption "KDE related config";
   };
 
   config = mkIf cfg.enable {

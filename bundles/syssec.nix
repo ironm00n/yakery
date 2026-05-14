@@ -7,17 +7,13 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.syssec;
   inherit (inputs) binary-ninja pwndbg;
 in
 {
   options.bundles.syssec = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "System Security tools.";
-    };
+    enable = mkEnableOption "system Security tools";
   };
 
   config = mkIf cfg.enable {

@@ -6,8 +6,7 @@
 }:
 let
   inherit (lib)
-    types
-    mkOption
+    mkEnableOption
     mkIf
     mkDefault
     ;
@@ -15,11 +14,7 @@ let
 in
 {
   options.bundles.mullvad-vpn = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable mullvad vpn.";
-    };
+    enable = mkEnableOption "mullvad vpn";
   };
 
   config = mkIf cfg.enable {

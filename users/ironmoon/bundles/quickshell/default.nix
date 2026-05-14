@@ -7,18 +7,14 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   inherit (my-utils) symlink;
   cfg = config.bundles.quickshell;
   quickshellDir = "${config.xdg.configHome}/quickshell";
 in
 {
   options.bundles.quickshell = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Enable quickshell.";
-    };
+    enable = mkEnableOption "Quickshell";
   };
 
   config = mkIf cfg.enable {

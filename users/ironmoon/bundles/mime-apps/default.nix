@@ -5,17 +5,13 @@
   ...
 }:
 let
-  inherit (lib) types mkOption mkIf;
+  inherit (lib) mkEnableOption mkIf;
   inherit (my-utils) symlink;
   cfg = config.bundles.mime-apps;
 in
 {
   options.bundles.mime-apps = {
-    enable = mkOption {
-      type = types.bool;
-      default = false;
-      description = "Manage default applications via symlinked mimeapps.list.";
-    };
+    enable = mkEnableOption "manage default applications via symlinked mimeapps.list";
   };
 
   config = mkIf cfg.enable {
