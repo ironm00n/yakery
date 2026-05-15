@@ -62,9 +62,9 @@ let
       # jd-gui # removed
     ];
 
-  inherit (pkgs) claude-code-bin fetchurl;
+  inherit (pkgs) claude-code fetchurl;
 
-  pinned-claude-code = claude-code-bin.overrideAttrs (
+  pinned-claude-code = claude-code.overrideAttrs (
     finalAttrs:
     let
       # https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest
@@ -80,7 +80,7 @@ let
       };
     }
   );
-  claude-code = if cfg.pinned-claude then pinned-claude-code else claude-code-bin;
+  effective-claude-code = if cfg.pinned-claude then pinned-claude-code else claude-code;
 in
 {
   options.bundles.dev = {
@@ -89,7 +89,7 @@ in
     jetbrains = mkDisableOption "Jetbrains products";
     tooling = mkDisableOption "dev tooling (IDEs, editors, etc)";
     pinned-claude = mkEnableOption "pin claude-code version manually";
-    other-llm = mkDisableOption "enable rarely used llm tooling";
+    other-llm = mkEnableOption "enable rarely used llm tooling";
   };
 
   config = mkIf cfg.enable {
@@ -144,7 +144,7 @@ in
         arduino-ide
         lazygit
 
-        claude-code
+        effective-claude-code
       ]
       ++ lib.optionals cfg.other-llm [
         code-cursor
