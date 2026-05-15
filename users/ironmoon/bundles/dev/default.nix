@@ -68,7 +68,7 @@ in
     langs = mkDisableOption "languages";
     jetbrains = mkDisableOption "Jetbrains products";
     tooling = mkDisableOption "dev tooling (IDEs, editors, etc)";
-    other-llm = mkDisableOption "enable rarely used llm tooling";
+    other-llm = mkEnableOption "enable rarely used llm tooling";
   };
 
   config = mkIf cfg.enable {
