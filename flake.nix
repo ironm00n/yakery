@@ -254,7 +254,10 @@
           inherit pkgs inputs lib;
           inherit machines mk-pkgs-stable;
         };
-        nvim = import ./nix/nvim/default.nix { inherit (nixvim.legacyPackages.${system}) makeNixvim; };
+        nvim = import ./nix/nvim/default.nix {
+          inherit (nixvim.legacyPackages.${system}) makeNixvimWithModule;
+          pkgs = pkgs-map.${system};
+        };
       });
 
       formatter = eachSystem ({ system, ... }: treefmtEval.${system}.config.build.wrapper);

@@ -1,1 +1,6 @@
-{ makeNixvim }: makeNixvim (import ../../users/ironmoon/bundles/nvim/config.nix)
+{ makeNixvimWithModule, pkgs }:
+
+makeNixvimWithModule {
+  inherit pkgs;
+  module = import ../../users/ironmoon/bundles/nvim/config.nix;
+}
