@@ -84,9 +84,8 @@ in
       ]
       ++ [
         # TODO: https://github.com/NixOS/nixpkgs/issues/371479
-        # TODO: https://github.com/NixOS/nixpkgs/pull/374068
-        # TODO: https://github.com/NixOS/nixpkgs/issues/347350
-        bitwarden-desktop
+        # TODO: https://github.com/nix-community/home-manager/issues/5559
+        # bitwarden-desktop
 
         playerctl
 

@@ -27,4 +27,7 @@ with pkgs;
 
   kdePackages.qtwayland
   kdePackages.qtsvg
+
+  # HACK: needed bc of https://github.com/nix-community/home-manager/issues/5559
+  bitwarden-desktop
 ]
