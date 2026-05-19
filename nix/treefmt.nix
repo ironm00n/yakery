@@ -7,6 +7,7 @@
     "*.zip"
     "*.tar.gz"
     "users/ironmoon/bundles/nvim/highlight.nix"
+    "flake.nix"
   ];
   programs = {
     deadnix.enable = false;
