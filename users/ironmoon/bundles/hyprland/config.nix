@@ -45,6 +45,8 @@ in
 {
   enable = true;
 
+  configType = "hyprlang";
+
   # conflicts with uwsm
   systemd.enable = false;
 
