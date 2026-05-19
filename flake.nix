@@ -1,3 +1,4 @@
+# manually formatted
 {
   description = "ironmoon's NixOS configuration";
 
@@ -75,231 +76,192 @@
     ];
   };
 
-  outputs =
-    inputs@{
-      self,
-      nixpkgs,
-      nixpkgs-stable,
-      systems,
-      nixos-hardware,
-      sops-nix,
-      home-manager,
-      plasma-manager,
-      treefmt-nix,
-      nixvim,
-      disko,
-      flake-utils,
-      ...
-    }:
-    let
-      overlays = import ./overlays/default.nix;
-      inherit (nixpkgs) lib;
-      all-systems = import systems;
-      base-nixpkgs-config = {
-        allowUnfree = true;
-      };
-      pkgs-map =
-        all-systems
-        |> map (system: {
-          name = system;
-          value = import nixpkgs {
-            inherit system overlays;
-            config = base-nixpkgs-config;
-          };
-        })
-        |> builtins.listToAttrs;
-      eachSystem =
-        f:
-        lib.genAttrs all-systems (
-          system:
-          f {
-            inherit system;
-            pkgs = pkgs-map.${system};
-          }
-        );
-      treefmtEval = eachSystem ({ pkgs, ... }: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
-      mk-pkgs-stable =
-        system:
-        import nixpkgs-stable {
-          inherit system;
+  outputs = inputs@{
+    self,
+    nixpkgs,
+    nixpkgs-stable,
+    systems,
+    nixos-hardware,
+    sops-nix,
+    home-manager,
+    plasma-manager,
+    treefmt-nix,
+    nixvim,
+    flake-utils,
+    ...
+  }:
+  let
+    overlays = import ./overlays/default.nix;
+    inherit (nixpkgs) lib;
+    all-systems = import systems;
+    base-nixpkgs-config = {
+      allowUnfree = true;
+    };
+    pkgs-map =
+      all-systems
+      |> map (system: {
+        name = system;
+        value = import nixpkgs {
+          inherit system overlays;
           config = base-nixpkgs-config;
         };
-    in
-    let
-      use-lix = false;
-      base-config =
-        { pkgs, host, ... }:
-        {
-          host = host;
-          nixpkgs.pkgs = pkgs;
-
-          nix.package = lib.mkIf use-lix pkgs.lix;
-          nix.settings.lint-url-literals = "fatal";
-          nix.settings.experimental-features = [
-            "nix-command"
-            "flakes"
-          ]
-          ++ (if use-lix then [ "pipe-operator" ] else [ "pipe-operators" ]);
-        };
-      base-modules = ctx:
-        let
-          use-hm = !(ctx.machine.no-hm or false);
-          use-secrets = !(ctx.machine.no-secrets or false);
-        in
-        [
-          ./hosts/options.nix
-          (base-config ctx)
-          { host.use-secrets = use-secrets; }
-        ] ++ lib.optionals use-secrets [
-          sops-nix.nixosModules.sops
-        ] ++ lib.optionals use-hm [
-          home-manager.nixosModules.home-manager
-        ];
-      my-lib = import ./lib {inherit lib; };
-      base-system = system: {
-        inherit system;
-        specialArgs = {
-          inherit inputs system my-lib;
-          pkgs-stable = (mk-pkgs-stable system);
-        };
-      };
-      machines = {
-        fw12 = {
-          system = "x86_64-linux";
-          additionalModules = [
-            nixos-hardware.nixosModules.framework-12-13th-gen-intel
-            ./hosts/fw12/configuration.nix
-          ];
-          host = ./hosts/fw12/host-cfg.nix;
-        };
-        fw13 = {
-          system = "x86_64-linux";
-          additionalModules = [
-            nixos-hardware.nixosModules.framework-13-7040-amd
-            ./hosts/fw13/configuration.nix
-          ];
-          host = ./hosts/fw13/host-cfg.nix;
-        };
-        desktop = {
-          system = "x86_64-linux";
-          additionalModules = [
-            ./hosts/desktop/configuration.nix
-          ];
-          host = ./hosts/desktop/host-cfg.nix;
-        };
-        hetzner-cx33-1 = {
-          system = "x86_64-linux";
-          additionalModules = [
-            ./hosts/hetzner-cx33-1/configuration.nix
-          ];
-          host = ./hosts/hetzner-cx33-1/host-cfg.nix;
-          no-hm = true;
-        };
-        ovh-vps1-1 = {
-          system = "x86_64-linux";
-          additionalModules = [
-            disko.nixosModules.disko
-            ./hosts/ovh-vps1-1/configuration.nix
-          ];
-          host = ./hosts/ovh-vps1-1/host-cfg.nix;
-          no-hm = true;
-        };
-        oracle-a1-flex-1 = {
-          system = "aarch64-linux";
-          additionalModules = [
-            disko.nixosModules.disko
-            ./hosts/oracle-a1-flex-1/configuration.nix
-          ];
-          host = ./hosts/oracle-a1-flex-1/host-cfg.nix;
-          no-hm = true;
-        };
-        oracle-e2-1-micro-1 = {
-          system = "x86_64-linux";
-          additionalModules = [
-            disko.nixosModules.disko
-            ./hosts/oracle-e2-1-micro-1/configuration.nix
-          ];
-          host = ./hosts/oracle-e2-1-micro-1/host-cfg.nix;
-          no-hm = true;
-        };
-        oracle-e2-1-micro-2 = {
-          system = "x86_64-linux";
-          additionalModules = [
-            disko.nixosModules.disko
-            ./hosts/oracle-e2-1-micro-2/configuration.nix
-          ];
-          host = ./hosts/oracle-e2-1-micro-2/host-cfg.nix;
-          no-hm = true;
-        };
-      };
-    in
-    {
-      nixosConfigurations = lib.mapAttrs (
-        name: machine:
-        let
-          pkgs = pkgs-map.${machine.system};
-          host = import machine.host { inherit pkgs; };
-          ctx = { inherit pkgs host machine; };
-        in
-        lib.nixosSystem (
-          (base-system machine.system)
-          // {
-            modules = (base-modules ctx) ++ machine.additionalModules;
-          }
-        )
-      ) machines;
-
-      packages = eachSystem ({ system, pkgs }: {
-        homeConfigurations = import ./nix/home-manager-standalone.nix {
-          inherit pkgs inputs lib;
-          inherit machines mk-pkgs-stable;
-        };
-        nvim = import ./nix/nvim/default.nix {
-          inherit (nixvim.legacyPackages.${system}) makeNixvimWithModule;
+      })
+      |> builtins.listToAttrs;
+    eachSystem = f:
+      lib.genAttrs all-systems (
+        system:
+        f {
+          inherit system;
           pkgs = pkgs-map.${system};
-        };
-      });
-
-      formatter = eachSystem ({ system, ... }: treefmtEval.${system}.config.build.wrapper);
-
-      devShells = eachSystem ({ system, pkgs }: {
-        default =
-          let
-            # TOOD: reenable when needed
-            enable-quickshell = false;
-            quickshell = inputs.quickshell.packages.${system}.default;
-
-            qml2_import =
-              lib.optional enable-quickshell [
-                "${quickshell}/lib/qt-6/qml"
-                "${pkgs.kdePackages.qtdeclarative}/lib/qt-6/qml"
-                "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
-              ]
-              |> lib.concatStringsSep ":";
-          in
-          pkgs.mkShell {
-            nativeBuildInputs = [
-              treefmtEval.${system}.config.build.wrapper
-            ]
-            ++ (with pkgs; [
-              nixd
-              nixfmt
-              nil
-
-              lua-language-server
-
-              nix-tree
-            ])
-            ++ lib.optionals enable-quickshell [
-              pkgs.kdePackages.qtdeclarative # qmlls
-              quickshell
-            ];
-
-            shellHook = ''
-              export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
-              export QML2_IMPORT_PATH=${qml2_import}:$QML2_IMPORT_PATH
-            '';
-          };
-      });
+        }
+      );
+    treefmtEval = eachSystem ({ pkgs, ... }: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
+    mk-pkgs-stable = system:
+      import nixpkgs-stable {
+        inherit system;
+        config = base-nixpkgs-config;
+      };
+    use-lix = false;
+    base-config = { pkgs, host, ... }: {
+      host = host;
+      nixpkgs.pkgs = pkgs;
+      nix.package = lib.mkIf use-lix pkgs.lix;
+      nix.settings.lint-url-literals = "fatal";
+      nix.settings.experimental-features = [
+        "nix-command"
+        "flakes"
+      ] ++ (if use-lix then [ "pipe-operator" ] else [ "pipe-operators" ]);
     };
+    base-modules = ctx:
+      let
+        use-hm = !(ctx.machine.no-hm or false);
+        use-secrets = !(ctx.machine.no-secrets or false);
+      in
+      [
+        ./hosts/options.nix
+        (base-config ctx)
+        { host.use-secrets = use-secrets; }
+      ] ++ lib.optionals use-secrets [
+        sops-nix.nixosModules.sops
+      ] ++ lib.optionals use-hm [
+        home-manager.nixosModules.home-manager
+      ];
+    my-lib = import ./lib { inherit lib; };
+    base-system = system: {
+      inherit system;
+      specialArgs = {
+        inherit inputs system my-lib;
+        pkgs-stable = (mk-pkgs-stable system);
+      };
+    };
+    mk-server = { id, system, disko ? false }: {
+      ${id} = {
+        inherit system;
+        additionalModules = [
+          (./hosts + "/${id}" + "/configuration.nix")
+        ] ++ lib.optionals disko [
+          inputs.disko.nixosModules.disko
+        ];
+        host = {pkgs}: {
+          inherit id;
+          hostname = id;
+        };
+        no-hm = true;
+      };
+    }; 
+    machines = {
+      fw12 = {
+        system = "x86_64-linux";
+        additionalModules = [
+          nixos-hardware.nixosModules.framework-12-13th-gen-intel
+          ./hosts/fw12/configuration.nix
+        ];
+        host = import ./hosts/fw12/host-cfg.nix;
+      };
+      fw13 = {
+        system = "x86_64-linux";
+        additionalModules = [
+          nixos-hardware.nixosModules.framework-13-7040-amd
+          ./hosts/fw13/configuration.nix
+        ];
+        host = import ./hosts/fw13/host-cfg.nix;
+      };
+      desktop = {
+        system = "x86_64-linux";
+        additionalModules = [
+          ./hosts/desktop/configuration.nix
+        ];
+        host = import ./hosts/desktop/host-cfg.nix;
+      };
+    }
+    // (mk-server { id = "hetzner-cx33-1"; system = "x86_64-linux"; })
+    // (mk-server { id = "ovh-vps1-1"; system = "x86_64-linux"; disko = true; })
+    // (mk-server { id = "oracle-e2-1-micro-1"; system = "x86_64-linux"; disko = true; })
+    // (mk-server { id = "oracle-e2-1-micro-2"; system = "x86_64-linux"; disko = true; })
+    // (mk-server { id = "oracle-a1-flex-1"; system = "aarch64-linux"; disko = true; })
+    ;
+  in
+  {
+    nixosConfigurations = lib.mapAttrs (
+      name: machine:
+      let
+        pkgs = pkgs-map.${machine.system};
+        host = machine.host { inherit pkgs; };
+        ctx = { inherit pkgs host machine; };
+      in
+      lib.nixosSystem (
+        (base-system machine.system)
+        // {
+          modules = (base-modules ctx) ++ machine.additionalModules;
+        }
+      )
+    ) machines;
+
+    packages = eachSystem ({ system, pkgs }: {
+      homeConfigurations = import ./nix/home-manager-standalone.nix {
+        inherit pkgs inputs lib;
+        inherit machines mk-pkgs-stable;
+      };
+      nvim = import ./nix/nvim/default.nix {
+        inherit (nixvim.legacyPackages.${system}) makeNixvimWithModule;
+        pkgs = pkgs-map.${system};
+      };
+    });
+
+    formatter = eachSystem ({ system, ... }: treefmtEval.${system}.config.build.wrapper);
+
+    devShells = eachSystem ({ system, pkgs }: {
+      default =
+        let
+          # TODO: reenable when needed
+          enable-quickshell = false;
+          quickshell = inputs.quickshell.packages.${system}.default;
+          qml2_import =
+            lib.optional enable-quickshell [
+              "${quickshell}/lib/qt-6/qml"
+              "${pkgs.kdePackages.qtdeclarative}/lib/qt-6/qml"
+              "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
+            ]
+            |> lib.concatStringsSep ":";
+        in
+        pkgs.mkShell {
+          nativeBuildInputs = [
+            treefmtEval.${system}.config.build.wrapper
+          ] ++ (with pkgs; [
+            nixd
+            nixfmt
+            nil
+            lua-language-server
+            nix-tree
+          ]) ++ lib.optionals enable-quickshell [
+            pkgs.kdePackages.qtdeclarative # qmlls
+            quickshell
+          ];
+          shellHook = ''
+            export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
+            export QML2_IMPORT_PATH=${qml2_import}:$QML2_IMPORT_PATH
+          '';
+        };
+    });
+  };
 }
