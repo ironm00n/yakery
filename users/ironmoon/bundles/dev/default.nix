@@ -68,15 +68,15 @@ let
     finalAttrs:
     let
       # https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest
-      # https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.141/manifest.json
-      version = "2.1.141";
+      # https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.146/manifest.json
+      version = "2.1.146";
       baseUrl = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases";
     in
     {
       inherit version;
       src = fetchurl {
         url = "${baseUrl}/${version}/linux-x64/claude";
-        sha256 = "832be26e8f15b2ae99e520a22b034fc4bfad1cb5b84de6b706487072c56bb42e";
+        sha256 = "825d5301380f1f5f466c5268de25a062927be658938fc1d630cfa02c521b8185";
       };
     }
   );
