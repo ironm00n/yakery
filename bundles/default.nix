@@ -12,6 +12,7 @@
     ./virtualisation.nix
     ./gaming.nix
     ./reverse-proxy.nix
+    ./local-tls.nix
 
     ./displaylink.nix
   ];
