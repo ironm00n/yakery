@@ -74,5 +74,10 @@ in
       default = null;
       description = "Number of CPU cores for waybar etc.";
     };
+
+    use-secrets = mkOption {
+      type = types.bool;
+      description = "Use a secrets manager for this device.";
+    };
   };
 }

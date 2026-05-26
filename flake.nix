@@ -8,9 +8,16 @@
     nixpkgs-25_05.url = "github:nixos/nixpkgs/nixos-25.05"; # twemoji-cbdt
     nixpkgs-24_11.url = "github:nixos/nixpkgs/nixos-24.11"; # needed for twemoji-colr
     systems.url = "github:nix-systems/default";
-    flake-utils = {
-      url = "github:numtide/flake-utils";
-      inputs.systems.follows = "systems";
+    nixos-hardware.url = "github:NixOS/nixos-hardware/master";
+    sops-nix = {
+      url = "github:Mic92/sops-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    secrets = {
+      # private repo exporting sops files
+      url = "git+ssh://git@github.com/ironm00n/secrets.git";
+      inputs.nixpkgs.follows = "";
+      inputs.systems.follows = "";
     };
     home-manager = {
       url = "github:nix-community/home-manager";
@@ -21,7 +28,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.home-manager.follows = "home-manager";
     };
-    nixos-hardware.url = "github:NixOS/nixos-hardware/master";
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -29,6 +35,10 @@
     quickshell = {
       url = "git+https://git.outfoxxed.me/quickshell/quickshell";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+    flake-utils = {
+      url = "github:numtide/flake-utils";
+      inputs.systems.follows = "systems";
     };
     nixvim = {
       url = "github:nix-community/nixvim";
@@ -70,14 +80,15 @@
       self,
       nixpkgs,
       nixpkgs-stable,
+      systems,
+      nixos-hardware,
+      sops-nix,
       home-manager,
       plasma-manager,
-      nixos-hardware,
       treefmt-nix,
-      systems,
-      flake-utils,
       nixvim,
       disko,
+      flake-utils,
       ...
     }:
     let
@@ -117,7 +128,7 @@
     let
       use-lix = false;
       base-config =
-        { pkgs, host }:
+        { pkgs, host, ... }:
         {
           host = host;
           nixpkgs.pkgs = pkgs;
@@ -130,11 +141,20 @@
           ]
           ++ (if use-lix then [ "pipe-operator" ] else [ "pipe-operators" ]);
         };
-      base-modules = ctx: [
-        ./hosts/options.nix
-        (base-config ctx)
-        home-manager.nixosModules.home-manager
-      ];
+      base-modules = ctx:
+        let
+          use-hm = !(ctx.machine.no-hm or false);
+          use-secrets = !(ctx.machine.no-secrets or false);
+        in
+        [
+          ./hosts/options.nix
+          (base-config ctx)
+          { host.use-secrets = use-secrets; }
+        ] ++ lib.optionals use-secrets [
+          sops-nix.nixosModules.sops
+        ] ++ lib.optionals use-hm [
+          home-manager.nixosModules.home-manager
+        ];
       base-system = system: {
         inherit system;
         specialArgs = {
@@ -209,7 +229,7 @@
         let
           pkgs = pkgs-map.${machine.system};
           host = import machine.host { inherit pkgs; };
-          ctx = { inherit pkgs host; };
+          ctx = { inherit pkgs host machine; };
         in
         lib.nixosSystem (
           (base-system machine.system)
