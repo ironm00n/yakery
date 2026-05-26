@@ -111,7 +111,6 @@ in
 
     # TODO: https://wiki.hyprland.org/Configuring/Dwindle-Layout/
     dwindle = {
-      pseudotile = true;
       preserve_split = true;
     };
 
@@ -129,8 +128,6 @@ in
       "3, horizontal, workspace"
     ];
 
-    render.explicit_sync = lib.mkIf config.host.nvidia 0;
-
     # https://wiki.hyprland.org/Configuring/Binds/, wev to inspect
     bind = [
       "SUPER, T, exec, ${terminal}"
@@ -145,7 +142,7 @@ in
       "SUPER, SPACE, exec, ${menu}"
       "ALT`, SPACE, exec, ${menu}"
       "SUPER, P, pseudo," # dwindle
-      "SUPER, J, togglesplit," # dwindle
+      "SUPER, J, layoutmsg, togglesplit," # dwindle
 
       # clipboard
       "SUPER, V, exec, ${clipboardHist}"
