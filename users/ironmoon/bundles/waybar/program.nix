@@ -58,6 +58,7 @@ in
         "idle_inhibitor"
         "battery"
         # "custom/dunst"
+        "systemd-failed-units"
       ];
 
       "hyprland/workspaces" = {
@@ -228,9 +229,16 @@ in
           ];
         };
       };
+
       # "custom/dunst" = {
       #   "on-click" = "dunstctl set-paused toggle";
       # };
+      "systemd_failed_units" = {
+        "hide-on-ok" = true;
+        "format" = "✗ {nr_failed}";
+        "system" = true;
+        "user" = true;
+      };
     };
   };
 
