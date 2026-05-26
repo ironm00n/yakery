@@ -198,7 +198,11 @@
     // (mk-server { id = "ovh-vps1-1"; system = "x86_64-linux"; disko = true; })
     // (mk-server { id = "oracle-e2-1-micro-1"; system = "x86_64-linux"; disko = true; })
     // (mk-server { id = "oracle-e2-1-micro-2"; system = "x86_64-linux"; disko = true; })
+    // (mk-server { id = "oracle-e2-1-micro-3"; system = "x86_64-linux"; disko = true; })
+    // (mk-server { id = "oracle-e2-1-micro-4"; system = "x86_64-linux"; disko = true; })
     // (mk-server { id = "oracle-a1-flex-1"; system = "aarch64-linux"; disko = true; })
+    // (mk-server { id = "oracle-a1-flex-2"; system = "aarch64-linux"; disko = true; })
+    // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; })
     ;
   in
   {
