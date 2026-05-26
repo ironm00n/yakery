@@ -106,7 +106,7 @@ in
         ghc
         racket
         nil
-        nixfmt-rfc-style
+        nixfmt
         texlive.combined.scheme-full
         treefmt
 

@@ -55,10 +55,10 @@ in
         gtk3
         pango
         cairo
-        xorg.libX11
+        libx11
         xorg.libXcomposite
         xorg.libXdamage
-        xorg.libXext
+        libxext
         xorg.libXfixes
         xorg.libXrandr
         # gbm

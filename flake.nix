@@ -252,7 +252,7 @@
             ]
             ++ (with pkgs; [
               nixd
-              nixfmt-rfc-style
+              nixfmt
               nil
 
               lua-language-server
