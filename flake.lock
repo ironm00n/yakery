@@ -376,11 +376,11 @@
         "systems": []
       },
       "locked": {
-        "lastModified": 1779339831,
-        "narHash": "sha256-Foc91e7uy39xHfgGstX4cdj4n6xg9rZljrqIoYKN744=",
+        "lastModified": 1779394283,
+        "narHash": "sha256-haZQyXx18MWmEnl90+t1idN0WLCu/bWfR83t2RuhSmQ=",
         "ref": "refs/heads/master",
-        "rev": "3c7b263f9a517caa24f9e2a45088f964c8eac965",
-        "revCount": 6,
+        "rev": "be09c9a3c3c3b61892778c1a6ae6357683b73f98",
+        "revCount": 7,
         "type": "git",
         "url": "ssh://git@github.com/ironm00n/secrets.git"
       },
