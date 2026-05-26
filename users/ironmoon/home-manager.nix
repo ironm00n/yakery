@@ -43,7 +43,7 @@ in
     dev.pinned-claude = host.id == fw13;
     sec.enable = !host.lightweight;
     emacs.enable = true;
-    nvim.enable = host.id == fw12;
+    nvim.enable = host.id != fw13;
 
     syncthing.enable = true;
     discord.enable = true;
