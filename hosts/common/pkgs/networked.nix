@@ -8,6 +8,7 @@ with pkgs;
   nmap
   dig
   netcat
+  mtr
 
   # sets up server for remote development
   vscode-extensions.ms-vscode-remote.remote-ssh
