@@ -17,13 +17,14 @@ in
     isNormalUser = true;
     description = "ironmoon";
     extraGroups = [
-      "networkmanager"
       "wheel"
+      "adm"
+      "input"
+      "dialout"
+      "networkmanager"
       "libvirtd"
       "docker"
       "kvm"
-      "dialout"
-      "input"
       "wireshark"
     ];
     shell = pkgs.zsh;
