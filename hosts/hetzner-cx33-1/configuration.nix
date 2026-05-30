@@ -6,9 +6,12 @@
   config,
   lib,
   pkgs,
+  inputs,
   ...
 }:
-
+let
+  inherit (inputs.secrets.data.ips.hetzner-cx33-1) ipv4 ipv6;
+in
 {
   imports = [
     ./hardware-configuration.nix
@@ -25,23 +28,21 @@
     interfaces.enp1s0 = {
       ipv6.addresses = [
         {
-          address = "2a01:4f8:c0c:1982::1";
-          prefixLength = 64;
+          inherit (ipv6) address prefixLength;
         }
       ];
       ipv4.addresses = [
         {
-          address = "91.98.113.48";
-          prefixLength = 32;
+          inherit (ipv4) address prefixLength;
         }
       ];
     };
     defaultGateway6 = {
-      address = "fe80::1";
+      address = ipv6.gateway;
       interface = "enp1s0";
     };
     defaultGateway = {
-      address = "172.31.1.1";
+      address = ipv4.gateway;
       interface = "enp1s0";
     };
     nameservers = [

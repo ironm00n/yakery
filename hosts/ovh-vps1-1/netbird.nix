@@ -69,6 +69,9 @@ in
       settings = {
         HttpConfig.AuthAudience = clientId;
 
+        # Trust local nginx so peer public IPs use X-Forwarded-For, not the ::1 backend hop.
+        ReverseProxy.TrustedHTTPProxies = [ "127.0.0.1/32" "::1/128" ];
+
         IdpManagerConfig = {
           ManagerType = "zitadel";
 
