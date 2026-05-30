@@ -6,9 +6,12 @@
   config,
   lib,
   pkgs,
+  inputs,
   ...
 }:
-
+let
+  inherit (inputs.secrets.data.ips.ovh-vps1-1) ipv6;
+in
 {
   imports = [
     ./hardware-configuration.nix
@@ -23,14 +26,13 @@
   };
 
   networking = {
-    interfaces.enp1s0.ipv6.addresses = [
+    interfaces.ens3.ipv6.addresses = [
       {
-        address = "2604:2dc0:202:300::143f";
-        prefixLength = 128;
+        inherit (ipv6) address prefixLength;
       }
     ];
     defaultGateway6 = {
-      address = "2604:2dc0:202:300::1";
+      address = ipv6.gateway;
       interface = "ens3";
     };
     nameservers = [

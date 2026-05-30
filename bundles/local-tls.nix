@@ -77,8 +77,8 @@ in
 
     ca.certPem = mkOption {
       type = types.str;
-      default = inputs.secrets.lib.root-ca-pub;
-      defaultText = lib.literalExpression "inputs.secrets.lib.root-ca-pub";
+      default = inputs.secrets.data.certs.root-ca-pub;
+      defaultText = lib.literalExpression "inputs.secrets.data.certs.root-ca-pub";
       description = "PEM-encoded root CA certificate (public; safe for the Nix store).";
     };
 
