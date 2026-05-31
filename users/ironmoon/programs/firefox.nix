@@ -1,4 +1,4 @@
-{ ... }:
+{ config, ... }:
 let
   common-settings = {
     "widget.use-xdg-desktop-portal.file-picker" = 1;
@@ -9,6 +9,9 @@ let
 in
 {
   enable = true;
+
+  # TODO: remove when bumping state version
+  configPath = "${config.xdg.configHome}/mozilla/firefox";
 
   # see policies in hosts/common/programs/firefox.nix
 
