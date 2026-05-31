@@ -10,7 +10,6 @@ let
   inherit (lib) mkEnableOption mkIf;
   inherit (my-utils) symlink;
   cfg = config.bundles.kitty;
-  inherit (config.xdg) configHome;
 in
 {
   options.bundles.kitty = {
@@ -19,7 +18,6 @@ in
 
   config = mkIf cfg.enable {
     home.packages = with pkgs; [
-      eww
       hyprland-workspaces
     ];
 
@@ -33,6 +31,6 @@ in
       fi
     '';
 
-    xdg.configFile."${configHome}/kitty/kitty.conf".source = symlink ./kitty.conf;
+    xdg.configFile."kitty/kitty.conf".source = symlink ./kitty.conf;
   };
 }
