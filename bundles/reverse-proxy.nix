@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  my-lib,
   ...
 }:
 let
@@ -18,6 +19,49 @@ let
 
   bracketV6 = a: if lib.hasInfix ":" a && !lib.hasPrefix "[" a then "[${a}]" else a;
 
+  san = host: lib.replaceStrings [ "." "-" "*" ] [ "_" "_" "_" ] host;
+  geoVar = host: "rp_backend_${san host}";
+  nginxVar = host: "$" + geoVar host;
+
+  anubisPortBase = 8920;
+  anubisPorts = lib.listToAttrs (
+    lib.imap0 (i: h: lib.nameValuePair h (anubisPortBase + i)) (
+      lib.sort (a: b: a < b) (lib.attrNames (lib.filterAttrs (_: o: o.anubis) cfg.hosts))
+    )
+  );
+
+  defaultBackend =
+    host: opts:
+    if opts.anubis then "127.0.0.1:${toString anubisPorts.${host}}" else "127.0.0.1:${toString opts.port}";
+
+  # Source ranges that should skip the vhost's Anubis filter and hit the backend directly.
+  overrides =
+    opts:
+    lib.optional (opts.anubis && cfg.trustedSources != [ ]) {
+      sources = cfg.trustedSources;
+      port = opts.port;
+    };
+
+  mkGeo =
+    host: opts:
+    let
+      entries = lib.concatLists (
+        map (b: map (cidr: "    ${cidr} 127.0.0.1:${toString b.port};") b.sources) (overrides opts)
+      );
+    in
+    lib.concatStringsSep "\n" (
+      [
+        "geo ${nginxVar host} {"
+        "    default ${defaultBackend host opts};"
+      ]
+      ++ entries
+      ++ [ "}" ]
+    );
+
+  geoBlocks = lib.concatStringsSep "\n\n" (
+    lib.mapAttrsToList mkGeo (lib.filterAttrs (_: o: o.port != null && overrides o != [ ]) cfg.hosts)
+  );
+
   hostOpts.options = {
     port = mkOption {
       type = types.nullOr types.port;
@@ -26,6 +70,11 @@ let
         Backend port on 127.0.0.1 to proxy to.
         When null, the vhost is created with `enableACME` and `forceSSL` only.
       '';
+    };
+    anubis = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Front this vhost with an Anubis proof-of-work filter; clients in `trustedSources` bypass it. Requires `port`.";
     };
     tls = mkOption {
       type = types.bool;
@@ -101,12 +150,17 @@ let
     ''add_header Strict-Transport-Security "${lib.concatStringsSep "; " directives}" always;'';
 
   mkVhost =
-    _: opts:
+    name: opts:
     let
       vhostConfig = lib.concatStringsSep "\n" (
         lib.optional opts.hsts.enable (mkHstsHeader opts.hsts)
         ++ lib.optional (opts.extraVhostConfig != "") opts.extraVhostConfig
       );
+      backend =
+        if overrides opts == [ ] then
+          "http://${defaultBackend name opts}"
+        else
+          "http://${nginxVar name}$request_uri";
     in
     optionalAttrs opts.tls {
       enableACME = true;
@@ -119,7 +173,7 @@ let
     // optionalAttrs (vhostConfig != "") { extraConfig = vhostConfig; }
     // optionalAttrs (opts.port != null) {
       locations."/" = {
-        proxyPass = "http://127.0.0.1:${toString opts.port}";
+        proxyPass = backend;
       }
       // optionalAttrs opts.websockets { proxyWebsockets = true; }
       // optionalAttrs (opts.extraLocationConfig != "") { extraConfig = opts.extraLocationConfig; };
@@ -133,6 +187,13 @@ in
       type = types.nullOr types.str;
       default = null;
       description = "Email for Let's Encrypt registration. Required when the bundle is enabled.";
+    };
+
+    trustedSources = mkOption {
+      type = types.listOf types.str;
+      default = my-lib.netbird.overlayCidrs;
+      defaultText = lib.literalExpression "my-lib.netbird.overlayCidrs";
+      description = "Source CIDRs that bypass per-vhost Anubis filtering (default: the Netbird overlay).";
     };
 
     reject-unknown = mkOption {
@@ -166,7 +227,11 @@ in
         assertion = !anyTls || cfg.acme-email != null;
         message = "bundles.reverse-proxy.acme-email must be set when any vhost uses TLS.";
       }
-    ];
+    ]
+    ++ lib.mapAttrsToList (host: opts: {
+      assertion = !opts.anubis || opts.port != null;
+      message = ''bundles.reverse-proxy.hosts."${host}": `anubis` requires `port` to be set.'';
+    }) cfg.hosts;
 
     services.nginx = {
       enable = true;
@@ -174,6 +239,8 @@ in
       recommendedProxySettings = lib.mkDefault true;
       recommendedOptimisation = lib.mkDefault true;
       recommendedGzipSettings = lib.mkDefault true;
+
+      appendHttpConfig = geoBlocks;
 
       virtualHosts =
         mapAttrs mkVhost cfg.hosts
@@ -185,6 +252,17 @@ in
           };
         };
     };
+
+    services.anubis.instances = lib.mapAttrs' (
+      host: opts:
+      lib.nameValuePair (san host) {
+        settings = {
+          TARGET = "http://127.0.0.1:${toString opts.port}";
+          BIND = "127.0.0.1:${toString anubisPorts.${host}}";
+          BIND_NETWORK = "tcp";
+        };
+      }
+    ) (lib.filterAttrs (_: o: o.anubis) cfg.hosts);
 
     security.acme = {
       acceptTerms = true;

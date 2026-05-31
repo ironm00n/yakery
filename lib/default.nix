@@ -2,6 +2,7 @@
 {
   sops = import ./sops.nix { inherit lib; };
   systemd = import ./systemd.nix { inherit lib; };
+  netbird = import ./netbird.nix;
 
   mkDisableOption =
     name:
