@@ -66,17 +66,12 @@
 
   # SSH
   # services.fail2ban.enable = true;
-  services.openssh = {
-    enable = true;
-    ports = [ 22 ];
-    settings = {
-      PasswordAuthentication = false;
-      UsePAM = false;
-      KbdInteractiveAuthentication = false;
-      AllowUsers = [ "ironmoon" ];
-      PermitRootLogin = "no";
-    };
+  services.openssh.settings = {
+    UsePAM = false;
+    AllowUsers = [ "ironmoon" "root" ];
   };
+
+  users.users.root.openssh.authorizedKeys.keys = import ../common/admin-ssh-keys.nix;
 
   # services.pulseaudio.enable = true;
   # security.rtkit.enable = true;

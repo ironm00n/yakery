@@ -65,7 +65,6 @@ in
   users.defaultUserShell = pkgs.zsh;
 
   # services
-  services.openssh.enable = true;
   services.udisks2.enable = true; # for calibre
   services.netbird.enable = lib.mkDefault true;
 
