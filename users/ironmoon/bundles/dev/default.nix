@@ -145,6 +145,7 @@ in
         lazygit
 
         effective-claude-code
+        (pkgs.callPackage ./comma-noninteractive.nix { })
       ]
       ++ lib.optionals cfg.other-llm [
         code-cursor
@@ -154,6 +155,9 @@ in
 
     home.file = mkIf cfg.tooling {
       "${configHome}/lazygit/config.yml".source = symlink ./lazygit.yml;
+      # no XDG: https://github.com/anthropics/claude-code/issues/1455
+      ".claude/CLAUDE.md".source = symlink ./CLAUDE.md;
+      ".claude/settings.json".source = symlink ./claude-settings.json;
     };
   };
 }
