@@ -14,6 +14,8 @@ let
     ;
   cfg = config.bundles.reverse-proxy;
 
+  anyTls = lib.any (h: h.tls) (lib.attrValues cfg.hosts);
+
   bracketV6 = a: if lib.hasInfix ":" a && !lib.hasPrefix "[" a then "[${a}]" else a;
 
   hostOpts.options = {
@@ -24,6 +26,11 @@ let
         Backend port on 127.0.0.1 to proxy to.
         When null, the vhost is created with `enableACME` and `forceSSL` only.
       '';
+    };
+    tls = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Issue an ACME cert and force SSL. When false, serve plain HTTP only.";
     };
     websockets = mkOption {
       type = types.bool;
@@ -101,7 +108,7 @@ let
         ++ lib.optional (opts.extraVhostConfig != "") opts.extraVhostConfig
       );
     in
-    {
+    optionalAttrs opts.tls {
       enableACME = true;
       forceSSL = true;
     }
@@ -156,8 +163,8 @@ in
   config = mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.acme-email != null;
-        message = "bundles.reverse-proxy.acme-email must be set when the bundle is enabled.";
+        assertion = !anyTls || cfg.acme-email != null;
+        message = "bundles.reverse-proxy.acme-email must be set when any vhost uses TLS.";
       }
     ];
 
