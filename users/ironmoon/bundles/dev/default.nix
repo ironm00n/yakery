@@ -124,6 +124,7 @@ in
         lazygit
 
         claude-code
+        (pkgs.callPackage ./comma-noninteractive.nix { })
       ]
       ++ lib.optionals cfg.other-llm [
         code-cursor

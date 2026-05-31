@@ -121,6 +121,8 @@ in
         ripgrep-all
         pkg-config
         pandoc
+
+        poppler-utils
       ]
       ++ lib.optionals non-essential [
         (wordlists.override {
