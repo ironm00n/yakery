@@ -28,7 +28,8 @@ in
     interfaces.enp1s0 = {
       ipv6.addresses = [
         {
-          inherit (ipv6) address prefixLength;
+          address = "${ipv6.prefix}::1";
+          inherit (ipv6) prefixLength;
         }
       ];
       ipv4.addresses = [

@@ -14,6 +14,8 @@ let
     ;
   cfg = config.bundles.reverse-proxy;
 
+  bracketV6 = a: if lib.hasInfix ":" a && !lib.hasPrefix "[" a then "[${a}]" else a;
+
   hostOpts.options = {
     port = mkOption {
       type = types.nullOr types.port;
@@ -32,6 +34,11 @@ let
       type = types.listOf types.str;
       default = [ ];
       description = "`serverAliases` for this vhost.";
+    };
+    listenAddresses = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      description = "Addresses to bind this vhost to (empty = nginx defaults; IPv6 auto-bracketed).";
     };
     extraLocationConfig = mkOption {
       type = types.lines;
@@ -99,6 +106,9 @@ let
       forceSSL = true;
     }
     // optionalAttrs (opts.aliases != [ ]) { serverAliases = opts.aliases; }
+    // optionalAttrs (opts.listenAddresses != [ ]) {
+      listenAddresses = map bracketV6 opts.listenAddresses;
+    }
     // optionalAttrs (vhostConfig != "") { extraConfig = vhostConfig; }
     // optionalAttrs (opts.port != null) {
       locations."/" = {
