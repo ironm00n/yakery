@@ -13,6 +13,7 @@
     ./gaming.nix
     ./reverse-proxy.nix
     ./local-tls.nix
+    ./netbird-client.nix
 
     ./displaylink.nix
   ];
