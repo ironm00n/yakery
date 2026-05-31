@@ -1,7 +1,7 @@
 { lib }:
 {
   sops = import ./sops.nix { inherit lib; };
-  systemd = import ./systemd { inherit lib; };
+  systemd = import ./systemd.nix { inherit lib; };
 
   mkDisableOption =
     name:

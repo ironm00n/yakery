@@ -12,14 +12,10 @@
     backupFileExtension = ".bak";
     useUserPackages = true;
     useGlobalPkgs = true;
-    sharedModules = [
-      inputs.nixvim.homeModules.nixvim
-      # needed even when not using full kde (konsole, dolphin, etc)
-      inputs.plasma-manager.homeModules.plasma-manager
-    ]
-    ++ lib.optionals config.host.use-secrets [
-      inputs.sops-nix.homeManagerModules.sops
-    ];
+    sharedModules = import ./home-shared-modules.nix {
+      inherit inputs lib;
+      useSecrets = config.host.use-secrets;
+    };
     extraSpecialArgs = import ./extra-special-args.nix {
       inherit inputs lib;
       inherit pkgs pkgs-stable my-lib;

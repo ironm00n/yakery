@@ -223,7 +223,7 @@
 
     packages = eachSystem ({ system, pkgs }: {
       homeConfigurations = import ./nix/home-manager-standalone.nix {
-        inherit pkgs inputs lib;
+        inherit pkgs inputs lib my-lib;
         inherit machines mk-pkgs-stable;
       };
       nvim = import ./nix/nvim/default.nix {
