@@ -8,7 +8,6 @@
 let
   inherit (inputs.home-manager.lib) hm;
   inherit (lib) removePrefix escapeShellArg;
-  inherit (lib.strings) optionalString;
   inherit (pkgs) runCommandLocal;
 in
 rec {
@@ -24,8 +23,8 @@ rec {
     file:
     if host.out-of-store-symlinks then
       let
-        rootNixPath = builtins.getEnv "ROOT_NIX_PATH";
-        rootDir = optionalString (rootNixPath == "") "/etc/nixos";
+        rootNixPath = builtins.getEnv "ROOT_NIXOS_PATH";
+        rootDir = if rootNixPath == "" then "/etc/nixos" else rootNixPath;
         path = rootDir + removePrefix (toString inputs.self) (toString file);
       in
       mkOutOfStoreSymlink (builtins.trace path path)

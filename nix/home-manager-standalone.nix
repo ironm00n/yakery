@@ -2,32 +2,50 @@
   pkgs,
   inputs,
   lib,
+  my-lib,
   machines,
   mk-pkgs-stable,
 }:
 let
-  inherit (inputs) home-manager plasma-manager;
+  inherit (inputs) home-manager;
   pkgs-stable = mk-pkgs-stable pkgs.stdenv.hostPlatform.system;
 
   # FIXME: figure out how to play nicely with specializations
   # fornow, assume we are using hyprland
-  host = machine: (import machines.${machine}.host { inherit pkgs; }) // { hyprland = true; };
+  host =
+    machine:
+    let
+      raw = (machines.${machine}.host { inherit pkgs; }) // { hyprland = true; };
+      use-secrets = !(machines.${machine}.no-secrets or false);
+    in
+    (lib.evalModules {
+      modules = [
+        ../hosts/options.nix
+        { host = raw // { inherit use-secrets; }; }
+      ];
+    }).config.host;
   common =
     { username, machine }:
+    let
+      hostCfg = host machine;
+    in
     {
       inherit pkgs;
       extraSpecialArgs = import ../users/extra-special-args.nix {
-        inherit inputs lib;
+        inherit inputs lib my-lib;
         inherit pkgs pkgs-stable;
-        host = host machine;
+        host = hostCfg;
       };
       modules = [
         {
           home.username = username;
           home.homeDirectory = "/home/${username}";
         }
-        plasma-manager.homeModules.plasma-manager
-      ];
+      ]
+      ++ import ../users/home-shared-modules.nix {
+        inherit inputs lib;
+        useSecrets = hostCfg.use-secrets;
+      };
     };
   users = {
     ironmoon = [ ../users/ironmoon/home-manager.nix ];
@@ -35,7 +53,7 @@ let
 in
 lib.cartesianProduct {
   username = lib.attrNames users;
-  machine = machines |> builtins.filter (m: !(m.no-hm or false)) |> lib.attrNames;
+  machine = machines |> lib.filterAttrs (_: m: !(m.no-hm or false)) |> lib.attrNames;
 }
 |> map (
   { username, machine }:
