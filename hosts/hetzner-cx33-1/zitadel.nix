@@ -7,6 +7,8 @@
 }:
 let
   domain = "ironmoon.dev";
+  ips = inputs.secrets.data.ips.hetzner-cx33-1;
+  zitadelAddr = "${ips.ipv6.prefix}::1:1";
   zitadel-secrets =
     my-lib.sops.mkSecrets
       {
@@ -82,6 +84,13 @@ in
     mkdir -p /var/lib/zitadel-db
   '';
 
+  networking.interfaces.enp1s0.ipv6.addresses = [
+    {
+      address = zitadelAddr;
+      prefixLength = ips.ipv6.prefixLength;
+    }
+  ];
+
   bundles.reverse-proxy = {
     enable = true;
     openFirewall = true;
@@ -89,6 +98,10 @@ in
     hosts."auth.${domain}" = {
       port = 39995;
       websockets = true;
+      listenAddresses = [
+        ips.ipv4.address
+        zitadelAddr
+      ];
     };
   };
 }
