@@ -187,12 +187,15 @@ in
 
   systemd.services.forgejo.requires = [ "postgresql.target" ];
 
+  bundles.netbird-client.enable = true;
+
   bundles.reverse-proxy = {
     enable = true;
     openFirewall = true;
     acme-email = "me@ironmoon.dev";
     hosts."code.ironmoon.dev" = {
       port = conf.settings.server.HTTP_PORT;
+      anubis = true;
       aliases = [ "c.irm.is" ];
       extraLocationConfig = ''
         client_max_body_size 512M;

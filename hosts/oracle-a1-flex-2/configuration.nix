@@ -16,6 +16,8 @@
     ../common/server.nix
   ];
 
+  bundles.netbird-client.enable = true;
+
   boot.loader = {
     efi = {
       efiSysMountPoint = "/boot";
