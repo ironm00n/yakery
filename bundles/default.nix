@@ -14,6 +14,7 @@
     ./reverse-proxy.nix
     ./local-tls.nix
     ./netbird-client.nix
+    ./distributed-builds.nix
 
     ./displaylink.nix
   ];
