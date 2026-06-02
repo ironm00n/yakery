@@ -25,8 +25,9 @@
       enable = true;
       vr = false;
     };
+    vpn.mullvad.enable = true;
+    vpn.globalprotect.enable = true;
   };
-  bundles.mullvad-vpn.enable = true;
 
   boot.loader = {
     efi = {

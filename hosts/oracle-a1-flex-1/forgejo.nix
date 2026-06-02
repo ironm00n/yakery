@@ -189,8 +189,6 @@ in
 
   systemd.services.forgejo.requires = [ "postgresql.target" ];
 
-  bundles.netbird-client.enable = true;
-
   bundles.reverse-proxy = {
     enable = true;
     openFirewall = true;

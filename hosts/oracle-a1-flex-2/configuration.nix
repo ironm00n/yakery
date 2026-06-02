@@ -16,7 +16,10 @@
     ../common/server.nix
   ];
 
-  bundles.netbird-client.enable = true;
+  bundles.vpn.netbird = {
+    enable = true;
+    useSetupKey = true;
+  };
 
   boot.loader = {
     efi = {
