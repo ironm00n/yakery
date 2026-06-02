@@ -110,7 +110,11 @@
         name = system;
         value = import nixpkgs {
           inherit system overlays;
-          config = base-nixpkgs-config;
+          config = base-nixpkgs-config // {
+            permittedInsecurePackages = [
+              "electron-39.8.10"
+            ];
+          };
         };
       })
       |> builtins.listToAttrs;
