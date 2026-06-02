@@ -12,6 +12,7 @@ with pkgs;
 
   # sets up server for remote development
   vscode-extensions.ms-vscode-remote.remote-ssh
+  kitty.terminfo
 
   wireguard-tools
 ]
