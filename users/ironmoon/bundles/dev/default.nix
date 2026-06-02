@@ -158,6 +158,7 @@ in
       # no XDG: https://github.com/anthropics/claude-code/issues/1455
       ".claude/CLAUDE.md".source = symlink ./CLAUDE.md;
       ".claude/settings.json".source = symlink ./claude-settings.json;
+      ".claude/hooks/".source = symlink ./claude-hooks;
     };
   };
 }
