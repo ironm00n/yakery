@@ -76,6 +76,8 @@ in
         PREFERRED_LICENSES = "AGPL-3.0-only,AGPL-3.0-or-later,GPL-3.0-only,GPL-3.0-or-later,GPL-2.0-or-later,GPL-2.0-only";
       };
 
+      "git.timeout".MIGRATE = 21600;
+
       # TODO:
       actions = {
         ENABLED = false;
