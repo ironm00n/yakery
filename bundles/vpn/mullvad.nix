@@ -5,17 +5,11 @@
   ...
 }:
 let
-  inherit (lib)
-    mkEnableOption
-    mkIf
-    mkDefault
-    ;
-  cfg = config.bundles.mullvad-vpn;
+  inherit (lib) mkEnableOption mkIf mkDefault;
+  cfg = config.bundles.vpn.mullvad;
 in
 {
-  options.bundles.mullvad-vpn = {
-    enable = mkEnableOption "mullvad vpn";
-  };
+  options.bundles.vpn.mullvad.enable = mkEnableOption "Mullvad VPN";
 
   config = mkIf cfg.enable {
     services.resolved.enable = true;

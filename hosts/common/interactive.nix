@@ -19,6 +19,7 @@ in
   bundles.fonts.enable = mkDefault true;
   bundles.nvidia.enable = config.host.nvidia;
   bundles.distributed-builds.enable = mkDefault true;
+  bundles.vpn.netbird.enable = mkDefault true;
 
   # SECURITY: this is fine for single user, personal systems.
   # TODO: make a specific group for this, it shouldn't just be wheel

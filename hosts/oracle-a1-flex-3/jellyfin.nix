@@ -5,7 +5,7 @@ in
 {
   services.jellyfin.enable = true;
 
-  bundles.netbird-client.allowedTCPPorts = [
+  bundles.vpn.netbird.allowedTCPPorts = [
     jellyfinPort
     80
   ];
