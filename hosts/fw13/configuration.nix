@@ -9,21 +9,23 @@
     ../common/interactive.nix
   ];
 
-  bundles.displaylink.enable = true;
-  bundles.ctf.enable = true;
-  bundles.ctf.ld = false;
-  bundles.printing.enable = true;
-  bundles.virtualisation = {
-    enable = true;
-    libvirt = true;
-    docker = true;
-    waydroid = true;
+  bundles = {
+    displaylink.enable = true;
+    sec.ctf = false;
+    sec.ld = false;
+    sec.re = true;
+    printing.enable = false;
+    virtualisation = {
+      enable = true;
+      libvirt = false;
+      docker = true;
+      waydroid = false;
+    };
+    gaming = {
+      enable = true;
+      vr = false;
+    };
   };
-  bundles.gaming = {
-    enable = true;
-    vr = true;
-  };
-  bundles.syssec.enable = true;
   bundles.mullvad-vpn.enable = true;
 
   boot.loader = {

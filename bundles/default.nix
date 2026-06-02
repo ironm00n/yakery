@@ -1,13 +1,12 @@
 { ... }:
 {
   imports = [
+    ./sec.nix
     ./hyprland.nix
     ./kde.nix
     ./nvidia.nix
     ./fonts.nix
     ./mullvad-vpn.nix
-    ./ctf.nix
-    ./syssec.nix
     ./printing.nix
     ./virtualisation.nix
     ./gaming.nix
