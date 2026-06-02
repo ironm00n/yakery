@@ -53,6 +53,10 @@
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    deploy-rs = {
+      url = "github:serokell/deploy-rs";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     # NOTE: the following have their own instance of nixpkgs since their
     # dependencies are quite finicky
     binary-ninja = {
@@ -172,6 +176,16 @@
         no-hm = true;
       };
     }; 
+    servers =
+      (mk-server { id = "hetzner-cx33-1"; system = "x86_64-linux"; })
+      // (mk-server { id = "ovh-vps1-1"; system = "x86_64-linux"; disko = true; })
+      // (mk-server { id = "oracle-e2-1-micro-1"; system = "x86_64-linux"; disko = true; })
+      // (mk-server { id = "oracle-e2-1-micro-2"; system = "x86_64-linux"; disko = true; })
+      // (mk-server { id = "oracle-e2-1-micro-3"; system = "x86_64-linux"; disko = true; })
+      // (mk-server { id = "oracle-e2-1-micro-4"; system = "x86_64-linux"; disko = true; })
+      // (mk-server { id = "oracle-a1-flex-1"; system = "aarch64-linux"; disko = true; })
+      // (mk-server { id = "oracle-a1-flex-2"; system = "aarch64-linux"; disko = true; })
+      // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; });
     machines = {
       fw12 = {
         system = "x86_64-linux";
@@ -197,16 +211,7 @@
         host = import ./hosts/desktop/host-cfg.nix;
       };
     }
-    // (mk-server { id = "hetzner-cx33-1"; system = "x86_64-linux"; })
-    // (mk-server { id = "ovh-vps1-1"; system = "x86_64-linux"; disko = true; })
-    // (mk-server { id = "oracle-e2-1-micro-1"; system = "x86_64-linux"; disko = true; })
-    // (mk-server { id = "oracle-e2-1-micro-2"; system = "x86_64-linux"; disko = true; })
-    // (mk-server { id = "oracle-e2-1-micro-3"; system = "x86_64-linux"; disko = true; })
-    // (mk-server { id = "oracle-e2-1-micro-4"; system = "x86_64-linux"; disko = true; })
-    // (mk-server { id = "oracle-a1-flex-1"; system = "aarch64-linux"; disko = true; })
-    // (mk-server { id = "oracle-a1-flex-2"; system = "aarch64-linux"; disko = true; })
-    // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; })
-    ;
+    // servers;
   in
   {
     nixosConfigurations = lib.mapAttrs (
@@ -223,6 +228,28 @@
         }
       )
     ) machines;
+
+    deploy.nodes = lib.mapAttrs (
+      id: machine:
+      let
+        ip = inputs.secrets.data.ips.${id} or { };
+        hostname =
+          if ip ? ipv4.address then ip.ipv4.address
+          else if ip ? ipv6.address then ip.ipv6.address
+          else id;
+      in
+      {
+        inherit hostname;
+        sshUser = "root";
+        profiles.system.path =
+          inputs.deploy-rs.lib.${machine.system}.activate.nixos
+            self.nixosConfigurations.${id};
+      }
+    ) servers;
+
+    checks = lib.mapAttrs (
+      system: deployLib: deployLib.deployChecks self.deploy
+    ) inputs.deploy-rs.lib;
 
     packages = eachSystem ({ system, pkgs }: {
       homeConfigurations = import ./nix/home-manager-standalone.nix {
@@ -254,6 +281,7 @@
         pkgs.mkShell {
           nativeBuildInputs = [
             treefmtEval.${system}.config.build.wrapper
+            inputs.deploy-rs.packages.${system}.default
           ] ++ (with pkgs; [
             nixd
             nixfmt
