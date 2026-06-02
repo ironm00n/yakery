@@ -1,0 +1,53 @@
+From e84e43b2823c694ce08614b32205f6613786ed9c Mon Sep 17 00:00:00 2001
+From: PhialsBasement <PhialsBasement@users.noreply.github.com>
+Date: Sun, 31 May 2026 17:12:02 +1000
+Subject: [PATCH] d2d1: Render geometry realizations to bitmap render targets.
+
+d2d_device_context_DrawGeometryRealization only handled command-list
+targets and was a no-op for normal bitmap render targets, so realized
+geometry never appeared on screen. Route the direct-target case through
+the existing fill/draw geometry helpers, matching FillGeometry and
+DrawGeometry.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ dlls/d2d1/device.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/d2d1/device.c b/dlls/d2d1/device.c
+index b3560f09c12..534b9089756 100644
+--- a/dlls/d2d1/device.c
++++ b/dlls/d2d1/device.c
+@@ -2923,8 +2923,19 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawGeometryRealization(ID2D1De
+ {
+     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
+     struct d2d_geometry_realization *r = unsafe_impl_from_ID2D1GeometryRealization(realization);
++    const struct d2d_geometry *geometry_impl = unsafe_impl_from_ID2D1Geometry(r->geometry);
++    struct d2d_brush *brush_impl = unsafe_impl_from_ID2D1Brush(brush);
++
++    TRACE("iface %p, realization %p, brush %p.\n", iface, realization, brush);
++
++    if (FAILED(context->error.code))
++        return;
+ 
+-    FIXME("iface %p, realization %p, brush %p semi-stub!\n", iface, realization, brush);
++    if (context->target.type == D2D_TARGET_UNKNOWN)
++    {
++        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
++        return;
++    }
+ 
+     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+     {
+@@ -2939,6 +2950,11 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawGeometryRealization(ID2D1De
+         }
+         return;
+     }
++
++    if (r->filled)
++        d2d_device_context_fill_geometry(context, geometry_impl, brush_impl, NULL);
++    else
++        d2d_device_context_draw_geometry(context, geometry_impl, brush_impl, r->stroke_width);
+ }
+ 
+ static HRESULT STDMETHODCALLTYPE d2d_device_context_CreateInk(ID2D1DeviceContext6 *iface,
