@@ -260,7 +260,16 @@ in
           TARGET = "http://127.0.0.1:${toString opts.port}";
           BIND = "127.0.0.1:${toString anubisPorts.${host}}";
           BIND_NETWORK = "tcp";
+          OG_PASSTHROUGH = true;
         };
+        policy.extraBots = [
+          { import = "(data)/meta/messengers-preview.yaml"; }
+          {
+            name = "link-preview-extra";
+            user_agent_regex = "Discordbot|Slackbot|Twitterbot|facebookexternalhit|WhatsApp|LinkedInBot|Mastodon";
+            action = "ALLOW";
+          }
+        ];
       }
     ) (lib.filterAttrs (_: o: o.anubis) cfg.hosts);
 
