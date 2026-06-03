@@ -8,13 +8,9 @@
     "CLAUDE_CODE_DISABLE_FAST_MODE": "1",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   },
-  "model": "best",
-  "showThinkingSummaries": true,
-  "alwaysThinkingEnabled": true,
-  "spinnerTipsEnabled": false,
   "permissions": {
     "allow": [
-      "Read(/nix/store/)",
+      "Read(/nix/store/**/*)",
       "Agent(Explore)",
       "Bash(ls:*)",
       "Bash(rg:*)",
@@ -29,8 +25,9 @@
     ],
     "defaultMode": "default"
   },
+  "model": "best",
   "hooks": {
-    "PreToolUse": [
+    "PermissionRequest": [
       {
         "matcher": "Bash",
         "hooks": [
@@ -46,5 +43,9 @@
     "rust-analyzer-lsp@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true
-  }
+  },
+  "spinnerTipsEnabled": false,
+  "alwaysThinkingEnabled": true,
+  "tui": "fullscreen",
+  "showThinkingSummaries": true
 }
