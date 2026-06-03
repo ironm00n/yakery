@@ -1,0 +1,65 @@
+# xdg-desktop-portal-hyprland: per-app linear DMA-BUF for screencast.
+#
+# Some PipeWire consumers (notably Zoom under XWayland) advertise dmabuf-modifier
+# support but cannot import a tiled buffer, so they render the screenshare black;
+# linear dmabuf and SHM import fine. This adds two screencopy config options:
+# - `force_linear`: offer only the LINEAR modifier to every consumer
+# - `force_linear_apps`: comma-separated portal app_ids forced to linear
+# The app_id is known at stream setup, so linear is offered from the first frame
+# (no renegotiation); consumers that don't match keep tiled zero-copy dmabuf.
+diff --git a/src/core/PortalManager.cpp b/src/core/PortalManager.cpp
+index cf733a3..7944a5f 100644
+--- a/src/core/PortalManager.cpp
++++ b/src/core/PortalManager.cpp
+@@ -45,6 +45,8 @@ CPortalManager::CPortalManager() {
+     m_sConfig.config->addConfigValue("screencopy:allow_token_by_default", Hyprlang::INT{0L});
+     m_sConfig.config->addConfigValue("screencopy:custom_picker_binary", Hyprlang::STRING{""});
+     m_sConfig.config->addConfigValue("screencopy:force_shm", Hyprlang::INT{0L});
++    m_sConfig.config->addConfigValue("screencopy:force_linear", Hyprlang::INT{0L});
++    m_sConfig.config->addConfigValue("screencopy:force_linear_apps", Hyprlang::STRING{""});
+ 
+     m_sConfig.config->commence();
+     m_sConfig.config->parse();
+diff --git a/src/portals/Screencopy.cpp b/src/portals/Screencopy.cpp
+index 5f81d63..ff4166f 100644
+--- a/src/portals/Screencopy.cpp
++++ b/src/portals/Screencopy.cpp
+@@ -1112,11 +1112,34 @@ uint32_t CPipewireConnection::buildFormatsFor(spa_pod_builder* b[2], const spa_p
+     uint32_t            modCount   = 0;
+     uint64_t*           modifiers  = nullptr;
+ 
+-    static auto* const* PFORCESHM = (Hyprlang::INT* const*)g_pPortalManager->m_sConfig.config->getConfigValuePtr("screencopy:force_shm")->getDataStaticPtr();
+-    const bool          forceSHM  = **PFORCESHM || stream->dmaBufFailed;
++    static auto* const* PFORCESHM        = (Hyprlang::INT* const*)g_pPortalManager->m_sConfig.config->getConfigValuePtr("screencopy:force_shm")->getDataStaticPtr();
++    static auto* const* PFORCELINEAR     = (Hyprlang::INT* const*)g_pPortalManager->m_sConfig.config->getConfigValuePtr("screencopy:force_linear")->getDataStaticPtr();
++    static auto* const* PFORCELINEARAPPS = (Hyprlang::STRING* const)g_pPortalManager->m_sConfig.config->getConfigValuePtr("screencopy:force_linear_apps")->getDataStaticPtr();
++
++    bool                appForceLinear = false;
++    const char*         forceApps      = *PFORCELINEARAPPS;
++    if (!stream->pSession->appid.empty() && forceApps && *forceApps) {
++        std::string haystack = std::string(",") + forceApps + ",";
++        std::erase(haystack, ' ');
++        appForceLinear = haystack.find("," + stream->pSession->appid + ",") != std::string::npos;
++    }
++
++    const bool          forceSHM     = **PFORCESHM || stream->dmaBufFailed;
++    const bool          forceLinear  = **PFORCELINEAR || appForceLinear;
++
++    bool                haveDMA      = false;
++    if (!forceSHM) {
++        if (forceLinear) {
++            modifiers    = (uint64_t*)calloc(1, sizeof(uint64_t));
++            modifiers[0] = DRM_FORMAT_MOD_LINEAR;
++            modCount     = 1;
++            haveDMA      = true;
++        } else
++            haveDMA = build_modifierlist(stream, stream->pSession->sharingData.frameInfoDMA.fmt, &modifiers, &modCount) && modCount > 0;
++    }
+ 
+-    if (!forceSHM && build_modifierlist(stream, stream->pSession->sharingData.frameInfoDMA.fmt, &modifiers, &modCount) && modCount > 0) {
+-        Debug::log(LOG, "[pw] Building modifiers for dma");
++    if (haveDMA) {
++        Debug::log(LOG, forceLinear ? "[pw] Building modifiers for dma (linear only)" : "[pw] Building modifiers for dma");
+ 
+         paramCount = 2;
+         params[0]  = build_format(b[0], pwFromDrmFourcc(stream->pSession->sharingData.frameInfoDMA.fmt), stream->pSession->sharingData.frameInfoDMA.w,

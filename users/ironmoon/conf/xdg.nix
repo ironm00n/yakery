@@ -25,7 +25,7 @@
         kdePackages.kwallet
         kdePackages.xdg-desktop-portal-kde
         xdg-desktop-portal-gtk
-        xdg-desktop-portal-hyprland
+        (callPackage ../../../packages/xdg-desktop-portal-hyprland-zoom { }) # patched: per-app force_linear (Zoom)
       ];
   };
 

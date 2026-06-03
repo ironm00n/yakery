@@ -39,7 +39,8 @@ in
         with pkgs;
         lib.mkForce [
           xdg-desktop-portal-gtk
-          xdg-desktop-portal-hyprland
+          # patched xdph for the Zoom screenshare fix (see packages/xdg-desktop-portal-hyprland-zoom)
+          (callPackage ../packages/xdg-desktop-portal-hyprland-zoom { })
           kdePackages.xdg-desktop-portal-kde # for dolphin
         ];
     };
