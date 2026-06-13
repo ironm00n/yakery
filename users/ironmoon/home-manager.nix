@@ -19,7 +19,6 @@ in
     ./services/network-manager-applet.nix
     ./services/kbuildsycoca6.nix
     ./services/fix-kde-colorscheme.nix
-    ./conf/theme.nix
     ./conf/xdg.nix
   ]
   ++ my-modules
@@ -29,6 +28,7 @@ in
 
   bundles = {
     hyprland.enable = host.hyprland;
+    theme.enable = host.hyprland;
 
     kitty.enable = true;
 

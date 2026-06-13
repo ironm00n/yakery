@@ -9,7 +9,6 @@ let
   inherit (lib) mkEnableOption mkIf;
   inherit (my-utils) symlink;
   cfg = config.bundles.eww;
-  ewwDir = "${config.xdg.configHome}/eww";
 in
 {
   options.bundles.eww = {
@@ -22,7 +21,7 @@ in
       hyprland-workspaces
     ];
 
-    home.file."${ewwDir}/eww.yuck".source = symlink ./eww.yuck;
-    home.file."${ewwDir}/eww.scss".source = symlink ./eww.scss;
+    xdg.configFile."eww/eww.yuck".source = symlink ./eww.yuck;
+    xdg.configFile."eww/eww.scss".source = symlink ./eww.scss;
   };
 }
