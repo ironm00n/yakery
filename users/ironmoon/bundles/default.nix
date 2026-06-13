@@ -14,4 +14,5 @@
   ./syncthing
   ./discord
   ./mime-apps
+  ./theme
 ]
