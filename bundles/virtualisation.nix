@@ -26,9 +26,8 @@ in
 
     virtualisation.waydroid.enable = cfg.waydroid;
 
-    environment.systemPackages = with pkgs; [
-      qemu
-    ];
+    environment.systemPackages =
+      (with pkgs; [ qemu ]) ++ (lib.optionals cfg.docker (with pkgs; [ docker ]));
 
     virtualisation.virtualbox.host.enable = cfg.virtualbox;
     users.extraGroups.vboxusers.members = mkIf cfg.virtualbox [ "ironmoon" ];
