@@ -47,8 +47,6 @@ with pkgs;
   man-pages
   tldr
 
-  docker
-
   hyfetch
 
   zip
