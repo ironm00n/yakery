@@ -7,6 +7,7 @@
   imports = [
     ./hardware-configuration.nix
     ../common/interactive.nix
+    ./networking.nix
   ];
 
   bundles.displaylink.enable = true;
