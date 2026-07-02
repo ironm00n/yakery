@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  inputs,
   ...
 }:
 let
@@ -16,6 +17,7 @@ in
   config = mkIf cfg.enable {
     programs.nixvim = (import ./config.nix { inherit pkgs; }) // {
       enable = true;
+      nixpkgs.source = inputs.nixpkgs;
     };
   };
 }
