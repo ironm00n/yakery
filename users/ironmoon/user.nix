@@ -117,6 +117,8 @@ in
         hunspellDicts.en_US
 
         (pkgs.callPackage ../../packages/hytale { })
+
+        tmux
       ]
       ++ lib.optionals utils [
         # https://github.com/ibraheemdev/modern-unix
