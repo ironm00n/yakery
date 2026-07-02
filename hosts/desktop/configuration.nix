@@ -12,6 +12,11 @@
 
   bundles.displaylink.enable = true;
   bundles.gaming.enable = true;
+  bundles.virtualisation = {
+    enable = true;
+    docker = true;
+    waydroid = true;
+  };
 
   services.fwupd.enable = true;
 
