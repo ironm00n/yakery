@@ -18,6 +18,29 @@ in
       pkgs.displaylink
     ];
 
-    systemd.services.dlm.wantedBy = [ "multi-user.target" ];
+    boot = {
+      extraModulePackages = [ config.boot.kernelPackages.evdi ];
+      initrd = {
+        kernelModules = [
+          "evdi"
+        ];
+      };
+    };
+
+    systemd.services.displaylink-server = {
+      enable = true;
+      requires = [ "systemd-udevd.service" ];
+      after = [ "systemd-udevd.service" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "simple";
+        ExecStart = "${pkgs.displaylink}/bin/DisplayLinkManager";
+        User = "root";
+        Group = "root";
+        # Environment = [ "DISPLAY=:0" ];
+        Restart = "on-failure";
+        RestartSec = 5;
+      };
+    };
   };
 }
