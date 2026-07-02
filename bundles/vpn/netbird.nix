@@ -58,6 +58,8 @@ in
 
   config = mkIf cfg.enable (mkMerge [
     {
+      services.resolved.enable = true; # split dns
+
       services.netbird.clients.netbird = {
         port = 51820;
         environment.NB_MANAGEMENT_URL = cfg.managementUrl;
