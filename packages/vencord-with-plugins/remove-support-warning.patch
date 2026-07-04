@@ -1,13 +1,13 @@
 diff --git a/src/plugins/_core/supportHelper.tsx b/src/plugins/_core/supportHelper.tsx
-index 825bbc20..2ded1918 100644
+index b88643a3..59ecf4ad 100644
 --- a/src/plugins/_core/supportHelper.tsx
 +++ b/src/plugins/_core/supportHelper.tsx
-@@ -200,7 +200,7 @@ export default definePlugin({
+@@ -236,7 +236,7 @@ export default definePlugin({
              const roles = GuildMemberStore.getSelfMember(VENCORD_GUILD_ID)?.roles;
              if (!roles || TrustedRolesIds.some(id => roles.includes(id))) return;
  
 -            if (!IS_WEB && IS_UPDATER_DISABLED) {
 +            if (!IS_WEB && IS_UPDATER_DISABLED && false) {
-                 return Alerts.show({
-                     title: "Hold on!",
-                     body: <div>
+                 openModal(props => (
+                     <ConfirmModal
+                         {...props}
