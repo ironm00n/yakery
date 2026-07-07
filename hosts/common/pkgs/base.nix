@@ -32,6 +32,7 @@ with pkgs;
   delta
   dust
   moor # much nicer pager
+  just
 
   gcc
   gdb
