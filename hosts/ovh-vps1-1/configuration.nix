@@ -26,11 +26,16 @@ in
   };
 
   networking = {
-    interfaces.ens3.ipv6.addresses = [
-      {
-        inherit (ipv6) address prefixLength;
-      }
-    ];
+    networkmanager.unmanaged = [ "interface-name:ens3" ];
+
+    interfaces.ens3 = {
+      useDHCP = true;
+      ipv6.addresses = [
+        {
+          inherit (ipv6) address prefixLength;
+        }
+      ];
+    };
     defaultGateway6 = {
       address = ipv6.gateway;
       interface = "ens3";
