@@ -2,4 +2,5 @@
 with pkgs;
 [
   papermc
+  android-studio
 ]

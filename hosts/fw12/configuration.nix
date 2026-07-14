@@ -16,7 +16,6 @@
   ];
 
   # secure boot
-  boot.bootspec.enable = true;
   boot.loader = {
     efi = {
       canTouchEfiVariables = true;

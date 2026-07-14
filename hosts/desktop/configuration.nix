@@ -17,6 +17,7 @@
     docker = true;
     waydroid = true;
   };
+  bundles.vpn.mullvad.enable = true;
 
   services.fwupd.enable = true;
 
