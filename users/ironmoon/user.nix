@@ -85,7 +85,7 @@ in
         obs-studio
         audacity
         pkgs-stable.aseprite # isn't cached and constant rebuilds are annoying
-        musescore
+        # musescore
       ]
       ++ lib.optionals productivity [
         thunderbird
@@ -184,7 +184,7 @@ in
 
         google-chrome
         # firefox enabled with home-manager
-        firefox-devedition
+        # firefox-devedition
         tor-browser
 
         element-desktop

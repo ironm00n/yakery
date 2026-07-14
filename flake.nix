@@ -294,6 +294,7 @@
             nil
             lua-language-server
             nix-tree
+            cargo
           ]) ++ lib.optionals enable-quickshell [
             pkgs.kdePackages.qtdeclarative # qmlls
             quickshell
