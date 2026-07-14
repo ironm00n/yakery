@@ -14,7 +14,7 @@
     sec.ctf = false;
     sec.ld = false;
     sec.re = true;
-    printing.enable = false;
+    printing.enable = true;
     virtualisation = {
       enable = true;
       libvirt = false;
