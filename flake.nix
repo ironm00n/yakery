@@ -255,11 +255,13 @@
       system: deployLib: deployLib.deployChecks self.deploy
     ) inputs.deploy-rs.lib;
 
-    packages = eachSystem ({ system, pkgs }: {
-      homeConfigurations = import ./nix/home-manager-standalone.nix {
+    homeConfigurations = eachSystem ({ system, pkgs }: 
+      import ./nix/home-manager-standalone.nix {
         inherit pkgs inputs lib my-lib;
         inherit machines mk-pkgs-stable;
-      };
+      });
+
+    packages = eachSystem ({ system, pkgs }: {
       nvim = import ./nix/nvim/default.nix {
         inherit (nixvim.legacyPackages.${system}) makeNixvimWithModule;
         pkgs = pkgs-map.${system};
