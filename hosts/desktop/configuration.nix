@@ -10,14 +10,17 @@
     ./networking.nix
   ];
 
-  bundles.displaylink.enable = true;
-  bundles.gaming.enable = true;
-  bundles.virtualisation = {
-    enable = true;
-    docker = true;
-    waydroid = true;
+  bundles = {
+    displaylink.enable = true;
+    gaming.enable = true;
+    virtualisation = {
+      enable = true;
+      docker = true;
+      waydroid = true;
+    };
+    vpn.mullvad.enable = true;
+    vpn.globalprotect.enable = true;
   };
-  bundles.vpn.mullvad.enable = true;
 
   services.fwupd.enable = true;
 
