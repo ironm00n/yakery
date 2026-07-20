@@ -36,7 +36,7 @@ let
   fileManager = "dolphin";
   browser = "firefox -new-tab";
   menu = "anyrun";
-  clipboardHist = "cliphist list | wofi --dmenu | cliphist decode | wl-copy";
+  clipboardHist = "cliphist list | wofi --dmenu --cache-file=/dev/null | cliphist decode | wl-copy";
   ssWindow = "hyprshot -m window";
   ssMonitor = "hyprshot -m output";
   ssSelection = "hyprshot -m region -z";
