@@ -103,6 +103,7 @@
 #pulseaudio,
 #idle_inhibitor,
 #battery,
+#custom-dunst,
 #systemd_failed_units {
 	margin: 4px 2px;
 	padding: 0 6px;

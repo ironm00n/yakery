@@ -57,7 +57,7 @@ in
         "power-profiles-daemon"
         "idle_inhibitor"
         "battery"
-        # "custom/dunst"
+        "custom/dunst"
         "systemd-failed-units"
       ];
 
@@ -79,10 +79,21 @@ in
       "clock" = {
         "interval" = 1;
         "format" = "{:%a %Y-%m-%d %H:%M:%S}";
-        "on-click" = "";
-        "on-click-middle" = "";
-        "on-click-right" = "";
         "tooltip-format" = "<big>{:%Y %B}</big>\n<tt>{calendar}</tt>";
+        "calendar" = {
+          "mode" = "month";
+          "mode-mon-col" = 3;
+          "on-scroll" = 1;
+          "format" = {
+            "today" = "<span color='${base08}'><b><u>{}</u></b></span>";
+          };
+        };
+        "actions" = {
+          "on-click-right" = "mode";
+          "on-click-middle" = "shift_reset";
+          "on-scroll-up" = "shift_up";
+          "on-scroll-down" = "shift_down";
+        };
       };
 
       # -----------------
@@ -230,9 +241,13 @@ in
         };
       };
 
-      # "custom/dunst" = {
-      #   "on-click" = "dunstctl set-paused toggle";
-      # };
+      "custom/dunst" = {
+        "exec" = "dunstctl is-paused | sed 's/true/󰂛/;s/false/󰂚/'";
+        "on-click" = "dunstctl set-paused toggle && pkill -RTMIN+11 waybar";
+        "signal" = 11;
+        "interval" = 5;
+        "tooltip" = false;
+      };
       "systemd_failed_units" = {
         "hide-on-ok" = true;
         "format" = "✗ {nr_failed}";
