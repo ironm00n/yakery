@@ -8,23 +8,23 @@
 # The app_id is known at stream setup, so linear is offered from the first frame
 # (no renegotiation); consumers that don't match keep tiled zero-copy dmabuf.
 diff --git a/src/core/PortalManager.cpp b/src/core/PortalManager.cpp
-index cf733a3..7944a5f 100644
+index 5dc98d4..34a1aad 100644
 --- a/src/core/PortalManager.cpp
 +++ b/src/core/PortalManager.cpp
-@@ -45,6 +45,8 @@ CPortalManager::CPortalManager() {
-     m_sConfig.config->addConfigValue("screencopy:allow_token_by_default", Hyprlang::INT{0L});
+@@ -77,6 +77,8 @@ CPortalManager::CPortalManager() {
      m_sConfig.config->addConfigValue("screencopy:custom_picker_binary", Hyprlang::STRING{""});
      m_sConfig.config->addConfigValue("screencopy:force_shm", Hyprlang::INT{0L});
+     m_sConfig.config->addConfigValue("screencopy:cursor_mode", Hyprlang::INT{0L});
 +    m_sConfig.config->addConfigValue("screencopy:force_linear", Hyprlang::INT{0L});
 +    m_sConfig.config->addConfigValue("screencopy:force_linear_apps", Hyprlang::STRING{""});
  
      m_sConfig.config->commence();
      m_sConfig.config->parse();
 diff --git a/src/portals/Screencopy.cpp b/src/portals/Screencopy.cpp
-index 5f81d63..ff4166f 100644
+index 34af332..afe6ea9 100644
 --- a/src/portals/Screencopy.cpp
 +++ b/src/portals/Screencopy.cpp
-@@ -1112,11 +1112,34 @@ uint32_t CPipewireConnection::buildFormatsFor(spa_pod_builder* b[2], const spa_p
+@@ -1123,11 +1123,34 @@ uint32_t CPipewireConnection::buildFormatsFor(spa_pod_builder* b[2], const spa_p
      uint32_t            modCount   = 0;
      uint64_t*           modifiers  = nullptr;
  
@@ -42,10 +42,10 @@ index 5f81d63..ff4166f 100644
 +        appForceLinear = haystack.find("," + stream->pSession->appid + ",") != std::string::npos;
 +    }
 +
-+    const bool          forceSHM     = **PFORCESHM || stream->dmaBufFailed;
-+    const bool          forceLinear  = **PFORCELINEAR || appForceLinear;
++    const bool forceSHM    = **PFORCESHM || stream->dmaBufFailed;
++    const bool forceLinear = **PFORCELINEAR || appForceLinear;
 +
-+    bool                haveDMA      = false;
++    bool       haveDMA = false;
 +    if (!forceSHM) {
 +        if (forceLinear) {
 +            modifiers    = (uint64_t*)calloc(1, sizeof(uint64_t));
