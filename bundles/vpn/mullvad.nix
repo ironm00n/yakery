@@ -14,7 +14,7 @@ in
   config = mkIf cfg.enable {
     services.resolved.enable = true;
     services.mullvad-vpn.enable = mkDefault true;
-    services.mullvad-vpn.package = mkDefault pkgs.mullvad-vpn;
+    services.mullvad-vpn.gui.enable = mkDefault true;
 
     environment.systemPackages = with pkgs; [
       mullvad-vpn
