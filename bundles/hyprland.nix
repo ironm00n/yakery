@@ -24,6 +24,8 @@ in
     programs.hyprlock.enable = true;
     services.hypridle.enable = true;
 
+    bundles.oom.lastResortUserUnits = [ "wayland-wm@" ];
+
     qt.enable = true;
 
     xdg.portal = {

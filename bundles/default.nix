@@ -13,6 +13,7 @@
     ./reverse-proxy.nix
     ./local-tls.nix
     ./distributed-builds.nix
+    ./oom.nix
 
     ./displaylink.nix
   ];

@@ -31,10 +31,14 @@ let
     in
     bindings ++ moveBindings;
 
-  terminal = "kitty";
-  emacs = "doom emacs";
-  fileManager = "dolphin";
-  browser = "firefox -new-tab";
+  # long-lived apps get their own app-*.scope instead of pooling into the
+  # compositor's cgroup, where oomd can only kill them by killing the session
+  app = cmd: "uwsm app -- ${cmd}";
+
+  terminal = app "kitty";
+  emacs = app "doom emacs";
+  fileManager = app "dolphin";
+  browser = app "firefox -new-tab";
   menu = "anyrun";
   clipboardHist = "cliphist list | wofi --dmenu --cache-file=/dev/null | cliphist decode | wl-copy";
   ssWindow = "hyprshot -m window";

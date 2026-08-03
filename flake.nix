@@ -252,7 +252,11 @@
     ) servers;
 
     checks = lib.mapAttrs (
-      system: deployLib: deployLib.deployChecks self.deploy
+      system: deployLib:
+      deployLib.deployChecks self.deploy
+      // lib.optionalAttrs (system == "x86_64-linux") {
+        oom = import ./nix/tests/oom.nix { pkgs = pkgs-map.${system}; };
+      }
     ) inputs.deploy-rs.lib;
 
     homeConfigurations = eachSystem ({ system, pkgs }: 
