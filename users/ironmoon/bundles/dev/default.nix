@@ -125,6 +125,7 @@ in
         lazygit
 
         claude-code
+        jujutsu
         lazyjj
         jjui
       ];
