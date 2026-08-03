@@ -59,6 +59,7 @@ in
 
   programs = {
     fzf = importWith ./programs/fzf.nix;
+    lf = importWith ./programs/lf.nix;
     konsole = importWith ./programs/konsole.nix;
     okular = importWith ./programs/okular.nix;
     git = importWith ./programs/git.nix;
