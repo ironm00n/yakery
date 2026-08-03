@@ -32,7 +32,10 @@ let
 
   defaultBackend =
     host: opts:
-    if opts.anubis then "127.0.0.1:${toString anubisPorts.${host}}" else "127.0.0.1:${toString opts.port}";
+    if opts.anubis then
+      "127.0.0.1:${toString anubisPorts.${host}}"
+    else
+      "127.0.0.1:${toString opts.port}";
 
   # Source ranges that should skip the vhost's Anubis filter and hit the backend directly.
   overrides =

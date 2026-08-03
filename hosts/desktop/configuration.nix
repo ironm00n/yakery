@@ -78,7 +78,10 @@
   # services.fail2ban.enable = true;
   services.openssh.settings = {
     UsePAM = false;
-    AllowUsers = [ "ironmoon" "root" ];
+    AllowUsers = [
+      "ironmoon"
+      "root"
+    ];
   };
 
   users.users.root.openssh.authorizedKeys.keys = import ../common/admin-ssh-keys.nix;

@@ -49,7 +49,10 @@ in
       #   - `waydroid show-full-ui`
       virtualisation.waydroid.enable = true;
       virtualisation.waydroid.package = pkgs.waydroid-nftables; # needed for newer kernels
-      environment.systemPackages = with pkgs; [ waydroid-helper cage ];
+      environment.systemPackages = with pkgs; [
+        waydroid-helper
+        cage
+      ];
     })
     (mkIf cfg.virtualbox {
       virtualisation.virtualbox.host.enable = true;

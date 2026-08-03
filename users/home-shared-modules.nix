@@ -1,4 +1,8 @@
-{ inputs, lib, useSecrets }:
+{
+  inputs,
+  lib,
+  useSecrets,
+}:
 [
   inputs.nixvim.homeModules.nixvim
   # needed even when not using full kde (konsole, dolphin, etc)

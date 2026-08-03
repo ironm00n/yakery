@@ -15,13 +15,19 @@ let
   host =
     machine:
     let
-      raw = (machines.${machine}.host { inherit pkgs; }) // { hyprland = true; };
+      raw = (machines.${machine}.host { inherit pkgs; }) // {
+        hyprland = true;
+      };
       use-secrets = !(machines.${machine}.no-secrets or false);
     in
     (lib.evalModules {
       modules = [
         ../hosts/options.nix
-        { host = raw // { inherit use-secrets; }; }
+        {
+          host = raw // {
+            inherit use-secrets;
+          };
+        }
       ];
     }).config.host;
   common =

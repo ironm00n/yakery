@@ -10,21 +10,24 @@ let
   netbirdDomain = "vpn.${domain}";
   clientId = "360244641284554753";
 
-  netbird = my-lib.sops.mkSecrets {
-    inherit config;
-    sopsFile = inputs.secrets.lib.netbird;
-    prefix = "netbird";
-  } [
-    {
-      key = "turn_password";
-      usergroup = "turnserver";
-    }
-    "data_store_encryption_key"
-    "relay_secret_container"
-    "relay_secret"
-    "setup_env"
-    "idp_mgmt_client_secret"
-  ];
+  netbird =
+    my-lib.sops.mkSecrets
+      {
+        inherit config;
+        sopsFile = inputs.secrets.lib.netbird;
+        prefix = "netbird";
+      }
+      [
+        {
+          key = "turn_password";
+          usergroup = "turnserver";
+        }
+        "data_store_encryption_key"
+        "relay_secret_container"
+        "relay_secret"
+        "setup_env"
+        "idp_mgmt_client_secret"
+      ];
   get-netbird-secret = netbird.get-path;
 in
 {
@@ -70,7 +73,10 @@ in
         HttpConfig.AuthAudience = clientId;
 
         # Trust local nginx so peer public IPs use X-Forwarded-For, not the ::1 backend hop.
-        ReverseProxy.TrustedHTTPProxies = [ "127.0.0.1/32" "::1/128" ];
+        ReverseProxy.TrustedHTTPProxies = [
+          "127.0.0.1/32"
+          "::1/128"
+        ];
 
         IdpManagerConfig = {
           ManagerType = "zitadel";

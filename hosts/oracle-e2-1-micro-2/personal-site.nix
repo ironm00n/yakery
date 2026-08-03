@@ -1,4 +1,9 @@
-{ lib, pkgs, my-lib, ... }:
+{
+  lib,
+  pkgs,
+  my-lib,
+  ...
+}:
 
 let
   siteUser = "personal-site";

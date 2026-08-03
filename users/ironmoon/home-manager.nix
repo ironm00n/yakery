@@ -10,9 +10,9 @@ let
   my-modules = import ./modules/default.nix;
   bundles = import ./bundles/default.nix;
   importWith = path: import path args;
-  fw13 = (import ../../hosts/fw13/host-cfg.nix {inherit pkgs;}).id;
-  fw12 = (import ../../hosts/fw12/host-cfg.nix {inherit pkgs;}).id;
-  desktop = (import ../../hosts/desktop/host-cfg.nix {inherit pkgs;}).id;
+  fw13 = (import ../../hosts/fw13/host-cfg.nix { inherit pkgs; }).id;
+  fw12 = (import ../../hosts/fw12/host-cfg.nix { inherit pkgs; }).id;
+  desktop = (import ../../hosts/desktop/host-cfg.nix { inherit pkgs; }).id;
 in
 {
   imports = [
