@@ -15,6 +15,47 @@
     ../common/interactive.nix
   ];
 
+  bundles.vpn.mullvad.enable = true;
+  bundles.virtualisation = {
+    enable = false;
+    libvirt = true;
+    docker = true;
+    waydroid = false;
+    virtualbox = false;
+  };
+
+  services.udev.extraRules = ''
+    # CANable2 / STM32 DFU bootloader
+    SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="df11", TAG+="uaccess", MODE="0666"
+    # CANable2 in candleLight / gs_usb mode
+    SUBSYSTEM=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", TAG+="uaccess", MODE="0666"
+  '';
+
+  nix.buildMachines = [
+    {
+      hostName = "desktop";
+      system = "x86_64-linux";
+      protocol = "ssh-ng";
+      # if the builder supports building for multiple architectures,
+      # replace the previous line by, e.g.
+      # systems = ["x86_64-linux" "aarch64-linux"];
+      maxJobs = 5;
+      speedFactor = 5;
+      supportedFeatures = [
+        "nixos-test"
+        "benchmark"
+        "big-parallel"
+        "kvm"
+      ];
+      mandatoryFeatures = [ ];
+    }
+  ];
+  nix.distributedBuilds = true;
+  # optional, useful when the builder has a faster internet connection than yours
+  nix.extraOptions = ''
+    builders-use-substitutes = true
+  '';
+
   # secure boot
   boot.loader = {
     efi = {
