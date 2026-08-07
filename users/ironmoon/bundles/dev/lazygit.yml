@@ -4,9 +4,9 @@ gui:
   tabWidth: 2
 git:
   overrideGpg: true
-  pagers:
+  diffRenderers:
     - colorArg: always
-      pager: |
+      command: |
         delta --syntax-theme="Visual Studio Dark+" --tabs=2 \
         --paging=never --line-numbers \
         --line-numbers-left-format="" --line-numbers-right-format="{np:<4}" \
