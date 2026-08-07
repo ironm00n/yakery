@@ -30,9 +30,8 @@ customCommands:
     output: popup
     description: "View git diff stat"
     outputTitle: "Diff Stats"
-  # copied from docs:
   - key: 'P'
-    command: "git push {{.SelectedRemote.Name}} {{.SelectedLocalCommit.Sha}}:{{.SelectedLocalBranch.Name}}"
+    command: "git push {{.CheckedOutBranch.UpstreamRemote}} {{.SelectedCommit.Hash}}:{{.CheckedOutBranch.UpstreamBranch}}"
     context: "commits"
     loadingText: "Pushing commit..."
     description: "Push a specific commit (and any preceding)"
