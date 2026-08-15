@@ -189,7 +189,8 @@
       // (mk-server { id = "oracle-e2-1-micro-4"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-1"; system = "aarch64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-2"; system = "aarch64-linux"; disko = true; })
-      // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; });
+      # // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; })
+        ;
     machines = {
       fw12 = {
         system = "x86_64-linux";
