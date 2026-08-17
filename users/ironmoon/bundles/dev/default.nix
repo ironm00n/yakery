@@ -128,6 +128,7 @@ in
         jujutsu
         lazyjj
         jjui
+        tuicr
       ];
 
       home.file = mkIf cfg.tooling {
