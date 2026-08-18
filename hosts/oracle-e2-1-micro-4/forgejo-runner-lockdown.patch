@@ -1,0 +1,127 @@
+diff --git a/internal/app/run/runner.go b/internal/app/run/runner.go
+index cf7bec31..a4b0f464 100644
+--- a/internal/app/run/runner.go
++++ b/internal/app/run/runner.go
+@@ -405,8 +405,11 @@ func (r *Runner) run(ctx context.Context, task *runnerv1.Task, reporter *report.
+ 		ctx = runner.WithJobLoggerFactory(ctx, NullLogger{})
+ 	}
+ 
+-	execErr := executor(ctx)
+-	return execErr
++	// slurm-ci lockdown: the plan executor is built above (so the workflow is
++	// parsed and validated) but deliberately never invoked — no workflow step
++	// runs on this host. All real work is dispatched to the Slurm cluster.
++	_ = executor
++	return r.runSlurmCI(ctx, preset, reporter)
+ }
+ 
+ func (r *Runner) Declare(ctx context.Context, labels []string) (*connect.Response[runnerv1.DeclareResponse], error) {
+diff --git a/internal/app/run/slurmci.go b/internal/app/run/slurmci.go
+new file mode 100644
+index 00000000..8817473d
+--- /dev/null
++++ b/internal/app/run/slurmci.go
+@@ -0,0 +1,103 @@
++// SPDX-License-Identifier: MIT
++//
++// slurm-ci lockdown. This file replaces Forgejo Actions' arbitrary step
++// execution with a single hand-off to the `slurm-ci` dispatcher. No workflow
++// step (`run:` / `uses:`) ever executes on this host: the runner only forwards
++// the build coordinates and the ephemeral, repo-scoped per-run token to the
++// Slurm cluster, streams the build log back, and reports pass/fail.
++
++package run
++
++import (
++	"bytes"
++	"context"
++	"os"
++	"os/exec"
++	"syscall"
++	"time"
++
++	"code.forgejo.org/forgejo/runner/v12/act/common"
++	"code.forgejo.org/forgejo/runner/v12/act/model"
++	"code.forgejo.org/forgejo/runner/v12/internal/pkg/report"
++	"github.com/sirupsen/logrus"
++)
++
++// runSlurmCI dispatches the build via `slurm-ci run` instead of executing the
++// workflow plan. The ephemeral Forgejo job token rides in the child's
++// environment (never argv, so it can't leak into `ps`); slurm-ci forwards it to
++// the cluster over SSH stdin. Cluster connection + nixenv settings come from the
++// systemd unit's own environment, inherited via os.Environ().
++func (r *Runner) runSlurmCI(ctx context.Context, preset *model.GithubContext, reporter *report.Reporter) error {
++	reporter.Logf("slurm-ci: dispatching %s@%s (ref %s) to the Slurm cluster", preset.Repository, preset.Sha, preset.Ref)
++
++	bin := os.Getenv("SLURM_CI_BIN")
++	if bin == "" {
++		bin = "slurm-ci"
++	}
++
++	cmd := exec.CommandContext(ctx, bin, "run")
++	cmd.Env = append(os.Environ(),
++		"CI_REPO="+preset.Repository,
++		"CI_REF="+preset.Ref,
++		"CI_COMMIT="+preset.Sha,
++		"CI_TOKEN="+preset.Token,
++	)
++	w := &logfWriter{reporter: reporter}
++	cmd.Stdout = w
++	cmd.Stderr = w
++	// On Forgejo cancel/timeout the context is cancelled; send SIGTERM (not the
++	// default SIGKILL) so slurm-ci can `scancel` the Slurm job rather than
++	// orphan it, with a short grace period before the kernel kill.
++	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
++	cmd.WaitDelay = 30 * time.Second
++
++	runErr := cmd.Run()
++	w.flush()
++	if runErr != nil {
++		reporter.Logf("slurm-ci: %v", runErr)
++	}
++
++	// The job result is consumed by the reporter's logrus hook (Reporter.Fire),
++	// which only inspects entries whose stage != "Main"; a SUCCESS result must
++	// carry jobOutputs or the reporter panics.
++	result := "success"
++	if runErr != nil {
++		result = "failure"
++	}
++	fields := logrus.Fields{"stage": "Post", "jobResult": result}
++	if runErr == nil {
++		fields["jobOutputs"] = map[string]string{}
++	}
++	common.Logger(ctx).WithFields(fields).Infof("slurm-ci finished: %s", result)
++
++	return runErr
++}
++
++// logfWriter splits child output into lines and forwards each to the job log.
++// os/exec serialises Write calls when one writer backs both stdout and stderr,
++// so no locking is needed. We never start a workflow step, so duringSteps() stays
++// false and reporter.Logf appends the lines.
++type logfWriter struct {
++	reporter *report.Reporter
++	buf      []byte
++}
++
++func (w *logfWriter) Write(p []byte) (int, error) {
++	w.buf = append(w.buf, p...)
++	for {
++		i := bytes.IndexByte(w.buf, '\n')
++		if i < 0 {
++			break
++		}
++		w.reporter.Logf("%s", string(w.buf[:i]))
++		w.buf = w.buf[i+1:]
++	}
++	return len(p), nil
++}
++
++func (w *logfWriter) flush() {
++	if len(w.buf) > 0 {
++		w.reporter.Logf("%s", string(w.buf))
++		w.buf = nil
++	}
++}

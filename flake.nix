@@ -303,6 +303,9 @@
         inherit (nixvim.legacyPackages.${system}) makeNixvimWithModule;
         pkgs = pkgs-map.${system};
       };
+      # Static musl: one binary serves all three roles, incl. the `dispatch`
+      # and `build` roles that run on the cluster's foreign (non-Nix) hosts.
+      slurm-ci = pkgs.pkgsStatic.callPackage ./crates/slurm-ci/package.nix { };
     }
     // lib.optionalAttrs (system == "x86_64-linux") {
       # Throwaway guest for untrusted coding harnesses; not a `machines` entry on purpose.
