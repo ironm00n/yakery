@@ -132,9 +132,7 @@ in
         gh-dash
       ];
 
-      home.file = mkIf cfg.tooling {
-        "${configHome}/lazygit/config.yml".source = symlink ./lazygit.yml;
-      };
+      xdg.configFile."lazygit/config.yml".source = symlink ./lazygit.yml;
     })
     (mkIf cfg.other-llm {
       home.packages = with pkgs; [
