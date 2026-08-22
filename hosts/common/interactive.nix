@@ -11,8 +11,7 @@ in
   imports = [
     ./networked.nix
     ../../users/home-manager.nix
-    ./specializations/hyprland.nix
-    ./specializations/kde.nix
+    ./specializations
     ../../users/ironmoon/user.nix
   ];
 
