@@ -273,6 +273,26 @@ in
       }
       # TODO?: make xdg-portals float
       # TODO: mess with rules for waydroid
+      {
+        name = "zoom-menu-window";
+        "match:class" = "^(Zoom)$";
+        "match:title" = "^(menu window)$";
+        stay_focused = true;
+      }
+      {
+        name = "zoom-confirm-window";
+        "match:class" = "^(Zoom)$";
+        "match:title" = "^(confirm window)$";
+        stay_focused = true;
+      }
+      {
+        name = "zoom-share-toolbar";
+        "match:class" = "^(Zoom)$";
+        "match:initial_title" = "^(as_toolbar)$";
+        float = true;
+        pin = true;
+        no_anim = true;
+      }
     ];
 
     layerrule = [
