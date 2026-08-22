@@ -49,8 +49,8 @@ in
 {
   enable = true;
 
-  # FIXME: migrate to LUA ASAP
   configType = "hyprlang";
+  # configType = "lua";
 
   # conflicts with uwsm
   systemd.enable = false;

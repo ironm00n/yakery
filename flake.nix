@@ -288,6 +288,20 @@
               "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
             ]
             |> lib.concatStringsSep ":";
+          # lua-language-server expands a leading $VAR in workspace.library, so the
+          # hyprland bundle's .luarc.json reaches the `hl` stubs through this export
+          hyprland_lua_stubs =
+            let
+              var = "HYPRLAND_LUA_STUBS";
+              ref = "$" + var;
+              luarc-path = "users/ironmoon/bundles/hyprland/.luarc.json";
+              luarc = builtins.fromJSON (builtins.readFile (./. + "/${luarc-path}"));
+            in
+            assert lib.assertMsg (builtins.elem ref luarc.workspace.library)
+              "${luarc-path}: workspace.library must reference ${ref}";
+            lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+              export ${var}=${pkgs.hyprland}/share/hypr/stubs
+            '';
         in
         pkgs.mkShell {
           nativeBuildInputs = [
@@ -307,6 +321,7 @@
           shellHook = ''
             export ROOT_NIXOS_PATH=$(git rev-parse --show-toplevel)
             export QML2_IMPORT_PATH=${qml2_import}:$QML2_IMPORT_PATH
+            ${hyprland_lua_stubs}
           '';
         };
     });

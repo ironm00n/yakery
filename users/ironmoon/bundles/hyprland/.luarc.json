@@ -1,0 +1,11 @@
+{
+  "runtime": {
+    "version": "Lua 5.5"
+  },
+  "workspace": {
+    "library": [
+      "$HYPRLAND_LUA_STUBS"
+    ],
+    "checkThirdParty": false
+  }
+}

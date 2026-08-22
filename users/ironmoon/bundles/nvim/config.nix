@@ -303,6 +303,7 @@ in
       ocamllsp.enable = true;
       ocamllsp.package = null;
       nil_ls.enable = true;
+      lua_ls.enable = true;
       wasm_language_tools.enable = true;
       rust_analyzer.enable = true;
       rust_analyzer.package = null;
