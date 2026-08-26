@@ -77,7 +77,6 @@
   # SSH
   # services.fail2ban.enable = true;
   services.openssh.settings = {
-    UsePAM = false;
     AllowUsers = [
       "ironmoon"
       "root"
