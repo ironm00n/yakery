@@ -107,6 +107,20 @@ in
     bufferline.enable = true;
     which-key.enable = true;
     whitespace.enable = true;
+    visual-whitespace.enable = true;
+    render-markdown = {
+      enable = true;
+      # it renders viewport±10 lines and only reparses once the viewport escapes
+      # that, which a mouse wheel does in ~4 ticks. widening the margin makes the
+      # reparse rare rather than more expensive; debounce covers outrunning it.
+      package = pkgs.vimPlugins.render-markdown-nvim.overrideAttrs (old: {
+        postPatch = (old.postPatch or "") + ''
+          substituteInPlace lua/render-markdown/request/view.lua \
+            --replace-fail 'env.range(buf, win, 10)' 'env.range(buf, win, 100)'
+        '';
+      });
+      settings.debounce = 0;
+    };
     telescope = {
       enable = true;
       keymaps = {
@@ -249,6 +263,36 @@ in
       action.__raw = ''
         function() require("Comment.api").toggle.linewise.current() end
       '';
+    }
+    {
+      mode = [
+        "n"
+        "x"
+      ];
+      key = "<leader>y";
+      action = ''"+y'';
+      options.desc = "yank to system clipboard";
+    }
+    {
+      mode = "n";
+      key = "<leader>Y";
+      action = ''"+y$'';
+      options.desc = "yank to end of line to system clipboard";
+    }
+    {
+      mode = [
+        "n"
+        "x"
+      ];
+      key = "<leader>p";
+      action = ''"+p'';
+      options.desc = "paste from system clipboard";
+    }
+    {
+      mode = "n";
+      key = "<leader>P";
+      action = ''"+P'';
+      options.desc = "paste from system clipboard before";
     }
   ];
 

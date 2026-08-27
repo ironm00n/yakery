@@ -7,10 +7,19 @@
 }:
 let
   inherit (inputs.home-manager.lib) hm;
-  inherit (lib) removePrefix escapeShellArg;
+  inherit (lib) getExe removePrefix escapeShellArg;
   inherit (pkgs) runCommandLocal;
 in
 rec {
+  # nixpkgs has `linkFarm` as the primitive, but nothing that reads as
+  # "same package, different command name" and carries mainProgram over
+  aliasExe =
+    name: pkg:
+    runCommandLocal name { meta.mainProgram = name; } ''
+      mkdir -p $out/bin
+      ln -s ${escapeShellArg (getExe pkg)} $out/bin/${escapeShellArg name}
+    '';
+
   # FIXME: this is copied from home-manager modules/files.nix, can it be extracted?
   mkOutOfStoreSymlink =
     path:

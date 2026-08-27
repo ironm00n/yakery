@@ -1,4 +1,5 @@
 args@{
+  config,
   lib,
   pkgs,
   host,
@@ -6,7 +7,6 @@ args@{
   ...
 }:
 let
-  _ = my-utils;
   my-modules = import ./modules/default.nix;
   bundles = import ./bundles/default.nix;
   importWith = path: import path args;
@@ -44,16 +44,19 @@ in
     dev.langs = host.id != fw12;
     sec.enable = !host.lightweight;
     emacs.enable = true;
-    nvim.enable = host.id != fw13;
+    nvim.enable = true;
 
     syncthing.enable = true;
     discord.enable = true;
   };
 
+  # nixvim is always installed as `nixvim`; alias it where it should also be the default vim
+  home.packages = lib.optional (host.id != fw13) (
+    my-utils.aliasExe "nvim" config.bundles.nvim.package
+  );
+
   home.sessionVariables = {
     PAGER = "${lib.getExe pkgs.moor} --no-linenumbers";
-    EDITOR = "${lib.getExe pkgs.neovim}";
-    VISUAL = "${lib.getExe pkgs.neovim}";
     ELECTRON_OZONE_PLATFORM_HINT = "auto";
   };
 
