@@ -181,6 +181,7 @@ in
         kdePackages.ktimer
         kdePackages.kalarm
         kdePackages.kweather
+        kdePackages.krdc
 
         google-chrome
         # firefox enabled with home-manager
