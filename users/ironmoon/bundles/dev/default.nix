@@ -129,6 +129,7 @@ in
         lazyjj
         jjui
         tuicr
+        gh-dash
       ];
 
       home.file = mkIf cfg.tooling {
