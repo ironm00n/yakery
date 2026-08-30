@@ -47,6 +47,7 @@ in
       "wireshark"
     ];
     shell = pkgs.zsh;
+    linger = true;
 
     packages =
       with pkgs;
