@@ -68,6 +68,17 @@ in
       networking.firewall.interfaces.${config.services.netbird.clients.netbird.interface} = {
         inherit (cfg) allowedTCPPorts allowedUDPPorts;
       };
+
+      assertions = [
+        {
+          assertion = !config.services.netbird.enable;
+          message = ''
+            services.netbird.enable declares a second `default` client on wt0. Both
+            resolve to netbird.service, `default` wins the name collision, and the
+            per-interface rules above land on an nb-netbird that never comes up.
+          '';
+        }
+      ];
     }
 
     (mkIf cfg.useSetupKey {

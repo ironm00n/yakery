@@ -6,6 +6,7 @@
 }:
 let
   inherit (lib) mkDefault;
+  localsendPort = 53317;
 in
 {
   imports = [
@@ -19,7 +20,10 @@ in
   bundles.nvidia.enable = config.host.nvidia;
   bundles.oom.enable = mkDefault true;
   bundles.distributed-builds.enable = mkDefault true;
-  bundles.vpn.netbird.enable = mkDefault true;
+  bundles.vpn.netbird = {
+    enable = mkDefault true;
+    allowedTCPPorts = [ localsendPort ];
+  };
 
   # SECURITY: this is fine for single user, personal systems.
   # TODO: make a specific group for this, it shouldn't just be wheel
@@ -68,7 +72,6 @@ in
 
   # services
   services.udisks2.enable = true; # for calibre
-  services.netbird.enable = lib.mkDefault true;
 
   programs = {
     firefox = import ./programs/firefox.nix;
@@ -88,6 +91,10 @@ in
     wireshark = {
       enable = true;
       package = pkgs.wireshark;
+    };
+    localsend = {
+      enable = true;
+      openFirewall = false; # only allow over netbird
     };
   };
 
