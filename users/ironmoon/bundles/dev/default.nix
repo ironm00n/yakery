@@ -22,10 +22,12 @@ in
     jetbrains = mkDisableOption "Jetbrains products";
     tooling = mkDisableOption "dev tooling (IDEs, editors, etc)";
     other-llm = mkEnableOption "enable rarely used llm tooling";
+    codex-desktop = mkEnableOption "Codex desktop app (ilysenko/codex-desktop-linux, built from the official .deb)";
   };
 
   config = mkIf cfg.enable (mkMerge [
     { home.packages = [ (pkgs.callPackage ./comma-noninteractive.nix { }) ]; }
+    (mkIf cfg.codex-desktop { programs.codexDesktopLinux.enable = true; })
     (mkIf cfg.langs (
       let
         used-python-pkgs =

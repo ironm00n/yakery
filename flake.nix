@@ -66,6 +66,12 @@
     pwndbg = {
       url = "github:pwndbg/pwndbg";
     };
+    # its nixConfig substituters are deliberately not trusted; built locally
+    codex-desktop-linux = {
+      url = "github:ilysenko/codex-desktop-linux";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
   };
 
   nixConfig = {

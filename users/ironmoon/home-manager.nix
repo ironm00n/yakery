@@ -42,6 +42,7 @@ in
     dev.enable = true;
     dev.jetbrains = !host.lightweight;
     dev.langs = host.id != fw12;
+    dev.codex-desktop = !host.lightweight;
     sec.enable = !host.lightweight;
     emacs.enable = true;
     nvim.enable = true;

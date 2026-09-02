@@ -21,6 +21,29 @@
         "type": "github"
       }
     },
+    "codex-desktop-linux": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788327105,
+        "narHash": "sha256-rm2NxhIqbd13IM7YToRsk8rKAT+Fmge/+M5iwg9wONA=",
+        "owner": "ilysenko",
+        "repo": "codex-desktop-linux",
+        "rev": "6fbd37aca34fd82f315b6f89aed5999a2d9425df",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ilysenko",
+        "repo": "codex-desktop-linux",
+        "type": "github"
+      }
+    },
     "deploy-rs": {
       "inputs": {
         "flake-compat": "flake-compat",
@@ -395,6 +418,7 @@
     "root": {
       "inputs": {
         "binary-ninja": "binary-ninja",
+        "codex-desktop-linux": "codex-desktop-linux",
         "deploy-rs": "deploy-rs",
         "disko": "disko",
         "flake-utils": "flake-utils",
