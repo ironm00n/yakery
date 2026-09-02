@@ -13,6 +13,7 @@
 
   ./syncthing
   ./discord
+  ./appboxes
   ./mime-apps
   ./theme
 ]

@@ -14,6 +14,7 @@
     ./local-tls.nix
     ./distributed-builds.nix
     ./oom.nix
+    ./appboxes.nix
 
     ./displaylink.nix
   ];

@@ -18,6 +18,7 @@ in
 
   bundles.fonts.enable = mkDefault true;
   bundles.nvidia.enable = config.host.nvidia;
+  bundles.appboxes.enable = config.host.appboxes;
   bundles.oom.enable = mkDefault true;
   bundles.distributed-builds.enable = mkDefault true;
   bundles.vpn.netbird = {

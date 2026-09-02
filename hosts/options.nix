@@ -45,6 +45,12 @@ in
       description = "shitty graphics card";
     };
 
+    appboxes = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Mutable per-app distro containers (rootless podman + distrobox).";
+    };
+
     additional-user-pkgs = mkOption {
       type = types.listOf types.package;
       default = [ ];

@@ -72,6 +72,7 @@ text/html=firefox.desktop
 text/plain=org.kde.kwrite.desktop
 x-scheme-handler/bitwarden=bitwarden.desktop
 x-scheme-handler/chrome=firefox.desktop
+x-scheme-handler/claude=appbox-claude-claude.desktop
 x-scheme-handler/discord=vesktop.desktop
 x-scheme-handler/http=firefox.desktop
 x-scheme-handler/https=firefox.desktop
