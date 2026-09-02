@@ -63,11 +63,14 @@ let
     '';
   };
 
+  inherit (pkgs.tree-sitter-grammars) tree-sitter-lean;
+
   tree-sitter-grammars = [
     tree-sitter-pyret
     tree-sitter-wasm
     tree-sitter-kitty
     tree-sitter-zsh
+    tree-sitter-lean
   ];
 in
 {
@@ -191,6 +194,15 @@ in
     };
     web-devicons = {
       enable = true;
+      customIcons.lean = {
+        icon = "∀";
+        color = "#a06fd8";
+        cterm_color = "140";
+        name = "Lean";
+      };
+      luaConfig.post = ''
+        require("nvim-web-devicons").set_icon_by_filetype({ lean = "lean" })
+      '';
     };
     alpha = {
       enable = false;

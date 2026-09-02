@@ -141,5 +141,10 @@ in
         windsurf
       ];
     })
+    {
+      home.packages = with pkgs; [
+        codex
+      ];
+    }
   ]);
 }
