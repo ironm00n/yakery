@@ -160,7 +160,7 @@ let
         text = ''
           box=${container}
           want=${hash}
-          export PATH=${sw}:$PATH DBX_CONTAINER_MANAGER=podman
+          export PATH=${sw}:$PATH:${boxHome}/.local/bin DBX_CONTAINER_MANAGER=podman
           ${concatStringsSep "\n" (mapAttrsToList (k: v: "export ${k}=${escapeShellArg v}") box.environment)}
           fail() {
             echo "appbox-${name}: $*" >&2
@@ -211,6 +211,7 @@ let
           [ "$have" = "$want" ] || fail "$box still carries manifest $have after create/rebase; 'appbox-${name} --recreate' starts over"
           exec 9>&-
           trap - ERR
+          cmd=''${1-shell}
           # distrobox maps the cwd to /run/host/...; keep it where the host and the box agree on the path
           if [ $# -gt 0 ]; then
             case $PWD in
@@ -223,7 +224,7 @@ let
           ${sw}/distrobox-enter -n "$box" -- "$@"
           rc=$?
           case $rc in
-            126 | 127) fail "cannot run ''${1-shell} in $box (exit $rc); is it installed?" ;;
+            126 | 127) fail "cannot run $cmd in $box (exit $rc); is it installed?" ;;
           esac
           exit "$rc"
         '';
