@@ -31,6 +31,10 @@ let
   cfg = config.bundles.appboxes;
 
   sw = "/run/current-system/sw/bin";
+  hostPath = [
+    "/run/host${sw}"
+    "/run/host/etc/static/profiles/per-user/${config.home.username}/bin"
+  ];
 
   multiarch =
     {
@@ -103,9 +107,11 @@ let
         )
       );
 
+      # bash login shells (Claude Desktop re-derives its env from one) reset PATH in /etc/profile
       init = boxScript "${container}-init" (
         ''
           ln -sf ${appbox}/bin/xdg-open /usr/local/bin/xdg-open
+          ln -sf ${appbox}/env.sh /etc/profile.d/appbox.sh
         ''
         + optionalString host.nvidia ''
           install -d /usr/lib/${multiarch}/gbm
@@ -160,7 +166,7 @@ let
         text = ''
           box=${container}
           want=${hash}
-          export PATH=${sw}:$PATH:${boxHome}/.local/bin DBX_CONTAINER_MANAGER=podman
+          export PATH=${sw}:$PATH DBX_CONTAINER_MANAGER=podman DBX_CONTAINER_CLEAN_PATH=1
           ${concatStringsSep "\n" (mapAttrsToList (k: v: "export ${k}=${escapeShellArg v}") box.environment)}
           fail() {
             echo "appbox-${name}: $*" >&2
@@ -221,7 +227,7 @@ let
             esac
           fi
           set +e
-          ${sw}/distrobox-enter -n "$box" -- "$@"
+          ${sw}/distrobox-enter -n "$box" -- ${appbox}/bin/enter "$@"
           rc=$?
           case $rc in
             126 | 127) fail "cannot run $cmd in $box (exit $rc); is it installed?" ;;
@@ -251,6 +257,19 @@ let
               --method org.freedesktop.portal.OpenURI.OpenURI "" "$1" "{}" >/dev/null
           '';
         };
+        "${rel}/bin/enter" = {
+          executable = true;
+          text = ''
+            #!/bin/sh
+            . ${appbox}/env.sh
+            [ $# -gt 0 ] || set -- "''${SHELL:-sh}" -l
+            exec "$@"
+          '';
+        };
+        "${rel}/env.sh".text = ''
+          PATH="$HOME/.local/bin:$PATH${optionalString box.hostProfiles ":${concatStringsSep ":" hostPath}"}"
+          export PATH${optionalString box.hostProfiles " NIX_CONF_DIR=/run/host/etc/static/nix"}
+        '';
         "${rel}/icons/.keep".text = "";
       };
       desktopEntries = mapAttrs' (
@@ -310,6 +329,11 @@ in
               type = types.listOf (types.strMatching "^/[^:]+$");
               default = [ ];
               description = "Host directories visible at the same path inside the box (the home always is).";
+            };
+            hostProfiles = mkOption {
+              type = types.bool;
+              default = true;
+              description = "Host system and user Nix profiles on the box PATH after the box's own; `nix` reads the host nix.conf.";
             };
             aptRepos = mkOption {
               default = { };

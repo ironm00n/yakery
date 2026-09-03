@@ -4,6 +4,8 @@
     hostPaths = [ "/etc/nixos" ];
     # the app's state stays in the box home; Claude Code's config, memory and credentials are the real ones
     environment.CLAUDE_CONFIG_DIR = "${config.home.homeDirectory}/.claude";
+    # the host session's DO_NOT_TRACK=1 disables the feature-flag evaluation Remote Control needs
+    environment.DO_NOT_TRACK = "0";
     aptRepos.claude-desktop = {
       uri = "https://downloads.claude.ai/claude-desktop/apt/stable";
       suite = "stable";
