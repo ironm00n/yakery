@@ -15,6 +15,7 @@
     ./disks.nix
     ../common/server.nix
     ./spytial-playground.nix
+    ./artifacts.nix
   ];
 
   bundles.vpn.netbird = {
