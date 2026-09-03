@@ -1,0 +1,210 @@
+KSycoca: count symlinks along a resource path as modifications
+
+The cache is declared valid while no resource directory's mtime exceeds the
+stamp taken at build. On immutable package stores every such directory is a
+symlink chain into a store whose mtimes are pinned (NixOS: epoch+1), so the
+stamp never moves and a new generation is never noticed; the only invalidation
+left is deleting the cache from outside, which a long-lived process with a
+dead inotify watch never sees.
+
+A path's modification time is now the newest of its final target and of every
+symlink traversed while resolving it. Retargeting a link is a modification of
+what the path names. Applied at the three stamp sites in KBuildSycoca and both
+checks in TimestampChecker, so a stamp compares against itself and stays
+stable once rebuilt.
+
+diff -ruN kservice/autotests/ksycocatest.cpp kservice.patched/autotests/ksycocatest.cpp
+--- kservice/autotests/ksycocatest.cpp	2026-07-03 06:59:45.000000000 -0400
++++ kservice.patched/autotests/ksycocatest.cpp	2026-09-03 00:21:20.546623948 -0400
+@@ -73,6 +73,7 @@
+     void testDeletingSycoca();
+     void testNonReadableSycoca();
+     void extraFileInFutureShouldRebuildSycocaOnce();
++    void retargetedSymlinkShouldRebuildSycocaOnce();
+ 
+ private:
+     void createTestApp()
+@@ -321,4 +322,61 @@
+     QVERIFY(QFile::remove(path));
+ }
+ 
++void KSycocaTest::retargetedSymlinkShouldRebuildSycocaOnce()
++{
++#ifndef Q_OS_UNIX
++    QSKIP("This test requires symlinks and utime");
++#else
++    // An applications dir reached through a symlink, the way immutable package stores publish them
++    // (NixOS: /run/current-system/sw/share/applications). Switching generations retargets the link;
++    // the directories themselves keep their old mtimes.
++    const QString gen1 = m_tempDir.path() + QLatin1String("/gen1/applications");
++    const QString gen2 = m_tempDir.path() + QLatin1String("/gen2/applications");
++    const QString link = m_tempDir.path() + QLatin1String("/applications");
++    QVERIFY(QDir().mkpath(gen1));
++    QVERIFY(QDir().mkpath(gen2));
++    const QString gen2App = gen2 + QLatin1String("/org.kde.gen2app.desktop");
++    {
++        KDesktopFile app(gen2App);
++        app.desktopGroup().writeEntry("Type", "Application");
++        app.desktopGroup().writeEntry("Exec", "gen2App");
++        app.desktopGroup().writeEntry("Name", "Gen2 App");
++    }
++    struct timeval tp;
++    gettimeofday(&tp, nullptr);
++    struct utimbuf utbuf;
++    utbuf.actime = tp.tv_sec;
++    utbuf.modtime = tp.tv_sec - 3600;
++    for (const QString &path : {gen1, gen2, gen2App}) {
++        QCOMPARE(utime(QFile::encodeName(path).constData(), &utbuf), 0);
++    }
++    QVERIFY(QFile::link(QStringLiteral("gen1/applications"), link));
++
++    ksycoca_ms_between_checks = 0;
++    QFile::remove(KSycoca::absoluteFilePath()); // the existing db predates the link and would not list it
++    QVERIFY(!KService::serviceByDesktopName(QStringLiteral("org.kde.gen2app")));
++    const QDateTime oldTimestamp = QFileInfo(KSycoca::absoluteFilePath()).lastModified();
++    QVERIFY(oldTimestamp.isValid());
++    QTest::qWait(s_waitDelay);
++
++    QVERIFY(QFile::remove(link));
++    QVERIFY(QFile::link(QStringLiteral("gen2/applications"), link));
++    QVERIFY(QFileInfo(link).lastModified() < oldTimestamp); // the target is old; only the link is new
++
++    QVERIFY(KService::serviceByDesktopName(QStringLiteral("org.kde.gen2app")));
++    const QDateTime newTimestamp = QFileInfo(KSycoca::absoluteFilePath()).lastModified();
++    QVERIFY(newTimestamp > oldTimestamp);
++
++    QTest::qWait(s_waitDelay);
++    KSycoca::self()->ensureCacheValid();
++    QCOMPARE(QFileInfo(KSycoca::absoluteFilePath()).lastModified(), newTimestamp); // same mtime, it didn't get rebuilt
++
++    // Ensure we don't pollute the other tests
++    QVERIFY(QFile::remove(link));
++    QDir(m_tempDir.path() + QLatin1String("/gen1")).removeRecursively();
++    QDir(m_tempDir.path() + QLatin1String("/gen2")).removeRecursively();
++    QFile::remove(KSycoca::absoluteFilePath());
++#endif
++}
++
+ #include "ksycocatest.moc"
+diff -ruN kservice/src/sycoca/kbuildsycoca.cpp kservice.patched/src/sycoca/kbuildsycoca.cpp
+--- kservice/src/sycoca/kbuildsycoca.cpp	2026-07-03 06:59:45.000000000 -0400
++++ kservice.patched/src/sycoca/kbuildsycoca.cpp	2026-09-03 00:21:20.546081367 -0400
+@@ -161,7 +161,7 @@
+     for (const QString &dir : lstDirs) {
+         qint64 stamp = 0;
+         KSycocaUtilsPrivate::visitResourceDirectory(dir, [&stamp](const QFileInfo &info) {
+-            stamp = qMax(stamp, info.lastModified().toMSecsSinceEpoch());
++            stamp = qMax(stamp, KSycocaUtilsPrivate::lastModifiedMSecs(info.filePath()));
+             return true;
+         });
+         m_allResourceDirs.insert(dir, stamp);
+@@ -169,7 +169,7 @@
+ 
+     const auto lstFiles = factoryExtraFiles();
+     for (const QString &file : lstFiles) {
+-        m_extraFiles.insert(file, QFileInfo(file).lastModified().toMSecsSinceEpoch());
++        m_extraFiles.insert(file, KSycocaUtilsPrivate::lastModifiedMSecs(file));
+     }
+ 
+     QMap<QString, QByteArray> allResourcesSubDirs; // dirs, kstandarddirs-resource-name
+@@ -259,7 +259,7 @@
+             if (!m_allResourceDirs.contains(dir)) {
+                 qint64 stamp = 0;
+                 KSycocaUtilsPrivate::visitResourceDirectory(dir, [&stamp](const QFileInfo &info) {
+-                    stamp = qMax(stamp, info.lastModified().toMSecsSinceEpoch());
++                    stamp = qMax(stamp, KSycocaUtilsPrivate::lastModifiedMSecs(info.filePath()));
+                     return true;
+                 });
+                 m_allResourceDirs.insert(dir, stamp);
+diff -ruN kservice/src/sycoca/ksycoca.cpp kservice.patched/src/sycoca/ksycoca.cpp
+--- kservice/src/sycoca/ksycoca.cpp	2026-07-03 06:59:45.000000000 -0400
++++ kservice.patched/src/sycoca/ksycoca.cpp	2026-09-03 00:21:20.546376012 -0400
+@@ -592,7 +592,7 @@
+             const qint64 lastStamp = it.value();
+ 
+             auto visitor = [&](const QFileInfo &fi) {
+-                const QDateTime mtime = fi.lastModified();
++                const QDateTime mtime = QDateTime::fromMSecsSinceEpoch(KSycocaUtilsPrivate::lastModifiedMSecs(fi.filePath()));
+                 if (mtime.toMSecsSinceEpoch() > lastStamp) {
+                     if (mtime > m_now) {
+                         qCDebug(SYCOCA) << fi.filePath() << "has a modification time in the future" << mtime;
+@@ -622,7 +622,7 @@
+             if (!fi.exists()) {
+                 return false;
+             }
+-            const QDateTime mtime = fi.lastModified();
++            const QDateTime mtime = QDateTime::fromMSecsSinceEpoch(KSycocaUtilsPrivate::lastModifiedMSecs(fileName));
+             if (mtime.toMSecsSinceEpoch() > lastStamp) {
+                 if (mtime > m_now) {
+                     qCDebug(SYCOCA) << fi.filePath() << "has a modification time in the future" << mtime;
+diff -ruN kservice/src/sycoca/ksycocautils_p.h kservice.patched/src/sycoca/ksycocautils_p.h
+--- kservice/src/sycoca/ksycocautils_p.h	2026-07-03 06:59:45.000000000 -0400
++++ kservice.patched/src/sycoca/ksycocautils_p.h	2026-09-03 00:21:20.545762127 -0400
+@@ -9,12 +9,67 @@
+ #ifndef KSYCOCAUTILS_P_H
+ #define KSYCOCAUTILS_P_H
+ 
++#include <QDateTime>
+ #include <QDir>
++#include <QFile>
+ #include <QFileInfo>
+ #include <QString>
++#include <QStringList>
++
++#include <qplatformdefs.h>
+ 
+ namespace KSycocaUtilsPrivate
+ {
++// When the last modification of what @p path names happened, in msecs since the epoch: the newest of the final
++// target and of every symlink traversed while resolving it. Retargeting a symlink changes what the path names
++// without touching the target's mtime, and on immutable package stores (NixOS, ostree) the target's mtime is
++// pinned, so the links are the only thing that ever moves.
++inline qint64 lastModifiedMSecs(const QString &path)
++{
++    const QDateTime targetTime = QFileInfo(path).lastModified();
++    qint64 stamp = targetTime.isValid() ? targetTime.toMSecsSinceEpoch() : 0;
++#ifdef Q_OS_UNIX
++    QStringList pending = QDir::cleanPath(path).split(QLatin1Char('/'), Qt::SkipEmptyParts);
++    QString resolved; // absolute, no trailing slash; empty is the root
++    int linksLeft = 40; // same bound as the kernel's ELOOP
++    while (!pending.isEmpty()) {
++        const QString component = pending.takeFirst();
++        if (component == QLatin1String(".")) {
++            continue;
++        }
++        if (component == QLatin1String("..")) {
++            resolved.truncate(qMax(0, resolved.lastIndexOf(QLatin1Char('/'))));
++            continue;
++        }
++        const QString candidate = resolved + QLatin1Char('/') + component;
++        QT_STATBUF st;
++        if (QT_LSTAT(QFile::encodeName(candidate).constData(), &st) != 0) {
++            break;
++        }
++        if (!S_ISLNK(st.st_mode)) {
++            resolved = candidate;
++            continue;
++        }
++        if (--linksLeft < 0) {
++            break;
++        }
++#if defined(Q_OS_MACOS) || defined(Q_OS_IOS)
++        const auto &mtim = st.st_mtimespec;
++#else
++        const auto &mtim = st.st_mtim;
++#endif
++        stamp = qMax(stamp, qint64(mtim.tv_sec) * 1000 + mtim.tv_nsec / 1000000);
++        const QString target = QFile::symLinkTarget(candidate); // absolute, whatever the link says
++        if (target.isEmpty()) {
++            break;
++        }
++        pending = target.split(QLatin1Char('/'), Qt::SkipEmptyParts) + pending;
++        resolved.clear();
++    }
++#endif
++    return stamp;
++}
++
+ // helper function for visitResourceDirectory
+ template<typename Visitor>
+ bool visitResourceDirectoryHelper(const QString &dirname, Visitor visitor)

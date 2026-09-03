@@ -18,7 +18,6 @@ in
   imports = [
     ../../hosts/options.nix
     ./services/network-manager-applet.nix
-    ./services/kbuildsycoca6.nix
     ./services/fix-kde-colorscheme.nix
     ./services/anyrun-daemon.nix
     ./conf/xdg.nix

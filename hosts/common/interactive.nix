@@ -20,6 +20,7 @@ in
   bundles.nvidia.enable = config.host.nvidia;
   bundles.appboxes.enable = config.host.appboxes;
   bundles.oom.enable = mkDefault true;
+  bundles.ksycoca.enable = mkDefault true;
   bundles.xdg-menu.enable = mkDefault true;
   bundles.distributed-builds.enable = mkDefault true;
   bundles.vpn.netbird = {
