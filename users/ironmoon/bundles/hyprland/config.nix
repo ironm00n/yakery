@@ -111,7 +111,6 @@ in
       "XCURSOR_SIZE,24"
       "HYPRCURSOR_SIZE,24"
       "NIXOS_OZONE_WL,1"
-      "XDG_MENU_PREFIX,plasma-"
     ]
     ++ lib.optionals config.host.nvidia [
       "LIBVA_DRIVER_NAME,nvidia"

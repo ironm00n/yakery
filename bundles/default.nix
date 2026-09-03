@@ -15,6 +15,7 @@
     ./distributed-builds.nix
     ./oom.nix
     ./appboxes.nix
+    ./xdg-menu.nix
 
     ./displaylink.nix
   ];
