@@ -18,6 +18,6 @@
     ./ksycoca
     ./xdg-menu.nix
 
-    ./displaylink.nix
+    ./displaylink
   ];
 }
