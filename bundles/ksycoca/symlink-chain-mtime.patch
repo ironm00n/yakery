@@ -14,17 +14,17 @@ checks in TimestampChecker, so a stamp compares against itself and stays
 stable once rebuilt.
 
 diff -ruN kservice/autotests/ksycocatest.cpp kservice.patched/autotests/ksycocatest.cpp
---- kservice/autotests/ksycocatest.cpp	2026-07-03 06:59:45.000000000 -0400
-+++ kservice.patched/autotests/ksycocatest.cpp	2026-09-03 00:21:20.546623948 -0400
+--- kservice/autotests/ksycocatest.cpp	2026-08-07 16:42:38.000000000 -0400
++++ kservice.patched/autotests/ksycocatest.cpp	2026-09-04 18:24:17.193798625 -0400
 @@ -73,6 +73,7 @@
      void testDeletingSycoca();
      void testNonReadableSycoca();
      void extraFileInFutureShouldRebuildSycocaOnce();
 +    void retargetedSymlinkShouldRebuildSycocaOnce();
+     void testNoMenuFile();
  
  private:
-     void createTestApp()
-@@ -321,4 +322,61 @@
+@@ -322,6 +323,63 @@
      QVERIFY(QFile::remove(path));
  }
  
@@ -85,10 +85,12 @@ diff -ruN kservice/autotests/ksycocatest.cpp kservice.patched/autotests/ksycocat
 +#endif
 +}
 +
- #include "ksycocatest.moc"
+ void KSycocaTest::testNoMenuFile()
+ {
+     // remove the menu file to force using the fallback
 diff -ruN kservice/src/sycoca/kbuildsycoca.cpp kservice.patched/src/sycoca/kbuildsycoca.cpp
---- kservice/src/sycoca/kbuildsycoca.cpp	2026-07-03 06:59:45.000000000 -0400
-+++ kservice.patched/src/sycoca/kbuildsycoca.cpp	2026-09-03 00:21:20.546081367 -0400
+--- kservice/src/sycoca/kbuildsycoca.cpp	2026-08-07 16:42:39.000000000 -0400
++++ kservice.patched/src/sycoca/kbuildsycoca.cpp	2026-09-04 18:23:57.157917763 -0400
 @@ -161,7 +161,7 @@
      for (const QString &dir : lstDirs) {
          qint64 stamp = 0;
@@ -117,8 +119,8 @@ diff -ruN kservice/src/sycoca/kbuildsycoca.cpp kservice.patched/src/sycoca/kbuil
                  });
                  m_allResourceDirs.insert(dir, stamp);
 diff -ruN kservice/src/sycoca/ksycoca.cpp kservice.patched/src/sycoca/ksycoca.cpp
---- kservice/src/sycoca/ksycoca.cpp	2026-07-03 06:59:45.000000000 -0400
-+++ kservice.patched/src/sycoca/ksycoca.cpp	2026-09-03 00:21:20.546376012 -0400
+--- kservice/src/sycoca/ksycoca.cpp	2026-08-07 16:42:39.000000000 -0400
++++ kservice.patched/src/sycoca/ksycoca.cpp	2026-09-04 18:23:57.158078696 -0400
 @@ -592,7 +592,7 @@
              const qint64 lastStamp = it.value();
  
@@ -138,8 +140,8 @@ diff -ruN kservice/src/sycoca/ksycoca.cpp kservice.patched/src/sycoca/ksycoca.cp
                  if (mtime > m_now) {
                      qCDebug(SYCOCA) << fi.filePath() << "has a modification time in the future" << mtime;
 diff -ruN kservice/src/sycoca/ksycocautils_p.h kservice.patched/src/sycoca/ksycocautils_p.h
---- kservice/src/sycoca/ksycocautils_p.h	2026-07-03 06:59:45.000000000 -0400
-+++ kservice.patched/src/sycoca/ksycocautils_p.h	2026-09-03 00:21:20.545762127 -0400
+--- kservice/src/sycoca/ksycocautils_p.h	2026-08-07 16:42:39.000000000 -0400
++++ kservice.patched/src/sycoca/ksycocautils_p.h	2026-09-04 18:23:57.158240500 -0400
 @@ -9,12 +9,67 @@
  #ifndef KSYCOCAUTILS_P_H
  #define KSYCOCAUTILS_P_H
