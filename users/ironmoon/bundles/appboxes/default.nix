@@ -117,17 +117,10 @@ let
           install -d /usr/lib/${multiarch}/gbm
           ln -sf /run/opengl-driver/lib/gbm/nvidia-drm_gbm.so /usr/lib/${multiarch}/gbm/nvidia-drm_gbm.so
         ''
-        + concatStrings (
-          mapAttrsToList (
-            _: a:
-            optionalString (a.icon != null) ''
-              if [ -e ${a.icon} ]; then
-                install -m644 ${a.icon} ${iconFile a}
-                chown --reference=${appbox}/icons ${iconFile a}
-              fi
-            ''
-          ) box.apps
-        )
+      );
+
+      iconPairs = concatMapStrings (a: " ${escapeShellArg a.icon} ${escapeShellArg (iconFile a)}") (
+        filter (a: a.icon != null) (attrValues box.apps)
       );
 
       unlabeled =
@@ -180,6 +173,18 @@ let
             echo "appbox-${name}: $*" >&2
             [ -t 2 ] || notify-send "appbox-${name}" "$*"
           }
+          # the apps are installed into the box by hand, so their icons only exist to copy out after the fact
+          sync_icons() {
+            set --${iconPairs}
+            while [ "$#" -gt 1 ]; do
+              if ${sw}/podman cp "$box:$1" "$2.new" 2>/dev/null; then
+                mv -f "$2.new" "$2"
+              else
+                rm -f "$2.new"
+              fi
+              shift 2
+            done
+          }
           # keep the container's rootfs (apt state) and re-apply the current definition on top of it
           rebase() {
             note "definition changed; rebasing $box on its current package state"
@@ -227,8 +232,10 @@ let
             esac
           fi
           set +e
+          sync_icons
           ${sw}/distrobox-enter -n "$box" -- ${appbox}/bin/enter "$@"
           rc=$?
+          sync_icons
           case $rc in
             126 | 127) fail "cannot run $cmd in $box (exit $rc); is it installed?" ;;
           esac
