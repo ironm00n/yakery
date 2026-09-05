@@ -12,7 +12,7 @@
 {
   imports = [
     ./hardware-configuration.nix
-    ../common/interactive.nix
+    ../common/interactive
   ];
 
   bundles.vpn.mullvad.enable = true;

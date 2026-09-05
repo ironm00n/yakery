@@ -9,4 +9,5 @@
   # home-manager-nixos = false;
   home-manager-nixos = true;
   cpu-cores = 16;
+  appboxes = true;
 }

@@ -16,7 +16,7 @@ in
   imports = [
     ./hardware-configuration.nix
     ./disks.nix
-    ../common/server.nix
+    ../common/server
     ./netbird.nix
   ];
 

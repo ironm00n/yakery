@@ -1,7 +1,12 @@
-{ config, pkgs, ... }:
+{
+  pkgs,
+  config,
+  lib,
+  ...
+}:
 {
   imports = [
-    ./all.nix
+    ../base
   ];
 
   # Enable networking
@@ -14,9 +19,13 @@
     settings = {
       PasswordAuthentication = false;
       KbdInteractiveAuthentication = false;
-      PermitRootLogin = "prohibit-password";
+      PermitRootLogin = lib.mkDefault "prohibit-password";
     };
   };
 
-  environment.systemPackages = import ./pkgs/networked.nix { inherit pkgs; };
+  programs = {
+    mtr.enable = true;
+  };
+
+  environment.systemPackages = import ./pkgs.nix { inherit pkgs; };
 }

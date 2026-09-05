@@ -7,7 +7,7 @@
 {
   # all bundles are behind an `enable` option
   imports = [
-    ../../bundles/default.nix
+    ../../../bundles/default.nix
   ];
 
   # Set your time zone.
@@ -27,7 +27,7 @@
     LC_TIME = "en_US.UTF-8";
   };
 
-  environment.systemPackages = import ./pkgs/base.nix { inherit pkgs; };
+  environment.systemPackages = import ./pkgs.nix { inherit pkgs; };
 
   sops = lib.mkIf (config.host.default-sops != null) {
     defaultSopsFile = config.host.default-sops;

@@ -13,7 +13,7 @@
   imports = [
     ./hardware-configuration.nix
     ./disks.nix
-    ../common/server.nix
+    ../common/server
     ./haste-server.nix
   ];
 

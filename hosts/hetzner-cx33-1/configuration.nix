@@ -15,7 +15,7 @@ in
 {
   imports = [
     ./hardware-configuration.nix
-    ../common/server.nix
+    ../common/server
     ./zitadel.nix
   ];
 

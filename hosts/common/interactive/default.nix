@@ -10,10 +10,10 @@ let
 in
 {
   imports = [
-    ./networked.nix
-    ../../users/home-manager.nix
+    ../networked
     ./specializations
-    ../../users/ironmoon/user.nix
+    ../../../users/home-manager.nix
+    ../../../users/ironmoon/user.nix
   ];
 
   bundles.fonts.enable = mkDefault true;
@@ -66,12 +66,13 @@ in
   };
 
   # zsh
+  users.defaultUserShell = pkgs.zsh;
+
   environment.pathsToLink = [
     "/share/zsh"
     "/share/xdg-desktop-portal"
     "/share/applications"
   ];
-  users.defaultUserShell = pkgs.zsh;
 
   # services
   services.udisks2.enable = true; # for calibre
@@ -105,5 +106,5 @@ in
   # documentation.dev.enable = true;
   # documentation.man.generateCaches = true;
 
-  environment.systemPackages = import ./pkgs/interactive.nix { inherit pkgs; };
+  environment.systemPackages = import ./pkgs.nix { inherit pkgs; };
 }
