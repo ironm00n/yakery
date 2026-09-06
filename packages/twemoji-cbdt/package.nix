@@ -1,11 +1,12 @@
 # based on the twitter-color-emoji package (https://github.com/NixOS/nixpkgs/blob/nixos-unstable/pkgs/by-name/tw/twitter-color-emoji/package.nix)
 # acts as a fallback for platforms that don't support COLR/CPAL
 # uses pkgs-stable to avoid excessive rebuilds
-{ inputs, system, ... }:
+{ mv, ... }:
 
 let
   # TODO: go back to using latest version of `noto-fonts-color-emoji`
-  pkgs = inputs.nixpkgs-25_05.legacyPackages.${system};
+  # FIXME: why is this pinned, can we debug?
+  pkgs = mv.at "25.05";
 
   inherit (pkgs) noto-fonts-color-emoji;
   inherit (pkgs) lib stdenv fetchFromGitHub;

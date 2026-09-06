@@ -4,10 +4,9 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
-    nixpkgs-stable.url = "github:nixos/nixpkgs/nixos-26.05";
-    nixpkgs-25_05.url = "github:nixos/nixpkgs/nixos-25.05"; # twemoji-cbdt
-    nixpkgs-24_11.url = "github:nixos/nixpkgs/nixos-24.11"; # needed for twemoji-colr
+    # this can't be replaced by multiverse since it only indexes once something lands on unstable
+    nixpkgs-master.url = "github:NixOS/nixpkgs/master";
+    multiverse.url = "github:fzakaria/nixpkgs-multiverse";
     systems.url = "github:nix-systems/default";
     nixos-hardware = {
       url = "github:NixOS/nixos-hardware/master";
@@ -92,7 +91,8 @@
   outputs = inputs@{
     self,
     nixpkgs,
-    nixpkgs-stable,
+    nixpkgs-master,
+    multiverse,
     systems,
     nixos-hardware,
     sops-nix,
@@ -104,17 +104,18 @@
     ...
   }:
   let
+    stable-pin = "26.05";
     overlays = import ./overlays/default.nix;
     inherit (nixpkgs) lib;
     all-systems = import systems;
     base-nixpkgs-config = {
       allowUnfree = true;
     };
-    pkgs-map =
+    mk-pkgs-map = np:
       all-systems
       |> map (system: {
         name = system;
-        value = import nixpkgs {
+        value = import np {
           inherit system overlays;
           config = base-nixpkgs-config // {
             permittedInsecurePackages = [
@@ -124,6 +125,9 @@
         };
       })
       |> builtins.listToAttrs;
+    # need to call here to for nix to memoize
+    pkgs-map = mk-pkgs-map nixpkgs;
+    pkgs-map-master = mk-pkgs-map nixpkgs-master;
     eachSystem = f:
       lib.genAttrs all-systems (
         system:
@@ -133,10 +137,11 @@
         }
       );
     treefmtEval = eachSystem ({ pkgs, ... }: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
-    mk-pkgs-stable = system:
-      import nixpkgs-stable {
+    mk-mv = system:
+      multiverse.lib.mkMultiverse {
         inherit system;
         config = base-nixpkgs-config;
+        overlays = [];
       };
     use-lix = false;
     base-config = { pkgs, host, ... }: {
@@ -168,7 +173,9 @@
       inherit system;
       specialArgs = {
         inherit inputs system my-lib;
-        pkgs-stable = (mk-pkgs-stable system);
+        mv = (mk-mv system);
+        pkgs-stable = (mk-mv system).at stable-pin;
+        pkgs-master = pkgs-map-master.${system};
       };
     };
     mk-server = { id, system, disko ? false }: {
@@ -185,7 +192,7 @@
         };
         no-hm = true;
       };
-    }; 
+    };
     servers =
       (mk-server { id = "hetzner-cx33-1"; system = "x86_64-linux"; })
       // (mk-server { id = "ovh-vps1-1"; system = "x86_64-linux"; disko = true; })
@@ -195,7 +202,8 @@
       # // (mk-server { id = "oracle-e2-1-micro-4"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-1"; system = "aarch64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-2"; system = "aarch64-linux"; disko = true; })
-      # // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; })
+      // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; })
+      // (mk-server { id = "pi5"; system = "aarch64-linux"; })
         ;
     machines = {
       fw12 = {
@@ -267,10 +275,10 @@
       }
     ) inputs.deploy-rs.lib;
 
-    homeConfigurations = eachSystem ({ system, pkgs }: 
+    homeConfigurations = eachSystem ({ system, pkgs }:
       import ./nix/home-manager-standalone.nix {
         inherit pkgs inputs lib my-lib;
-        inherit machines mk-pkgs-stable;
+        inherit machines mk-mv stable-pin;
       });
 
     packages = eachSystem ({ system, pkgs }: {

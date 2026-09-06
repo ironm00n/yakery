@@ -5,6 +5,8 @@
   lib,
   my-lib,
   pkgs,
+  pkgs-master,
+  mv,
   ...
 }:
 {
@@ -17,9 +19,10 @@
       useSecrets = config.host.use-secrets;
     };
     extraSpecialArgs = import ./extra-special-args.nix {
-      inherit inputs lib;
-      inherit pkgs pkgs-stable my-lib;
+      inherit inputs lib my-lib;
+      inherit mv;
       inherit (config) host;
+      inherit pkgs pkgs-stable pkgs-master;
     };
     users.ironmoon = ./ironmoon/home-manager.nix;
   };

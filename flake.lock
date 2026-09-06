@@ -163,6 +163,21 @@
         "type": "github"
       }
     },
+    "multiverse": {
+      "locked": {
+        "lastModified": 1788672845,
+        "narHash": "sha256-KlSFUGJSBAokxSuAHCNZv4I1FODpJC2EpsTfMVVRXpg=",
+        "owner": "fzakaria",
+        "repo": "nixpkgs-multiverse",
+        "rev": "5fed5dc8b395225a076ceca9cb451854f9566af5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "fzakaria",
+        "repo": "nixpkgs-multiverse",
+        "type": "github"
+      }
+    },
     "nixos-hardware": {
       "inputs": {
         "nixpkgs": [
@@ -197,50 +212,18 @@
         "url": "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz"
       }
     },
-    "nixpkgs-24_11": {
+    "nixpkgs-master": {
       "locked": {
-        "lastModified": 1751274312,
-        "narHash": "sha256-/bVBlRpECLVzjV19t5KMdMFWSwKLtb5RyXdjz3LJT+g=",
-        "owner": "nixos",
+        "lastModified": 1788716138,
+        "narHash": "sha256-hpNS/b4DKNOp8xheh/wLX5ZbrOR1KtD+FyhCz1uPA0g=",
+        "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "50ab793786d9de88ee30ec4e4c24fb4236fc2674",
+        "rev": "5dbaca36ed1e5ce78fc33775124a54b3906dd585",
         "type": "github"
       },
       "original": {
-        "owner": "nixos",
-        "ref": "nixos-24.11",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs-25_05": {
-      "locked": {
-        "lastModified": 1767313136,
-        "narHash": "sha256-16KkgfdYqjaeRGBaYsNrhPRRENs0qzkQVUooNHtoy2w=",
-        "owner": "nixos",
-        "repo": "nixpkgs",
-        "rev": "ac62194c3917d5f474c1a844b6fd6da2db95077d",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nixos",
-        "ref": "nixos-25.05",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs-stable": {
-      "locked": {
-        "lastModified": 1788405554,
-        "narHash": "sha256-r2f1oUwixlgq9zOdYLqJLfS/lWBT60/IITjhTKI59JU=",
-        "owner": "nixos",
-        "repo": "nixpkgs",
-        "rev": "a5cc6f2c37bf518436dc8d1c288ccd0c43c2f4c4",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nixos",
-        "ref": "nixos-26.05",
+        "owner": "NixOS",
+        "ref": "master",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -423,11 +406,10 @@
         "disko": "disko",
         "flake-utils": "flake-utils",
         "home-manager": "home-manager",
+        "multiverse": "multiverse",
         "nixos-hardware": "nixos-hardware",
         "nixpkgs": "nixpkgs_2",
-        "nixpkgs-24_11": "nixpkgs-24_11",
-        "nixpkgs-25_05": "nixpkgs-25_05",
-        "nixpkgs-stable": "nixpkgs-stable",
+        "nixpkgs-master": "nixpkgs-master",
         "nixvim": "nixvim",
         "plasma-manager": "plasma-manager",
         "pwndbg": "pwndbg",
@@ -444,11 +426,11 @@
         "systems": []
       },
       "locked": {
-        "lastModified": 1786082691,
-        "narHash": "sha256-YramnnMR/TIbe4VCwfEoGyh9doytpyYm9ziNz+Y0IdY=",
+        "lastModified": 1788593533,
+        "narHash": "sha256-PAKzf91XwUnuAsbj//cBEhxamsgYxLvUD8J2G2/woe8=",
         "ref": "refs/heads/master",
-        "rev": "4dced845dcf42184015514092fca696db31760d3",
-        "revCount": 11,
+        "rev": "e2b5c61efb008868029ebe35a8e5f9de02fae021",
+        "revCount": 13,
         "type": "git",
         "url": "ssh://git@github.com/ironm00n/secrets.git"
       },

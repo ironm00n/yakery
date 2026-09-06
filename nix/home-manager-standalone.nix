@@ -4,11 +4,14 @@
   lib,
   my-lib,
   machines,
-  mk-pkgs-stable,
+  mk-mv,
+  stable-pin,
+  pkgs-master
 }:
 let
   inherit (inputs) home-manager;
-  pkgs-stable = mk-pkgs-stable pkgs.stdenv.hostPlatform.system;
+  mv = (mk-mv pkgs.stdenv.hostPlatform.system);
+  pkgs-stable = mv.at stable-pin;
 
   # FIXME: figure out how to play nicely with specializations
   # fornow, assume we are using hyprland
@@ -39,7 +42,8 @@ let
       inherit pkgs;
       extraSpecialArgs = import ../users/extra-special-args.nix {
         inherit inputs lib my-lib;
-        inherit pkgs pkgs-stable;
+        inherit mv;
+        inherit pkgs pkgs-stable pkgs-master;
         host = hostCfg;
       };
       modules = [

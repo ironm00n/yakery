@@ -5,6 +5,7 @@
   my-utils,
   pkgs,
   pkgs-stable,
+  pkgs-master,
   ...
 }:
 let
@@ -12,7 +13,6 @@ let
   inherit (lib) mkMerge;
   inherit (my-lib) mkDisableOption;
   inherit (my-utils) symlink;
-  inherit (config.xdg) configHome;
   cfg = config.bundles.dev;
 in
 {
@@ -144,7 +144,7 @@ in
       ];
     })
     {
-      home.packages = with pkgs; [
+      home.packages = with pkgs-master; [
         codex
       ];
     }

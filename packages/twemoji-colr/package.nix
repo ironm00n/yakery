@@ -1,10 +1,10 @@
 # upstream:
 # - https://github.com/jdecked/twemoji
 # - https://github.com/mozilla/twemoji-colr
-# uses pkgs-stable to avoid excessive rebuilds
-{ inputs, system, ... }:
+{ mv, ... }:
 let
-  pkgs = inputs.nixpkgs-24_11.legacyPackages.${system};
+  # FIXME: why is this pinned, can we debug?
+  pkgs = mv.at "24.11";
   inherit (pkgs) fetchFromGitHub buildNpmPackage;
 
   version = "17.0.2-1";
