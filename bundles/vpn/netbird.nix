@@ -43,6 +43,17 @@ in
       description = "Self-hosted management server the peer registers against.";
     };
 
+    routing = mkOption {
+      type = types.enum [
+        "none"
+        "client"
+        "server"
+        "both"
+      ];
+      default = "none";
+      description = "`client` loosens reverse-path filtering to use an exit node; `server` enables forwarding to be one.";
+    };
+
     allowedTCPPorts = mkOption {
       type = types.listOf types.port;
       default = [ ];
@@ -59,6 +70,8 @@ in
   config = mkIf cfg.enable (mkMerge [
     {
       services.resolved.enable = true; # split dns
+
+      services.netbird.useRoutingFeatures = cfg.routing;
 
       services.netbird.clients.netbird = {
         port = 51820;

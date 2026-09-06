@@ -25,6 +25,7 @@ in
   bundles.distributed-builds.enable = mkDefault true;
   bundles.vpn.netbird = {
     enable = mkDefault true;
+    routing = mkDefault "client";
     allowedTCPPorts = [ localsendPort ];
   };
 
