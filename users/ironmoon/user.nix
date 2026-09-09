@@ -1,4 +1,5 @@
 {
+  lib,
   pkgs,
   pkgs-stable,
   config,
@@ -9,6 +10,11 @@ let
   utils = true;
   productivity = true;
   non-essential = !config.host.lightweight;
+
+  netbird-client = config.services.netbird.clients.netbird;
+  netbird-groups = lib.optional (
+    config.bundles.vpn.netbird.enable && netbird-client.hardened
+  ) netbird-client.user.group;
 
   # Run Zoom in an app-us.zoom.Zoom-* systemd scope (even when running from terminal) so the portal
   # reports that app_id, which `force_linear_apps` matches.
@@ -45,7 +51,8 @@ in
       "docker"
       "kvm"
       "wireshark"
-    ];
+    ]
+    ++ netbird-groups;
     shell = pkgs.zsh;
     linger = true;
 
