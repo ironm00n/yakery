@@ -8,11 +8,19 @@ with pkgs;
   nmap
   dig
   netcat
-  mtr
-
-  # sets up server for remote development
-  vscode-extensions.ms-vscode-remote.remote-ssh
-  kitty.terminfo
+  arp-scan
 
   wireguard-tools
+] ++ [
+  # todo: move this to different common layer and add unprivileged user too for more cushy headless boxes
+  kitty.terminfo
+] ++ [
+  ethtool
+  ndisc6
+  tcpdump
+  socat
+  tio
+  ngrep
+  dhcpdump
+  wavemon
 ]
