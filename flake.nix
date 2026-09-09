@@ -4,6 +4,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs-stable.url = "github:nixos/nixpkgs/nixos-26.05";
     # this can't be replaced by multiverse since it only indexes once something lands on unstable
     nixpkgs-master.url = "github:NixOS/nixpkgs/master";
     multiverse.url = "github:fzakaria/nixpkgs-multiverse";
@@ -91,6 +92,7 @@
   outputs = inputs@{
     self,
     nixpkgs,
+    nixpkgs-stable,
     nixpkgs-master,
     multiverse,
     systems,
@@ -104,7 +106,6 @@
     ...
   }:
   let
-    stable-pin = "26.05";
     overlays = import ./overlays/default.nix;
     inherit (nixpkgs) lib;
     all-systems = import systems;
@@ -137,6 +138,11 @@
         }
       );
     treefmtEval = eachSystem ({ pkgs, ... }: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
+    mk-pkgs-stable = system:
+      import nixpkgs-stable {
+        inherit system;
+        config = base-nixpkgs-config;
+      };
     mk-mv = system:
       multiverse.lib.mkMultiverse {
         inherit system;
@@ -174,7 +180,7 @@
       specialArgs = {
         inherit inputs system my-lib;
         mv = (mk-mv system);
-        pkgs-stable = (mk-mv system).at stable-pin;
+        pkgs-stable = (mk-pkgs-stable system);
         pkgs-master = pkgs-map-master.${system};
       };
     };
@@ -278,7 +284,8 @@
     homeConfigurations = eachSystem ({ system, pkgs }:
       import ./nix/home-manager-standalone.nix {
         inherit pkgs inputs lib my-lib;
-        inherit machines mk-mv stable-pin;
+        inherit machines mk-mv mk-pkgs-stable;
+        pkgs-master = pkgs-map-master.${system};
       });
 
     packages = eachSystem ({ system, pkgs }: {

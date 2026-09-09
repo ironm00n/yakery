@@ -5,13 +5,13 @@
   my-lib,
   machines,
   mk-mv,
-  stable-pin,
+  mk-pkgs-stable,
   pkgs-master
 }:
 let
   inherit (inputs) home-manager;
   mv = (mk-mv pkgs.stdenv.hostPlatform.system);
-  pkgs-stable = mv.at stable-pin;
+  pkgs-stable = mk-pkgs-stable pkgs.stdenv.hostPlatform.system;
 
   # FIXME: figure out how to play nicely with specializations
   # fornow, assume we are using hyprland
