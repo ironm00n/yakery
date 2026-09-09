@@ -135,6 +135,9 @@ let
           ++ [
             "additional_packages=${concatStringsSep " " ([ "libglib2.0-bin" ] ++ box.packages)}"
             "additional_flags=--env GTK_USE_PORTAL=1"
+            # gnupg gives $HOME/.gnupg the shared /run/user/$UID/gnupg sockets, so a box gpg would
+            # bind them and serve its own empty keyring to the host; any other path gets a private dir
+            "additional_flags=--env GNUPGHOME=${boxHome}/.local/share/gnupg"
             "additional_flags=--http-proxy=false"
           ]
           ++ optional host.nvidia "additional_flags=--device nvidia.com/gpu=all"
