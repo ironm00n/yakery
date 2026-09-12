@@ -237,7 +237,9 @@ in
     gitsigns.enable = true;
     toggleterm.enable = true;
     lean.enable = true;
+    rustaceanvim.enable = true;
   };
+  dependencies.rust-analyzer.enable = false;
 
   extraPlugins = tree-sitter-grammars;
 
@@ -318,8 +320,6 @@ in
       lua_ls.enable = true;
       jsonls.enable = true;
       wasm_language_tools.enable = true;
-      rust_analyzer.enable = true;
-      rust_analyzer.package = null;
     };
   };
 
