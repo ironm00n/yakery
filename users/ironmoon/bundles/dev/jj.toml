@@ -1,0 +1,8 @@
+#:schema https://docs.jj-vcs.dev/latest/config-schema.json
+
+[user]
+name = "IRONM00N"
+email = "me@ironmoon.dev"
+
+[aliases]
+signoff = ["util", "exec", "--", "sh", "-c", "ids=$(for r in \"$@\"; do jj log --no-graph -r \"$r\" -T 'change_id ++ \"\\n\"'; done) && for c in $ids; do jj describe -r \"$c\" --config 'templates.commit_trailers=\"format_signed_off_by_trailer(self)\"' -m \"$(jj log --no-graph -r \"$c\" -T description)\"; done", "signoff"]
