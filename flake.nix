@@ -278,6 +278,7 @@
       // lib.optionalAttrs (system == "x86_64-linux") {
         oom = import ./nix/tests/oom.nix { pkgs = pkgs-map.${system}; };
         ksycoca = import ./nix/tests/ksycoca.nix { pkgs = pkgs-map.${system}; };
+        ok-color = import ./nix/tests/ok-color.nix { pkgs = pkgs-map.${system}; };
       }
     ) inputs.deploy-rs.lib;
 

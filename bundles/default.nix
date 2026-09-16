@@ -17,6 +17,7 @@
     ./appboxes.nix
     ./ksycoca
     ./xdg-menu.nix
+    ./ok-color.nix
 
     ./displaylink
   ];

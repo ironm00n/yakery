@@ -7,6 +7,7 @@
 let
   inherit (lib) mkDefault;
   localsendPort = 53317;
+  kittyPalette = import ../../../nix/kitty-palette.nix { inherit pkgs; };
 in
 {
   imports = [
@@ -22,6 +23,8 @@ in
   bundles.oom.enable = mkDefault true;
   bundles.ksycoca.enable = mkDefault true;
   bundles.xdg-menu.enable = mkDefault true;
+  bundles.ok-color.enable = mkDefault true;
+  console.colors = mkDefault kittyPalette;
   bundles.distributed-builds.enable = mkDefault true;
   bundles.vpn.netbird = {
     enable = mkDefault true;
