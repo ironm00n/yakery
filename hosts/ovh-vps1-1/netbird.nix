@@ -160,6 +160,8 @@ in
       (get-netbird-secret "relay_secret_container")
     ];
   };
+  # the relay reads the cert once at startup, so a renewal has to restart it
+  security.acme.certs.${netbirdDomain}.reloadServices = [ "podman-netbird-relay.service" ];
 
   networking.firewall.allowedTCPPorts = [
     80
