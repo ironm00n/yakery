@@ -163,9 +163,14 @@ in
           withGUI = true;
         })
 
-        (pkgs-stable.calibre.override {
+        ((pkgs-stable.calibre.override {
           unrarSupport = true; # .cbr, .cbz
-        })
+        }).overrideAttrs
+          (prev: {
+            # test fixture race under parallel workers; see the patch header
+            patches = prev.patches or [ ] ++ [ ./calibre-test-fixture-atomic.patch ];
+          })
+        )
         epubcheck
 
         prismlauncher

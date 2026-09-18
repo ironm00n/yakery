@@ -1,0 +1,34 @@
+The polish test fixtures build simple.epub / split.epub straight into the
+shared cache path, and the fast path in needs_recompile() stats that path
+before taking the lock; a parallel worker can see the half-written zip
+(newer than the store's epoch-1 simple.html), skip the lock, and read it
+through the forgiving unzipper -> "OPF file does not exist at location
+pointed to by META-INF/container.xml". Build to a sibling temp file and
+os.replace() into place so the cached path is either absent or complete.
+--- a/src/calibre/ebooks/oeb/polish/tests/base.py
++++ b/src/calibre/ebooks/oeb/polish/tests/base.py
+@@ -88,8 +88,10 @@
+             # (once_per_run already contains ans), so it returns False if ans is fresh.
+             if needs_recompile(ans, src):
+                 with TemporaryDirectory('bpt') as tdir, CurrentDir(tdir):
++                    tmp = os.path.join(cache, f'.simple-{os.getpid()}.{fmt}')
+                     x = setup_simple_book(src)
+-                    build_book(x, ans, args=['--level1-toc=//h:h2', '--language=en', '--authors=Kovid Goyal', '--cover=lt.png'])
++                    build_book(x, tmp, args=['--level1-toc=//h:h2', '--language=en', '--authors=Kovid Goyal', '--cover=lt.png'])
++                    os.replace(tmp, ans)
+     return ans
+ 
+ 
+@@ -106,9 +108,11 @@
+                 with open(src, 'rb') as sf:
+                     raw = sf.read().decode('utf-8')
+                 try:
++                    tmp = os.path.join(cache, f'.split-{os.getpid()}.{fmt}')
+                     with open(x, 'wb') as f:
+                         f.write(raw.encode('utf-8'))
+-                    build_book(x, ans, args=['--level1-toc=//h:h2', '--language=en', '--authors=Kovid Goyal', '--cover=' + I('lt.png')])
++                    build_book(x, tmp, args=['--level1-toc=//h:h2', '--language=en', '--authors=Kovid Goyal', '--cover=' + I('lt.png')])
++                    os.replace(tmp, ans)
+                 finally:
+                     os.remove(x)
+     return ans
