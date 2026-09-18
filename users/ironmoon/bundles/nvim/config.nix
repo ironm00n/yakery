@@ -1,8 +1,23 @@
 # TODO:
 # - spellcheck
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 let
   my-hl = false;
+
+  devicons = {
+    lean = {
+      icon = "∀";
+      color = "#a06fd8";
+      cterm_color = "140";
+      name = "Lean";
+    };
+    pyret = {
+      icon = "󰯆";
+      color = "#ee1e10";
+      cterm_color = "196";
+      name = "Pyret";
+    };
+  };
 
   inherit (pkgs.tree-sitter) buildGrammar;
   inherit (pkgs) fetchFromGitHub;
@@ -139,6 +154,8 @@ in
       folding.enable = true;
       highlight.enable = true;
       indent.enable = true;
+      # markdown injection resolves the fence info string as a filetype
+      languageRegister.pyret = "arr";
       luaConfig.post = ''
         do
           vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
@@ -194,14 +211,11 @@ in
     };
     web-devicons = {
       enable = true;
-      customIcons.lean = {
-        icon = "∀";
-        color = "#a06fd8";
-        cterm_color = "140";
-        name = "Lean";
-      };
+      customIcons = devicons;
       luaConfig.post = ''
-        require("nvim-web-devicons").set_icon_by_filetype({ lean = "lean" })
+        require("nvim-web-devicons").set_icon_by_filetype(${
+          lib.nixvim.toLuaObject (lib.mapAttrs (name: _: name) devicons)
+        })
       '';
     };
     alpha = {
@@ -238,8 +252,18 @@ in
     toggleterm.enable = true;
     lean.enable = true;
     rustaceanvim.enable = true;
+    typst-preview = {
+      enable = true;
+      # nixpkgs' postPatch bakes a store tinymist into the plugin's defaults
+      package = pkgs.vimPlugins.typst-preview-nvim.overrideAttrs { postPatch = ""; };
+      settings.dependencies_bin.tinymist = "tinymist";
+    };
   };
-  dependencies.rust-analyzer.enable = false;
+  dependencies = {
+    rust-analyzer.enable = false;
+    lean.enable = false;
+    tinymist.enable = false;
+  };
 
   extraPlugins = tree-sitter-grammars;
 
@@ -320,6 +344,7 @@ in
       lua_ls.enable = true;
       jsonls.enable = true;
       wasm_language_tools.enable = true;
+      wasm_language_tools.package = null;
     };
   };
 
