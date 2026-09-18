@@ -7,6 +7,7 @@
 {
   lib,
   rustPlatform,
+  busybox,
 }:
 rustPlatform.buildRustPackage {
   pname = "slurm-ci";
@@ -20,8 +21,13 @@ rustPlatform.buildRustPackage {
     "-p"
     "slurm-ci"
   ];
-
-  doCheck = false; # no host-independent tests yet
+  cargoTestFlags = [
+    "-p"
+    "slurm-ci"
+  ];
+  # tests/execution_stack.rs fakes the bootstrap store's tools with busybox
+  # scripts; under pkgsStatic this is the static busybox it needs.
+  env.SLURM_CI_TEST_BUSYBOX = "${busybox}/bin/busybox";
 
   meta = {
     description = "Forgejo Actions → Explorer Slurm CI dispatcher";
