@@ -38,4 +38,12 @@
     enable = true;
   };
 
+  # upstream hardcodes the greeting green around greetingLine, so recolour here
+  environment.etc.issue.text = ''
+
+    \e{lightblue}${config.services.getty.greetingLine}\e{reset}
+    ${config.services.getty.helpLine}
+
+  '';
+
 }
