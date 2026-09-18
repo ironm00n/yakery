@@ -196,6 +196,9 @@ in
       # lock
       "SUPER, L, exec, loginctl lock-session"
 
+      # hand every other bind to the focused window (VMs, nested compositors)
+      "SUPER, Escape, submap, passthrough"
+
       # Move focus with mainMod + arrow keys
       "SUPER, left, movefocus, l"
       "SUPER, right, movefocus, r"
@@ -303,4 +306,7 @@ in
       # hyprexpo-gesture = [ "3, vertical, expo" ];
     };
   };
+
+  # a submap disables every bind outside it, so this one is the whole layer
+  submaps.passthrough.settings.bind = [ "SUPER, Escape, submap, reset" ];
 }

@@ -44,6 +44,8 @@ in
       ];
 
       "modules-right" = [
+        # hidden outside a submap; grows the right group leftward, so the clock doesn't move
+        "hyprland/submap"
         "tray"
 
         "cpu"
@@ -72,6 +74,11 @@ in
         "max-length" = 150;
         "icon" = true;
         "icon-size" = 16;
+      };
+
+      "hyprland/submap" = {
+        "format" = "󰌌 {}";
+        "tooltip" = false;
       };
 
       # -----------------

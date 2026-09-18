@@ -76,6 +76,14 @@
 	font-family: sans-serif;
 }
 
+#submap {
+	margin: 4px 2px;
+	padding: 0 6px;
+	border-radius: 4px;
+	background-color: #ab4642 /* base08 */;
+	color: #181818 /* base00 */;
+}
+
 #tray {
 	margin: 4px 4px 4px 4px;
 	border-radius: 4px;
