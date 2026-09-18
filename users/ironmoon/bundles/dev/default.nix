@@ -77,6 +77,8 @@ in
             pytest
             pynvim
             # jd-gui # removed
+
+            rich
           ];
       in
       {
