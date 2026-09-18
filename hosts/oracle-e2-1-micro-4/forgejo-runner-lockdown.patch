@@ -21,7 +21,7 @@ new file mode 100644
 index 00000000..8817473d
 --- /dev/null
 +++ b/internal/app/run/slurmci.go
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,105 @@
 +// SPDX-License-Identifier: MIT
 +//
 +// slurm-ci lockdown. This file replaces Forgejo Actions' arbitrary step
@@ -48,9 +48,10 @@ index 00000000..8817473d
 +
 +// runSlurmCI dispatches the build via `slurm-ci run` instead of executing the
 +// workflow plan. The ephemeral Forgejo job token rides in the child's
-+// environment (never argv, so it can't leak into `ps`); slurm-ci forwards it to
-+// the cluster over SSH stdin. Cluster connection + nixenv settings come from the
-+// systemd unit's own environment, inherited via os.Environ().
++// environment (never argv, so it can't leak into `ps`). The event name goes
++// along so the daemon can refuse anything but a push. `slurm-ci run` is a thin
++// client of the `slurm-ci listen` daemon; only CI_SOCKET is needed from the
++// unit's environment.
 +func (r *Runner) runSlurmCI(ctx context.Context, preset *model.GithubContext, reporter *report.Reporter) error {
 +	reporter.Logf("slurm-ci: dispatching %s@%s (ref %s) to the Slurm cluster", preset.Repository, preset.Sha, preset.Ref)
 +
@@ -64,6 +65,7 @@ index 00000000..8817473d
 +		"CI_REPO="+preset.Repository,
 +		"CI_REF="+preset.Ref,
 +		"CI_COMMIT="+preset.Sha,
++		"CI_EVENT="+preset.EventName,
 +		"CI_TOKEN="+preset.Token,
 +	)
 +	w := &logfWriter{reporter: reporter}

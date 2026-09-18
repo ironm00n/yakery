@@ -129,10 +129,23 @@ and reverted within the review pass; §13.)
 
 ## 2. Roles
 
-One static-musl binary, three subcommands, because two of the three run on the
-cluster's foreign non-Nix hosts.
+One static-musl binary, every role, because the cluster-side roles run on
+foreign non-Nix hosts. On the VPS the work is split between a daemon and a
+per-task client: N `run` processes cannot each own port 443, and
+`SO_REUSEPORT` cannot route by token because the token is inside TLS, so the
+listener has to be one long-lived process — and once it exists it is the
+natural owner of the registry, the pinned cert, the SSH key and the JSONL.
 
-- **`run`** — on the VPS. Mints a run UUID, resolves the task to a rev, reads
+- **`listen`** — the VPS daemon. Owns 443, the cert, the registry, the SSH
+  key and the JSONL; accepts tasks from `run` over a unix socket; drives each
+  attempt to a verdict (below, described as `run`'s job — it is the daemon's
+  driver thread that does it); reconciles the registry on startup.
+- **`run`** — what the patched runner execs per task. Sends the task over the
+  socket, relays `INFO`/`DATA` frames to the job log, exits with the verdict.
+  SIGTERM becomes a `CANCEL` frame, answered promptly because the runner
+  SIGKILLs after `WaitDelay`. Holds no credential but the Forgejo token, and
+  that only to hand over for the toml fetch.
+- **The driver** (per attempt, in the daemon). Mints a run UUID, resolves the task to a rev, reads
   `.slurm-ci.toml` from the forge's raw-file endpoint **at that rev** — never
   at branch head, since the toml must describe the tree the cluster will
   actually build and the trigger-to-submit gap is a real TOCTOU window; a
@@ -159,8 +172,8 @@ cluster's foreign non-Nix hosts.
   inside it, then — after that namespace is gone — signs and pushes outputs.
 
 Job config comes from the repo's `.slurm-ci.toml` (installables, cores, mem,
-time; optional partition/constraint per §8). Decided 2026-08-21: keep it
-repo-side. **Dispatch-side magnitude caps ship in v1**, not as later hardening:
+time, jobs; optional partition/constraint/exclusive/tmpdir per §8). Decided
+2026-08-21: keep it repo-side. **Dispatch-side magnitude caps ship in v1**, not as later hardening:
 the toml is attacker-controlled the moment any repo has a second committer, and
 a typo is enough. Caps are the contract with the person whose `RawShares 1` we
 are spending — see §8.
@@ -242,6 +255,14 @@ where a semi-hostile context talks to the trust anchor. Specification:
   timed-out build green. `State` decides whether `ExitCode` means anything;
   `ExitCode` then supplies the verdict; and the two come from different rows,
   which the `eff` verb already has to merge (§9).
+- **No session tickets, orderly close.** The build side only ever writes.
+  Anything the server sends after the handshake (TLS 1.3 tickets) sits unread
+  in the client's receive queue, and `close()` on a socket with unread data
+  sends RST, on which the server discards what it has not yet read — the
+  `EXIT` frame, under load. **[verified]** in the sandboxed test run
+  2026-09-14 (passed locally, lost the frame in the loaded nix sandbox). So
+  `send_tls13_tickets = 0`, resumption off, and the client closes with
+  close_notify then drains to EOF.
 - **Best-effort from the build's side**: a callback that cannot connect, or
   drops, never fails or stalls the build. The Slurm output file in the run
   directory is the authoritative log, and the `log` verb reads it; the callback
@@ -264,9 +285,10 @@ fetch, the callback token immediately — all before any namespace exists, and
 neither is ever exported into the nix environment. The PENDING-window
 exposure on NFS is acceptable *because the account is single-tenant*; that
 premise is load-bearing and would need revisiting with a shared account.
-Whether the Forgejo token is needed at all is an open decision (§13): public
-repos clone without one, and deferring it until a private repo exists deletes
-its crash windows from v1. (Out of scope either way: a CI target whose flake
+Decided 2026-09-14: **v1 sends no Forgejo token to the cluster.** Public repos
+clone without one, and deferring it until a private repo exists deletes its
+crash windows from v1; the run dir holds only the callback token. The VPS
+still uses the runner's token for the toml fetch. (Out of scope either way: a CI target whose flake
 has private `git+ssh` *inputs* — that is a different credential problem this
 design does not cover.)
 
@@ -316,10 +338,13 @@ exists).
 
 **Verbs act only on our own jobs.** `submit` tags every job
 `--comment=slurm-ci:<uuid>`; `status`/`log`/`cancel`/`eff` take **jobid +
-uuid** (the VPS registry knows both), and dispatch verifies that job's comment
-carries the matching tag before acting — zero or multiple matches → refuse.
-The comment is an integrity check, not a search key: nothing scans for it, and
-a stripped tag fails closed. Without this, a buggy or compromised `run` can
+uuid** (the VPS registry knows both), and dispatch verifies the pair against
+the run dir's own `jobid` file, written right after `sbatch` — zero or
+mismatching → refuse. (Implemented that way rather than by re-reading the
+job's comment, because `scontrol` forgets a finished job after `MinJobAge`
+and `sacct` only carries comments with `AccountingStoreFlags=job_comment`;
+the run dir is under our uid and outlives both.) The comment stays on the job
+for `squeue` visibility and the in-flight count. Nothing scans for it. Without this, a buggy or compromised `run` can
 `scancel` any job on the account — including an interactive session or a
 rebake, and eventually Amal's work. (The tag authenticates against *mistakes*,
 not a same-account adversary — anything with the uid can forge it, and can
@@ -386,7 +411,15 @@ nix-portable is gone (post-mortem in §14). `build()` constructs the environment
 itself — the entire stack is stock kernel plus the bootstrap store's own
 binaries:
 
-1. `unshare(CLONE_NEWUSER|CLONE_NEWNS)`, self-map to root in the namespace.
+0. Every namespaced role is a re-exec of the static binary (`__ns <role>`),
+   so `unshare(CLONE_NEWUSER)` sees a single-threaded process with a cleared
+   environment and no inherited fds beyond stdio.
+1. `unshare(CLONE_NEWUSER|CLONE_NEWNS)`, self-map to root in the namespace,
+   **then `unshare(CLONE_NEWPID)` and re-exec the role as that namespace's
+   pid 1** — before any rootfs work. **[verified 2026-09-14, fw13 7.2]** a
+   proc mount inside a userns is refused (EPERM) unless it is for a *new* pid
+   namespace, and only by a process holding CAP_SYS_ADMIN in the userns that
+   *owns* that pid namespace. Both constraints shape everything below.
 2. Build a **minimal** rootfs on a fresh tmpfs:
    - `/nix` — the overlay (§6)
    - `/tmp` — private tmpfs, the default `TMPDIR`
@@ -414,15 +447,23 @@ binaries:
    process (`current_chrooted()` check), which would break both our nested map
    and Nix's own sandbox clone.
 4. `unshare(CLONE_NEWPID)` — which takes effect for the *next* fork, not for
-   the caller — then fork. Pid 1 of that namespace stays ours rather than
-   being nix: an ancestor namespace's default-action signals are dropped by an
-   init without a handler, so exec'ing nix there would make SIGTERM delivery
-   (§ signal discipline) depend on nix's handler table. The stub installs
-   handlers, `unshare(CLONE_NEWUSER|CLONE_NEWNS)` self-mapping 0 → 1000,
-   mounts a fresh `/proc` — a procfs instance shows the pid namespace of
-   whoever mounted it, so parent and child each need their own, with
-   propagation private so neither clobbers the other — then forks nix,
-   forwards TERM, and exits when nix does.
+   the caller — then exec `__stub`. Pid 1 of the innermost namespace stays
+   ours rather than being nix: an ancestor namespace's default-action signals
+   are dropped by an init without a handler, so exec'ing nix there would make
+   SIGTERM delivery (§ signal discipline) depend on nix's handler table. The
+   stub installs handlers, `unshare(CLONE_NEWUSER|CLONE_NEWNS)` self-mapping
+   0 → 1000, and *then* `unshare(CLONE_NEWPID)` + a plain `fork()` — the
+   nested pid namespace must be created inside the mapped userns or nobody
+   can mount its `/proc`, and the init must be a fork rather than an exec
+   because exec as uid 1000 drops the capabilities the mount needs. That
+   forked init mounts a fresh `/proc` — a procfs instance shows the pid
+   namespace of whoever mounted it, so each level needs its own, with
+   propagation private so none clobbers another — spawns nix (the only exec,
+   and therefore the only uncapable process), forwards TERM, and exits when
+   nix does. After the stub is gone the outer role `setns`es its
+   pid-for-children back to its own namespace: **[verified]** a later
+   `fork()` into the dead namespace fails with ENOMEM, which is exactly where
+   the push phase's `nix path-info` would otherwise die.
 5. `wait()` the untrusted child — **the isolation boundary is the child's
    lifetime, not the namespace's**, and the PID namespace is what makes that
    boundary structural rather than inferred: pid_namespaces(7) has the kernel
@@ -454,9 +495,13 @@ as in-ns root; nix runs non-root; nix's sandbox adds the third userns level
 XDG/HOME point into the job tmpfs. The nix binary is the bootstrap store's own
 (`/nix/store/*-nix-*/bin/nix`) — no bootstrap tooling beyond mount(2).
 
-Note the honest gap: the measured stack (`raw-bench.sh`) used the wide host
-bind list and no PID namespace. The minimal rootfs and the pid-1 stub above are
-*design* changes and need their own green run before they count (§12).
+The minimal rootfs, the two pid-namespace levels, the fork-init stub and the
+push phase's fd tricks have a green run against a fake bootstrap store
+(busybox scripts standing in for `git` and `nix`) on fw13 and inside the nix
+sandbox on desktop (`tests/execution_stack.rs`, 2026-09-14). What that run
+does not establish: real nix's sandbox at depth 3 under this exact stack on
+Explorer's 5.14, and whether Explorer's kernel applies the same proc-mount
+rules — the code handles the stricter case, so a looser kernel costs nothing.
 
 **Signal discipline.** SIGTERM (Forgejo cancel, `scancel`, or the partition time
 cap) must reach the sandboxed builders promptly — exit fast, never
@@ -566,17 +611,32 @@ cleanup needs `chmod -R u+rwX` first. NFS is docs-prohibited as an overlay
 legal and measured fine. Overlay-over-squashfuse-lower fails outright on 5.14
 (§14).
 
-**Bootstrap store lifecycle.** Contents are *declarative*: the closure of a
-flake output (working name `ci.bootstrap`) listing nix, git, cacert, and the
-base toolchains worth keeping warm. Size is bounded by construction and adding a
+**Bootstrap store layout.** `bootstrap-store.vN/nix/{store,var}` is the
+extracted store; `bootstrap-store.vN/env` is a symlink to the absolute store
+path of the `ci-bootstrap` `buildEnv` (nix, git, cacert, coreutils, bash),
+valid once `/nix` is mounted. `build()` reads it at job start and everything
+it runs comes from `$env/bin`; `NIX_SSL_CERT_FILE` is `$env/etc/ssl/certs/
+ca-bundle.crt`. The store's binaries cannot run outside a namespace (absolute
+patchelf'd interpreter), which is why the fetch has its own namespace too.
+v1 is built by hand: `nix copy --to local?root=<dir> $(nix build
+.#ci-bootstrap --print-out-paths)`, `ln -s <outpath> <dir>/env`, ship to
+`/projects/dbp/bootstrap-store.v1`, symlink `bootstrap-store` at it.
+
+**Bootstrap store lifecycle.** Contents are *declarative*: the closure of the
+flake output `ci-bootstrap` listing nix, git, cacert, and the base toolchains
+worth keeping warm. Size is bounded by construction and adding a
 dependency to the warm set is a git commit — never a cache-usage heuristic.
 
 Rebake is a **maintenance Slurm job** and is TCB: it materialises the lower
 every future job trusts, so a CI job that could steer it would be the
-signing-key problem with extra steps. The trigger may come from the VPS (a
-scheduled unit or a verb) but carries **zero arguments** — what gets baked is
-a flake ref pinned cluster-side, so a compromised VPS can waste a rebake but
-not steer its contents. Serialised with `--dependency=singleton` so two can
+signing-key problem with extra steps. The trigger may come from the VPS
+(`slurm-ci trigger-rebake` → the `rebake` verb) but carries **zero
+arguments** — what gets baked is the flake ref in `~/ci/bootstrap.pin`,
+cluster-side, so a compromised VPS can waste a rebake but not steer its
+contents. The job runs `__build` in rebake mode: the pinned ref is built in
+an overlay over the current lower, the result's closure is `nix copy`'d into
+`bootstrap-store.v(N+1)` bound rw at `/candidate`, `env` is linked, the
+cache is seeded, and the symlink flips. Serialised with `--dependency=singleton` so two can
 never race. It mounts a fresh candidate dir as `/nix` read-write (plain bind, no
 overlay), substitutes the closure from the signed cache + cache.nixos.org, then:
 
@@ -619,9 +679,21 @@ equivalent to handing over the key.
 *entire* closure, including everything just substituted from cache.nixos.org —
 there is no built-in upstream-exclusion flag (nix#7527) — so an unfiltered
 push turns the cache into a first-touch private mirror of nixpkgs on a quota
-we cannot even read. The push phase filters to paths this job actually built:
-the derivation outputs the build reports, or equivalently paths carrying no
-upstream signature. Retention (below) cannot save an unfiltered push.
+we cannot even read. The push phase lists the overlay upper's `store/` (held
+by fd from before `pivot_root`; the upper mirrors the lower's root, which is
+the bootstrap's `nix/`), keeps the entries `nix path-info --sigs` reports
+with no signature at all — substituted paths carry one, ours or upstream's —
+and pushes exactly those with `nix copy --no-recursive`. Retention (below)
+cannot save an unfiltered push.
+
+**Before signing** (2026-09-01 audit, fix (b)): any upper entry whose name
+exists in the lower is a copy-up of a lower store path, which nothing in this
+flow does legitimately — red, exit `TAMPER`, nothing pushed. Then `nix store
+verify --no-trust` on the push set; a failure is the same red. Only then the
+key is copied into the outer namespace's private `/run` (which never existed
+while repo code ran), `/cache` is remounted rw, and `nix store sign` +
+`nix copy` run. A push failure after a green build is `PUSH_FAILED`; after a
+red build the red code wins, but what was built is still pushed.
 
 **Concurrent pushes.** `LocalBinaryCacheStore::upsertFile` writes
 `<path>.tmp.<pid>.<counter>` then `rename()`s, so same-node concurrency is safe
@@ -956,38 +1028,54 @@ for the same.
 
 ## 12. Implementation status
 
-Built and committed:
+**Built and tested (2026-09-14)** — `crates/slurm-ci`, 0.2.0, one static
+binary, `nix build .#slurm-ci` runs 44 tests inside the sandbox:
 
-- the crate (`2fedf64`) — three roles, argument validation, SSH hardening,
-  callback listener, SIGTERM handling, log pruning. Predates both 2026-08-21
-  revisions: it still implements nix-portable + `$HOME/bin/slurm-ci-job`, the
-  netrc in the shared project dir and alive for the whole build (vs run-dir +
-  consumed pre-eval), no placement/account args, a one-shot unframed callback,
-  and `cache.nixos.org`-only substituters.
-- `hosts/oracle-e2-1-micro-4/forgejo-runner-lockdown.patch` — the Go runner
-  patch (inert until the NixOS module exists).
+- Control plane, §1–§4, §8–§9: `listen` (443/TLS pinned cert, registry,
+  reconcile, backed-off probes, heartbeat-loss → probe, gate retry with
+  `--exclude`, JSONL with `mem_overshoot`), `run` (thin client, `CANCEL` on
+  SIGTERM), `dispatch` (five verbs + `rebake`, protocol handshake, caps,
+  in-flight ceiling, run-dir identity check, run-dir pruning on every submit,
+  `--comment`/`--account`/`--deadline`/`--nodes=1`). `tests/control_plane.rs`
+  drives all of it on one machine — fake `ssh` into a real `dispatch`, fake
+  Slurm commands, the test as the compute node over the real TLS callback —
+  and covers green-via-callback with streamed log, red-via-sacct with log
+  fetch, `PUSH_FAILED` green-with-warning, job 9442675's `TIMEOUT`/`0:0`
+  shape as red, gate retry, cancel, wrong/replayed token, non-push event,
+  cap rejection, foreign job id, daemon restart reconciliation.
+- Execution stack, §5–§7: `build` (host supervisor: callback = reachability
+  gate, statfs/xattr/resolver/bootstrap/cache gate, stale-workspace reaper,
+  relay to `job.out` + callback, `build.json`), `__ns`/`__fetch`/`__build`/
+  `__stub` (user+mount+pid namespaces at two levels, minimal rootfs, overlay
+  `/nix`, `pivot_root`, nix as uid 1000, tamper check, verify, sign, push),
+  `rebake`/`trigger-rebake`. `tests/execution_stack.rs` runs the real
+  namespace stack against a fake bootstrap store whose `git`/`nix` are
+  busybox scripts: fetch + rev check + `.git` removal, nix at uid 1000 in the
+  nested pid namespace with the key invisible and the cache read-only,
+  `/xtmp` vs tmpfs `TMPDIR`, push after verify+sign, `TAMPER` on copy-up and
+  on verify failure, `PUSH_FAILED`, red build still pushes, wrong rev and
+  submodules refused.
+- `hosts/oracle-e2-1-micro-4/forgejo-runner-lockdown.patch` now passes
+  `CI_EVENT`; `packages.ci-bootstrap` is the §6 `buildEnv`.
 
-**Ship order — control plane first.** §5–§6 have five nodes of measurements
-behind them; the distributed system around them has none. Land `run`/`dispatch`
-with the registry, caps, comment-tagged verbs, and the framed TLS callback
-against a **dummy `build` that only runs the node sanity gate and echoes**.
-Then the execution stack and overlay. Then cache push. Then telemetry, then the
-NixOS module.
+**Not built:**
 
-1. Credential-sequenced fetch (§1), run registry + idempotent submit (§2),
-   magnitude caps and comment-tagged verbs (§4, §8), framed TLS callback with
-   fail-closed semantics and durable `log` (§3), runner patch contract
-   enforcement + its negative test (§4).
-2. `build()`: minimal rootfs (§5), overlay store (§6), sanity gate incl. stale
-   upper reaping, signal-discipline test.
-3. Cache push in the post-namespace phase, retention sweep, `march` policy (§7).
-4. `eff` verb + JSONL (§9); bootstrap rebake job + versioning (§6).
-5. NixOS module for micro-4 (runner package + patch, unit env, sops,
-   registration, x86-only runner labels so aarch64 fleet workflows cannot route
-   here); `login.explorer.northeastern.edu` as plaintext `data` in
-   `/etc/secrets`; cluster-side deployment of `~/bin/slurm-ci`, the
-   authorized_keys forced command, bootstrap-store v1, Oracle NSG ingress for
-   the callback port.
+- The NixOS module for micro-4 (runner package + patch, `slurm-ci listen`
+  unit with its env and sops secrets, socket group, x86-only labels, NSG
+  ingress for 443), the `login.explorer.northeastern.edu` block in
+  `/etc/secrets` (drafted, uncommitted), cluster-side deployment (`~/bin/
+  slurm-ci`, `~/ci/{cache-priv,cache-pub}.pem`, `~/ci/bootstrap.pin`, the
+  `authorized_keys` forced command with `CI_SLURM_ACCOUNT`, bootstrap-store
+  v1, `/projects/dbp/nix-cache`).
+- Retention sweep (§7), `eff`-side cgroup sampling (§9), the runner-patch
+  negative test (§4).
+- Nothing has run on Explorer: real nix at userns depth 3 under this stack,
+  and every open probe below.
+
+**Ship order from here:** deploy the VPS side against a dummy cluster-side
+`build` first (the control-plane tests already stand in for that locally),
+then bootstrap-store v1 and one real `nix build` on a `sharing` node, then the
+probes.
 
 **Open probes — one command each, all cheap:**
 
@@ -1280,6 +1368,57 @@ are findings, not decisions, except where marked.
   registry, which §2/§8 do not describe; the stale-upper reaper's grace must
   be `MaxTime` + `KillWait` + slack, or a job in its last ten minutes loses
   its store.
+
+**2026-09-14, implementation** (the code caught up with the design; choices
+made where §13 had parked or the design was silent, all revisable):
+
+- **Listener = daemon.** `listen` owns 443, cert, registry, SSH key, JSONL;
+  `run` is a thin client over a unix socket. Chosen over `SO_REUSEPORT` +
+  shared registry because the routing key (token) is inside TLS, so the
+  receiving process would have to proxy anyway, and over per-run ports
+  because 443 is the only measured egress.
+- **No Forgejo token to the cluster in v1** (§4). The run dir holds only the
+  callback token.
+- **Fetch = scrubbed `git clone` in its own throwaway namespace**, using the
+  bootstrap store's git (its binaries cannot run outside a namespace anyway).
+  `.git` is removed after the rev check and nix gets `path:/src#frag`, so the
+  archive endpoint would produce the identical tree — the parked decision
+  reduces to one function, and neither branch yields `self.rev`.
+  `.gitmodules` present → red.
+- **Verb identity = run dir's recorded jobid** rather than the job's comment
+  (§4): `scontrol` forgets finished jobs, `sacct` needs a config flag to
+  carry comments.
+- **Audit fix (b) shipped** (§7): upper∩lower basename check, `nix store
+  verify --no-trust`, then sign and `nix copy --no-recursive`. Fix (a) waits
+  on probe #17.
+- **`jobs` (nix `max-jobs`, default 4) added to the toml**; `cores` alone
+  would have left `max-jobs` at nix's default of 1.
+- **Wrapper exit codes**: `GATE_FAILED=75`, `PUSH_FAILED=76`, `TAMPER=77`,
+  clear of nix's 1/100–104; `Verdict::from_exit` and `Verdict::from_sacct`
+  are tested to agree on every code.
+- **Callback port is `host[:port]`** in the `Submit` (default 443) so the
+  control plane is testable on loopback; production config sets no port.
+- **Gate retry uses a fresh run id** (attempt 2), so `submit` stays
+  refuse-on-reuse; the JSONL carries `attempt`.
+
+Findings, all **[verified]** on fw13 (7.2) and in the nix sandbox on desktop:
+
+- A userns can mount procfs only for a *new* pid namespace, and only from a
+  process with CAP_SYS_ADMIN in the userns that owns that pid namespace. §5
+  now creates the pid namespace first at both levels, and the innermost
+  init is a `fork()`, not an exec, because exec as uid 1000 drops caps.
+- After the child pid namespace's init exits, `fork()` in the parent fails
+  with ENOMEM; the push phase needs `setns` back to the parent's own pid ns.
+- A read-only remount inside a userns must carry the source mount's locked
+  `nosuid`/`nodev`/`noexec`/atime flags or it is EPERM; `Rootfs::bind`
+  reads them via `statvfs`.
+- The overlay upper mirrors the lower's *root*: new store paths appear at
+  `upper/store/`, not `upper/nix/store/`.
+- TLS 1.3 session tickets left unread by a write-only client make its close
+  an RST, and a server that has not yet read the last frame loses it (§3).
+  Surfaced only under the sandbox's parallel load.
+- nix's named `statfs`/`statvfs` constants are gated off on musl; magics are
+  written as numbers.
 
 ## 14. Dead ends (kept dead)
 

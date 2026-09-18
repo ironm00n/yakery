@@ -303,9 +303,23 @@
         inherit (nixvim.legacyPackages.${system}) makeNixvimWithModule;
         pkgs = pkgs-map.${system};
       };
-      # Static musl: one binary serves all three roles, incl. the `dispatch`
-      # and `build` roles that run on the cluster's foreign (non-Nix) hosts.
+      # Static musl: one binary serves every role, incl. the `dispatch` and
+      # `build` roles that run on the cluster's foreign (non-Nix) hosts.
       slurm-ci = pkgs.pkgsStatic.callPackage ./crates/slurm-ci/package.nix { };
+
+      # The bootstrap store's `env` (crates/slurm-ci/DESIGN.md §6): what
+      # `slurm-ci build` runs inside the job namespace, and the closure the
+      # rebake job materialises as the next read-only lower.
+      ci-bootstrap = pkgs.buildEnv {
+        name = "ci-bootstrap-env";
+        paths = with pkgs; [
+          nix
+          git
+          cacert
+          coreutils
+          bash
+        ];
+      };
     }
     // lib.optionalAttrs (system == "x86_64-linux") {
       # Throwaway guest for untrusted coding harnesses; not a `machines` entry on purpose.
