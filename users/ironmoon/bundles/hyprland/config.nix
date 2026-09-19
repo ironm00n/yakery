@@ -41,6 +41,9 @@ let
   browser = app "firefox -new-tab";
   menu = "anyrun";
   clipboardHist = "cliphist list | wofi --dmenu --cache-file=/dev/null | cliphist decode | wl-copy";
+  vmClip = import ../../../../nix/vms/hackathon-vm-clip.nix { inherit pkgs; };
+  clipToVm = lib.getExe vmClip.push;
+  clipFromVm = lib.getExe vmClip.pull;
   ssWindow = "hyprshot -m window";
   ssMonitor = "hyprshot -m output";
   ssSelection = "hyprshot -m region -z";
@@ -183,6 +186,8 @@ in
 
       # clipboard
       "SUPER, V, exec, ${clipboardHist}"
+      "SUPER SHIFT, V, exec, ${clipToVm}"
+      "SUPER CTRL, V, exec, ${clipFromVm}"
 
       # screenshot
       "SUPER, PRINT, exec, ${ssWindow}"
@@ -308,5 +313,9 @@ in
   };
 
   # a submap disables every bind outside it, so this one is the whole layer
-  submaps.passthrough.settings.bind = [ "SUPER, Escape, submap, reset" ];
+  submaps.passthrough.settings.bind = [
+    "SUPER, Escape, submap, reset"
+    "SUPER SHIFT, V, exec, ${clipToVm}"
+    "SUPER CTRL, V, exec, ${clipFromVm}"
+  ];
 }

@@ -294,6 +294,14 @@
         inherit (nixvim.legacyPackages.${system}) makeNixvimWithModule;
         pkgs = pkgs-map.${system};
       };
+    }
+    // lib.optionalAttrs (system == "x86_64-linux") {
+      # Throwaway guest for untrusted coding harnesses; not a `machines` entry on purpose.
+      hackathon-vm =
+        (import ./nix/vms/hackathon-vm.nix { inherit inputs system; })
+        .config.system.build.sandbox;
+      hackathon-vm-clip-push = (import ./nix/vms/hackathon-vm-clip.nix { inherit pkgs; }).push;
+      hackathon-vm-clip-pull = (import ./nix/vms/hackathon-vm-clip.nix { inherit pkgs; }).pull;
     });
 
     formatter = eachSystem ({ system, ... }: treefmtEval.${system}.config.build.wrapper);
