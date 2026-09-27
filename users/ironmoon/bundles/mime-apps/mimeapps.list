@@ -82,3 +82,5 @@ x-scheme-handler/sgnl=signal.desktop
 x-scheme-handler/signalcaptcha=signal.desktop
 x-scheme-handler/slack=slack.desktop
 x-scheme-handler/claude-cli=claude-code-url-handler.desktop
+x-scheme-handler/postman=Postman.desktop
+x-scheme-handler/codex=chatgpt.desktop
