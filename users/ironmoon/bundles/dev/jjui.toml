@@ -1,0 +1,45 @@
+[revisions]
+revset = "builtin_log() | ::@"
+
+[[actions]]
+name = "arrange"
+lua = 'jj_interactive("arrange", "-r", jjui.revisions.current() .. "::")'
+key = "alt+a"
+scope = "revisions"
+desc = "arrange"
+
+[[actions]]
+name = "signoff"
+lua = '''
+local revs = jjui.revisions.checked()
+if #revs == 0 then revs = { jjui.revisions.current() } end
+jj_async("signoff", unpack(revs))
+jjui.revisions.refresh()
+'''
+key = "alt+o"
+scope = "revisions"
+desc = "signoff"
+
+[[actions]]
+name = "copy-change-id"
+lua = '''
+local revs = jjui.revisions.checked()
+if #revs == 0 then revs = { jjui.revisions.current() } end
+local min_len = 5
+local args = { "log", "--no-graph", "-T",
+  ([[if(hidden, commit_id.shortest(%d), change_id.shortest(%d) ++ if(divergent, "/" ++ change_offset)) ++ " "]]):format(min_len, min_len) }
+for _, rev in ipairs(revs) do
+  table.insert(args, "-r")
+  table.insert(args, rev)
+end
+local text, err = jj(args)
+local ok = false
+if text then
+  text = text:gsub("%s+$", "")
+  ok, err = copy_to_clipboard(text)
+end
+flash(ok and ("copied " .. text) or { text = err, error = true })
+'''
+key = "alt+y"
+scope = "revisions"
+desc = "copy change id"

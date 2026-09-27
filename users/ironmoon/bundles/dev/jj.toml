@@ -6,3 +6,41 @@ email = "me@ironmoon.dev"
 
 [aliases]
 signoff = ["util", "exec", "--", "sh", "-c", "ids=$(for r in \"$@\"; do jj log --no-graph -r \"$r\" -T 'change_id ++ \"\\n\"'; done) && for c in $ids; do jj describe -r \"$c\" --config 'templates.commit_trailers=\"format_signed_off_by_trailer(self)\"' -m \"$(jj log --no-graph -r \"$c\" -T description)\"; done", "signoff"]
+push = ["util", "exec", "--", "sh", "-c", '''
+set -eu
+usage() { echo 'usage: jj push [-r REV] [-b BRANCH] [--remote REMOTE] [-f] [-- GIT_PUSH_OPTS...]' >&2; exit "$1"; }
+opts=$(getopt -n 'jj push' -o r:b:fh -l revision:,branch:,remote:,force-with-lease,help -- "$@") || usage 2
+eval set -- "$opts"
+rev=@- branch=master remote='' force=''
+while :; do
+  case $1 in
+    -r|--revision) rev=$2; shift 2 ;;
+    -b|--branch) branch=$2; shift 2 ;;
+    --remote) remote=$2; shift 2 ;;
+    -f|--force-with-lease) force=1; shift ;;
+    -h|--help) usage 0 ;;
+    --) shift; break ;;
+  esac
+done
+for opt; do case $opt in -*) ;; *) usage 2 ;; esac; done
+if [ "$force" ]; then set -- --force-with-lease "$@"; fi
+: "${remote:=$(jj config get git.push 2>/dev/null || { [ "$(git remote | wc -l)" -eq 1 ] && git remote || echo origin; })}"
+change=$(jj log --no-graph -r "exactly($rev, 1)" -T change_id)
+jj sign -r "remote_bookmarks(exact:\"$branch\", exact:\"$remote\")..$change & mutable() & mine() & ~signed()"
+git push "$@" "$remote" "$(jj log --no-graph -r "exactly($change, 1)" -T commit_id):refs/heads/$branch"
+''', "push"]
+
+[signing]
+backend = "gpg"
+behavior = "own"
+
+[git]
+sign-on-push = true
+
+[template-aliases]
+"commit_timestamp(commit)" = "commit.author().timestamp()"
+
+[[--scope]]
+--when.environments = ["JJUI"]
+[--scope.ui]
+diff-formatter = ["delta", "--tabs", "2", "$left", "$right"]

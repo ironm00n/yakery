@@ -138,6 +138,7 @@ in
 
       xdg.configFile."lazygit/config.yml".source = symlink ./lazygit.yml;
       xdg.configFile."jj/config.toml".source = symlink ./jj.toml;
+      xdg.configFile."jjui/config.toml".source = symlink ./jjui.toml;
     })
     (mkIf cfg.other-llm {
       home.packages = with pkgs; [
