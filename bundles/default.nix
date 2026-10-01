@@ -7,6 +7,7 @@
     ./kde.nix
     ./nvidia.nix
     ./fonts.nix
+    ./fontconfig-scan-cache
     ./printing.nix
     ./virtualisation.nix
     ./gaming.nix

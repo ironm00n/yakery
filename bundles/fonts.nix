@@ -4,6 +4,7 @@ args@{
   config,
   lib,
   my-lib,
+  options,
   pkgs,
   ...
 }:
@@ -11,6 +12,22 @@ let
   inherit (lib) mkEnableOption mkIf;
   inherit (my-lib) mkDisableOption;
   cfg = config.bundles.fonts;
+  # their private-use glyphs are internal, and outrank Nerd Fonts as fallback
+  pua-squatters = with pkgs; [ newcomputermodern ];
+  strip-pua = pkg: ''
+    <match target="scan">
+      <test name="file" compare="contains"><string>${pkg}/</string></test>
+      <edit name="charset" mode="assign">
+        <minus>
+          <name>charset</name>
+          <charset>
+            <range><int>0xe000</int><int>0xf8ff</int></range>
+            <range><int>0xf0000</int><int>0x10ffff</int></range>
+          </charset>
+        </minus>
+      </edit>
+    </match>
+  '';
 in
 {
   options.bundles.fonts = {
@@ -19,6 +36,7 @@ in
   };
 
   config = mkIf cfg.enable {
+    bundles.fontconfig-scan-cache.enable = true;
     fonts = {
       enableDefaultPackages = false;
       packages =
@@ -30,6 +48,7 @@ in
           twemoji-colr
           twemoji-cbdt
         ]
+        ++ pua-squatters
         ++ (with pkgs; [
           # default minus noto-fonts-color-emoji
           dejavu_fonts
@@ -55,7 +74,20 @@ in
           lmodern
           source-sans
         ]);
-      fontconfig.defaultFonts.emoji = [ "Twemoji COLR" ];
+      fontconfig.defaultFonts =
+        lib.genAttrs [ "sansSerif" "serif" "monospace" ] (
+          k: options.fonts.fontconfig.defaultFonts.${k}.default ++ [ "Symbols Nerd Font" ]
+        )
+        // {
+          emoji = [ "Twemoji COLR" ];
+        };
+      fontconfig.localConf = ''
+        <?xml version="1.0"?>
+        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+        <fontconfig>
+        ${lib.concatMapStrings strip-pua pua-squatters}
+        </fontconfig>
+      '';
       # fontconfig.localConf = ''
       #   <?xml version="1.0"?>
       #   <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
