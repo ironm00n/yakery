@@ -142,9 +142,10 @@ in
     })
     (mkIf cfg.other-llm {
       home.packages = with pkgs; [
-        code-cursor
-        antigravity.fhs
-        windsurf
+        # code-cursor
+        antigravity-cli
+        cursor-cli
+        # windsurf
       ];
     })
     {
