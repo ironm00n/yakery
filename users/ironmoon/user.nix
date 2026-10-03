@@ -16,24 +16,12 @@ let
     config.bundles.vpn.netbird.enable && netbird-client.hardened
   ) netbird-client.user.group;
 
-  # Run Zoom in an app-us.zoom.Zoom-* systemd scope (even when running from terminal) so the portal
-  # reports that app_id, which `force_linear_apps` matches.
-  zoom-scoped =
-    let
-      zoom = pkgs.zoom-us.override {
-        hyprlandXdgDesktopPortalSupport = config.host.hyprland;
-        plasma6XdgDesktopPortalSupport = config.host.kde;
-      };
-    in
-    pkgs.symlinkJoin {
-      name = "zoom-us-app-scoped";
-      paths = [
-        (pkgs.writeShellScriptBin "zoom" ''
-          exec ${pkgs.systemd}/bin/systemd-run --user --scope --unit="app-us.zoom.Zoom-$RANDOM" ${zoom}/bin/zoom "$@"
-        '')
-        zoom
-      ];
+  zoom-scoped = pkgs.callPackage ../../packages/zoom-scoped {
+    zoom-us = pkgs.zoom-us.override {
+      hyprlandXdgDesktopPortalSupport = config.host.hyprland;
+      plasma6XdgDesktopPortalSupport = config.host.kde;
     };
+  };
 in
 {
   # user account.
