@@ -1,0 +1,6 @@
+{
+  "name": "status-row",
+  "version": "0.1.0",
+  "description": "Draws the status line in the prompt hint row, beside the permission mode, for the agent in view",
+  "types": "./types/index.d.ts"
+}
