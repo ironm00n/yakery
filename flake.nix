@@ -201,6 +201,7 @@
     };
     servers =
       (mk-server { id = "hetzner-cx33-1"; system = "x86_64-linux"; })
+      // (mk-server { id = "hetzner-cx23-1"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "ovh-vps1-1"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "oracle-e2-1-micro-1"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "oracle-e2-1-micro-2"; system = "x86_64-linux"; disko = true; })
@@ -279,6 +280,7 @@
         oom = import ./nix/tests/oom.nix { pkgs = pkgs-map.${system}; };
         ksycoca = import ./nix/tests/ksycoca.nix { pkgs = pkgs-map.${system}; };
         ok-color = import ./nix/tests/ok-color.nix { pkgs = pkgs-map.${system}; };
+        borg-hop = import ./nix/tests/borg-hop.nix { pkgs = pkgs-map.${system}; };
       }
     ) inputs.deploy-rs.lib;
 

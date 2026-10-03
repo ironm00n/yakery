@@ -20,6 +20,7 @@
     ./xdg-menu.nix
     ./ok-color.nix
     ./keychron.nix
+    ./borg-hop.nix
 
     ./displaylink
   ];
