@@ -96,11 +96,6 @@
     ]
   },
   "workflowSizeGuideline": "unrestricted",
-  "statusLine": {
-    "type": "command",
-    "command": "bash \"$HOME/.claude/statusline.sh\"",
-    "refreshInterval": 60
-  },
   "enabledPlugins": {
     "rust-analyzer-lsp@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
