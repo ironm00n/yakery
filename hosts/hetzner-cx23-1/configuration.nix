@@ -1,15 +1,10 @@
 { config, ... }:
 {
   imports = [
-    ./hardware-configuration.nix
-    ./disks.nix
+    ../common/hetzner-cloud/qemu-guest.nix
+    ../common/disko-lvm-ext4.nix
     ../common/server
   ];
-
-  boot.loader.grub = {
-    efiSupport = true;
-    efiInstallAsRemovable = true;
-  };
 
   networking.nameservers = [
     "2606:4700:4700::1111"

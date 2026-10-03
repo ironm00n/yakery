@@ -15,15 +15,10 @@ in
 {
   imports = [
     ./hardware-configuration.nix
-    ./disks.nix
+    ../common/disko-lvm-ext4.nix
     ../common/server
     ./netbird.nix
   ];
-
-  boot.loader.grub = {
-    efiSupport = true;
-    efiInstallAsRemovable = true;
-  };
 
   networking = {
     networkmanager.unmanaged = [ "interface-name:ens3" ];

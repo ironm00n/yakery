@@ -1,5 +1,10 @@
 { lib, ... }:
 {
+  boot.loader.grub = {
+    efiSupport = true;
+    efiInstallAsRemovable = true;
+  };
+
   disko.devices = {
     disk.disk1 = {
       device = lib.mkDefault "/dev/sda";
