@@ -96,6 +96,35 @@
     ]
   },
   "workflowSizeGuideline": "unrestricted",
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"$HOME/.claude/statusline.sh\"",
+    "refreshInterval": 60
+  },
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "coq-lsp@local-coq-lsp": true,
+    "typst-lsp@local-typst-lsp": true
+  },
+  "appendPlugins": [
+    "email-probe@inline"
+  ],
+  "extraKnownMarketplaces": {
+    "local-coq-lsp": {
+      "source": {
+        "source": "directory",
+        "path": "/home/ironmoon/.claude/my-marketplaces/coq-lsp"
+      }
+    },
+    "local-typst-lsp": {
+      "source": {
+        "source": "directory",
+        "path": "/home/ironmoon/.claude/my-marketplaces/typst-lsp"
+      }
+    }
+  },
   "spinnerTipsEnabled": false,
   "spinnerVerbs": {
     "mode": "replace",

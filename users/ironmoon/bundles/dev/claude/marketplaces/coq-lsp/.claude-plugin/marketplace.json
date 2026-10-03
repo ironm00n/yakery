@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "local-coq-lsp",
+  "description": "Local marketplace providing the coq-lsp language server for .v files",
+  "owner": {
+    "name": "ironmoon"
+  },
+  "plugins": [
+    {
+      "name": "coq-lsp",
+      "description": "Coq language server (coq-lsp) for .v files, launched inside the project's nix devshell via direnv so ROCQPATH and friends are set",
+      "version": "1.0.0",
+      "author": {
+        "name": "ironmoon"
+      },
+      "source": "./plugins/coq-lsp",
+      "category": "development",
+      "strict": false,
+      "lspServers": {
+        "coq-lsp": {
+          "command": "direnv",
+          "args": ["exec", ".", "coq-lsp"],
+          "extensionToLanguage": {
+            ".v": "coq"
+          }
+        }
+      }
+    }
+  ]
+}

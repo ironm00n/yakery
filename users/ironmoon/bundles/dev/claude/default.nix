@@ -23,7 +23,9 @@ in
       # no XDG: https://github.com/anthropics/claude-code/issues/1455
       ".claude/CLAUDE.md".source = symlink ./CLAUDE.md;
       ".claude/settings.json".source = symlink ./settings.json;
+      ".claude/statusline.sh".source = symlink ./statusline.sh;
       ".claude/hooks/".source = symlink ./hooks;
+      ".claude/my-marketplaces".source = symlink ./marketplaces;
     };
   };
 }

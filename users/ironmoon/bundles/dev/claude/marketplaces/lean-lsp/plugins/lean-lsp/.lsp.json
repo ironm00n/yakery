@@ -1,0 +1,15 @@
+{
+  "lean4": {
+    "command": "sh",
+    "args": [
+      "-c",
+      "cd /home/ironmoon/research/gradual-borrows/formalization && exec direnv exec . lake serve"
+    ],
+    "extensionToLanguage": {
+      ".lean": "lean4"
+    },
+    "workspaceFolder": "/home/ironmoon/research/gradual-borrows/formalization",
+    "startupTimeout": 180000,
+    "diagnostics": false
+  }
+}

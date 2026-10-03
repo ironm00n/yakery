@@ -1,0 +1,8 @@
+{
+  "name": "lean-lsp",
+  "description": "Lean 4 language server (lake serve) for the UnBoCa formalization, launched inside its flake devshell via direnv so LEAN_PATH and friends are set",
+  "version": "1.0.0",
+  "author": {
+    "name": "ironmoon"
+  }
+}

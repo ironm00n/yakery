@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "local-lean-lsp",
+  "description": "Local marketplace providing the Lean 4 language server for .lean files",
+  "owner": {
+    "name": "ironmoon"
+  },
+  "plugins": [
+    {
+      "name": "lean-lsp",
+      "description": "Lean 4 language server (lake serve) for the UnBoCa formalization, launched inside its flake devshell via direnv so LEAN_PATH and friends are set",
+      "version": "1.0.0",
+      "author": {
+        "name": "ironmoon"
+      },
+      "source": "./plugins/lean-lsp",
+      "category": "development",
+      "strict": false
+    }
+  ]
+}

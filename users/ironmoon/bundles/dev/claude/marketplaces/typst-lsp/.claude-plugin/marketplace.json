@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "local-typst-lsp",
+  "description": "Local marketplace providing the tinymist language server for .typ files",
+  "owner": {
+    "name": "ironmoon"
+  },
+  "plugins": [
+    {
+      "name": "typst-lsp",
+      "description": "Typst language server (tinymist) for .typ files, launched inside the project's nix devshell via direnv so tinymist and its fonts resolve",
+      "version": "1.0.0",
+      "author": {
+        "name": "ironmoon"
+      },
+      "source": "./plugins/typst-lsp",
+      "category": "development",
+      "strict": false,
+      "lspServers": {
+        "tinymist": {
+          "command": "direnv",
+          "args": ["exec", ".", "tinymist", "lsp"],
+          "extensionToLanguage": {
+            ".typ": "typst"
+          }
+        }
+      }
+    }
+  ]
+}
