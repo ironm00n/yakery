@@ -1,0 +1,5 @@
+{
+  "name": "stream-thinking",
+  "version": "0.1.0",
+  "description": "Streams the thinking block in progress under the spinner of the agent producing it"
+}
