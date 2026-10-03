@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "cleanupPeriodDays": 36525000,
+  "env": {
+    "DISABLE_ERROR_REPORTING": "1",
+    "CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF": "1",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "CLAUDE_CODE_DISABLE_FAST_MODE": "1",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "10000",
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "5",
+    "CLAUDE_CODE_NO_MODEL_FALLBACK": "1"
+  },
+  "attribution": {
+    "sessionUrl": false,
+    "commit": "{Assisted,Generated}-by: <model-id>[:effort] [harness[:version]]",
+    "pr": ""
+  },
+  "permissions": {
+    "allow": [
+      "Read(//nix/store)",
+      "Agent(Explore)",
+      "Bash(ls:*)",
+      "Bash(rg:*)",
+      "Bash(jq:*)",
+      "Bash(col:*)",
+      "Bash(git log:*)",
+      "Bash(git grep:*)",
+      "Bash(git cat-file:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(git count-objects:*)",
+      "Bash(git diff-index:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git read-tree:*)",
+      "Bash(git rev-list:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git show-ref:*)",
+      "Bash(git verify-pack:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh search:*)",
+      "Bash(command -v:*)",
+      "Bash(echo \"exit:$?\")"
+    ],
+    "defaultMode": "default"
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults"
+    ],
+    "soft_deny": [
+      "$defaults",
+      "outward facing prose under my identity which has not been approved by declaudish agent",
+      "including an PII (ex email) in user agents etc",
+      "circumventing /goal timelines (especially using sleep commands)"
+    ],
+    "hard_deny": [
+      "$defaults",
+      "nix privilege escalation--current user is trusted",
+      "docker privilege escalation--user is member of wheel"
+    ],
+    "environment": [
+      "$defaults"
+    ],
+    "classifyAllShell": false
+  },
+  "worktree": {
+    "bgIsolation": "none"
+  },
+  "workflowSizeGuideline": "unrestricted",
+  "spinnerTipsEnabled": false,
+  "spinnerVerbs": {
+    "mode": "replace",
+    "verbs": [
+      "Racketeering"
+    ]
+  },
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "xhigh",
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "xhigh"
+    }
+  },
+  "tui": "fullscreen",
+  "showThinkingSummaries": true,
+  "skipWorkflowUsageWarning": true,
+  "switchModelsOnFlag": false,
+  "agentPushNotifEnabled": true,
+  "feedbackDrafts": "off"
+}

@@ -16,6 +16,8 @@ let
   cfg = config.bundles.dev;
 in
 {
+  imports = [ ./claude ];
+
   options.bundles.dev = {
     enable = mkEnableOption "global dev stuff";
     langs = mkDisableOption "languages";
@@ -127,8 +129,6 @@ in
         nix-direnv
         arduino-ide
         lazygit
-
-        claude-code
         jujutsu
         lazyjj
         jjui

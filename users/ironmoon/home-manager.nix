@@ -41,6 +41,7 @@ in
     dev.enable = true;
     dev.jetbrains = !host.lightweight;
     dev.langs = host.id != fw12;
+    dev.claude.enable = true;
     dev.codex-desktop = !host.lightweight;
     dev.other-llm = host.id == fw13;
     sec.enable = !host.lightweight;
