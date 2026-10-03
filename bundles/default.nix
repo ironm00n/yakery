@@ -19,6 +19,7 @@
     ./ksycoca
     ./xdg-menu.nix
     ./ok-color.nix
+    ./keychron.nix
 
     ./displaylink
   ];

@@ -24,6 +24,7 @@ in
   bundles.ksycoca.enable = mkDefault true;
   bundles.xdg-menu.enable = mkDefault true;
   bundles.ok-color.enable = mkDefault true;
+  bundles.keychron.enable = mkDefault true;
   console.colors = mkDefault kittyPalette;
   bundles.distributed-builds.enable = mkDefault true;
   bundles.vpn.netbird = {
