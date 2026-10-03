@@ -202,6 +202,7 @@
     servers =
       (mk-server { id = "hetzner-cx33-1"; system = "x86_64-linux"; })
       // (mk-server { id = "hetzner-cx23-1"; system = "x86_64-linux"; disko = true; })
+      // (mk-server { id = "hetzner-cx23-2"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "ovh-vps1-1"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "oracle-e2-1-micro-1"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "oracle-e2-1-micro-2"; system = "x86_64-linux"; disko = true; })
