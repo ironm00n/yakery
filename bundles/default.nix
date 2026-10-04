@@ -21,6 +21,7 @@
     ./ok-color.nix
     ./keychron.nix
     ./borg-hop.nix
+    ./backup.nix
 
     ./displaylink
   ];
