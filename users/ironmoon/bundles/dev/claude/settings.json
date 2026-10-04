@@ -79,6 +79,10 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/guard-idle.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/guard-nix-path-flake.sh\""
           }
         ]
       }
