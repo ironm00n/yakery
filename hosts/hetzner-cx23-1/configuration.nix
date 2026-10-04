@@ -23,6 +23,7 @@
         "/home/desktop"
         "/home/archive-sandisk"
         "/home/archive-arch"
+        "/home/archive-windows"
       ];
     };
   };
