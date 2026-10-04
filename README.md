@@ -27,3 +27,13 @@ sudo "$out/bin/switch-to-configuration" switch
 
 > [!NOTE]
 > The above script doesn't update the bootloader, run `nixos-rebuild` afterwards.
+
+## History
+
+I don't hold commit history as sacred, but [forgejo](https://code.ironmoon.dev/ironmoon/yakery)
+keeps all old `master` commits under `refs/backup/`, so it's always safe to reference them by
+commit hash. `dev` is force-pushed regularly.
+
+```sh
+git fetch origin 'refs/backup/*:refs/backup/*'
+```
