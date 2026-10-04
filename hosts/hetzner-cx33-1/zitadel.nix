@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  pkgs,
   inputs,
   my-lib,
   ...
@@ -78,6 +79,15 @@ in
       "/var/lib/zitadel-db:/var/lib/postgresql/data"
     ];
   };
+
+  # the backup job's ProtectSystem=strict leaves podman nothing to write, so dump through the published port
+  bundles.backup.services.zitadel.dumpCommand = pkgs.writeShellScript "zitadel-dump" ''
+    env=${get-zitadel-secret "postgres_env"}
+    value() { ${pkgs.gnused}/bin/sed -n "s/^$1=//p" "$env"; }
+    user=$(value POSTGRES_USER)
+    PGPASSWORD=$(value POSTGRES_PASSWORD) exec ${pkgs.postgresql_17}/bin/pg_dump \
+      --format=custom --host=127.0.0.1 --username="''${user:-postgres}" zitadel
+  '';
 
   # Ensure the mounted directory for the database exists
   system.activationScripts.makeZitadelDir = lib.stringAfter [ "var" ] ''
