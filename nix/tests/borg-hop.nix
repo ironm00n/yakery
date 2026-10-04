@@ -33,6 +33,7 @@ pkgs.testers.runNixOSTest {
 
   defaults = {
     virtualisation.graphics = false;
+    _module.args.my-lib = import ../../lib { inherit (pkgs) lib; };
     programs.ssh.knownHosts.box.publicKey = boxHostKey.public;
   };
 

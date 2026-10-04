@@ -1,4 +1,4 @@
-{ config, ... }:
+{ config, my-lib, ... }:
 {
   imports = [
     ../common/hetzner-cloud/qemu-guest.nix
@@ -18,12 +18,7 @@
   bundles.borg-hop = {
     enable = true;
     interfaces = [ config.services.netbird.clients.netbird.interface ];
-    target = {
-      host = "u668784.your-storagebox.de";
-      user = "u668784";
-      port = 23;
-      hostPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs";
-      remotePath = "borg-1.4";
+    target = my-lib.borg.storagebox // {
       repositories = [
         "/home/desktop"
         "/home/archive-sandisk"

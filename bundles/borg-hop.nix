@@ -3,6 +3,7 @@
   lib,
   pkgs,
   utils,
+  my-lib,
   ...
 }:
 let
@@ -46,34 +47,7 @@ in
       description = "Interfaces the port is opened on. The relay authenticates nothing itself; keep this to trusted overlays.";
     };
 
-    target = {
-      host = mkOption {
-        type = types.str;
-        description = "SSH host running `borg serve`.";
-      };
-
-      user = mkOption {
-        type = types.str;
-        description = "SSH user on the target.";
-      };
-
-      port = mkOption {
-        type = types.port;
-        default = 22;
-        description = "SSH port on the target.";
-      };
-
-      hostPublicKey = mkOption {
-        type = types.str;
-        description = "Pinned SSH host key of the target.";
-      };
-
-      remotePath = mkOption {
-        type = types.str;
-        default = "borg";
-        description = "borg executable on the target.";
-      };
-
+    target = my-lib.borg.targetOptions // {
       repositories = mkOption {
         type = types.listOf types.str;
         description = "Absolute repository paths on the target the relay may open.";
@@ -90,14 +64,7 @@ in
     users.groups.borg-hop = { };
 
     programs.ssh.knownHosts.borg-hop-target = {
-      hostNames = [
-        (
-          if cfg.target.port == 22 then
-            cfg.target.host
-          else
-            "[${cfg.target.host}]:${toString cfg.target.port}"
-        )
-      ];
+      hostNames = [ (my-lib.borg.knownHostName cfg.target) ];
       publicKey = cfg.target.hostPublicKey;
     };
 
