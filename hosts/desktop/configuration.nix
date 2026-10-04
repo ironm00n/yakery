@@ -6,6 +6,9 @@
 {
   imports = [
     ./hardware-configuration.nix
+    ./disks.nix
+    ./boot.nix
+    ./restore.nix
     ../common/interactive
     ./networking.nix
   ];
@@ -23,41 +26,6 @@
   };
 
   services.fwupd.enable = true;
-
-  # Bootloader.
-  boot.loader = {
-    efi = {
-      canTouchEfiVariables = true;
-      efiSysMountPoint = "/boot/efi";
-    };
-    grub = {
-      gfxmodeEfi = "1280x720"; # really slow otherwise
-      gfxpayloadEfi = "keep";
-      efiSupport = true;
-      device = "nodev";
-      default = "saved";
-      splashImage = null;
-      extraEntries = ''
-        menuentry "Arch Linux" --class arch --class os {
-          savedefault
-          insmod part_gpt
-          insmod fat
-          search --no-floppy --fs-uuid --set=root f66e1d46-ddf1-4d66-976e-3a4efcf26830
-          linux /boot/vmlinuz-linux root=UUID=f66e1d46-ddf1-4d66-976e-3a4efcf26830 rw quiet nvidia_drm.modeset=1
-          initrd /boot/initramfs-linux.img
-        }
-
-        menuentry "Windows" --class windows --class os {
-          savedefault
-          insmod part_gpt
-          insmod fat
-          search --no-floppy --fs-uuid --set=root 3090-B52F
-          chainloader /EFI/Microsoft/Boot/bootmgfw.efi
-        }
-      '';
-      configurationLimit = 2;
-    };
-  };
 
   services.minecraft-server = {
     enable = false;
