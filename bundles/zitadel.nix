@@ -1,0 +1,122 @@
+{
+  config,
+  lib,
+  pkgs,
+  inputs,
+  my-lib,
+  ...
+}:
+let
+  cfg = config.bundles.zitadel;
+  domain = "ironmoon.dev";
+  ips = inputs.secrets.data.ips.${config.networking.hostName};
+  zitadelAddr = "${ips.ipv6.prefix}::1:1";
+  zitadel-secrets =
+    my-lib.sops.mkSecrets
+      {
+        inherit config;
+        sopsFile = inputs.secrets.lib.zitadel;
+        prefix = "zitadel";
+        separator = "-";
+        owner = "zitadel";
+        group = "zitadel";
+      }
+      [
+        "master_key"
+        "admin_steps"
+        "settings"
+        {
+          key = "postgres_env";
+          owner = null;
+          group = null;
+        }
+      ];
+  get-zitadel-secret = zitadel-secrets.get-path;
+in
+{
+  options.bundles.zitadel.enable = lib.mkEnableOption "ZITADEL at auth.${domain}";
+
+  config = lib.mkIf cfg.enable {
+    sops.secrets = zitadel-secrets.secrets;
+
+    users.users.zitadel = {
+      isSystemUser = true;
+      group = "zitadel";
+    };
+    users.groups.zitadel = { };
+
+    # setup inspired by https://lukadeka.com/blog/setting-up-netbird-with-zitadel-on-nixos/
+    services.zitadel = {
+      enable = true;
+      openFirewall = false;
+
+      user = "zitadel";
+      group = "zitadel";
+
+      masterKeyFile = get-zitadel-secret "master_key";
+      extraStepsPaths = [ (get-zitadel-secret "admin_steps") ];
+      extraSettingsPaths = [ (get-zitadel-secret "settings") ];
+
+      tlsMode = "external";
+      settings = {
+        Port = 39995;
+        ExternalPort = 443;
+        ExternalDomain = "auth.${domain}";
+        Database = {
+          postgres = {
+            Host = "127.0.0.1";
+            Port = 5432;
+            Database = "zitadel";
+            MaxOpenConns = 15;
+            MaxIdleConns = 10;
+            MaxConnLifetime = "1h";
+            MaxConnIdleTime = "5m";
+          };
+        };
+      };
+    };
+    virtualisation.oci-containers.containers.zitadel-db = {
+      image = "postgres:17";
+      ports = [ "127.0.0.1:5432:5432" ];
+      environmentFiles = [ (get-zitadel-secret "postgres_env") ];
+      volumes = [
+        "/var/lib/zitadel-db:/var/lib/postgresql/data"
+      ];
+    };
+
+    # the backup job's ProtectSystem=strict leaves podman nothing to write, so dump through the published port
+    bundles.backup.services.zitadel.dumpCommand = pkgs.writeShellScript "zitadel-dump" ''
+      env=${get-zitadel-secret "postgres_env"}
+      value() { ${pkgs.gnused}/bin/sed -n "s/^$1=//p" "$env"; }
+      user=$(value POSTGRES_USER)
+      PGPASSWORD=$(value POSTGRES_PASSWORD) exec ${pkgs.postgresql_17}/bin/pg_dump \
+        --format=custom --host=127.0.0.1 --username="''${user:-postgres}" zitadel
+    '';
+
+    # Ensure the mounted directory for the database exists
+    system.activationScripts.makeZitadelDir = lib.stringAfter [ "var" ] ''
+      mkdir -p /var/lib/zitadel-db
+    '';
+
+    networking.interfaces.enp1s0.ipv6.addresses = [
+      {
+        address = zitadelAddr;
+        prefixLength = ips.ipv6.prefixLength;
+      }
+    ];
+
+    bundles.reverse-proxy = {
+      enable = true;
+      openFirewall = true;
+      acme-email = "me@ironmoon.dev";
+      hosts."auth.${domain}" = {
+        port = 39995;
+        websockets = true;
+        listenAddresses = [
+          ips.ipv4.address
+          zitadelAddr
+        ];
+      };
+    };
+  };
+}

@@ -14,8 +14,9 @@
     ./hardware-configuration.nix
     ../common/server
     ../common/hetzner-cloud
-    ./zitadel.nix
   ];
+
+  bundles.zitadel.enable = true;
 
   boot.loader.grub = {
     enable = true;

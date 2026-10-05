@@ -7,5 +7,7 @@
     ../common/server
   ];
 
+  bundles.zitadel.enable = true;
+
   system.stateVersion = "26.11";
 }
