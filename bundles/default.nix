@@ -22,6 +22,7 @@
     ./keychron.nix
     ./borg-hop.nix
     ./backup.nix
+    ./zitadel.nix
 
     ./displaylink
   ];
