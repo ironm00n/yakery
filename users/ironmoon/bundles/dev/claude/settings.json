@@ -12,9 +12,9 @@
     "CLAUDE_CODE_NO_MODEL_FALLBACK": "1"
   },
   "attribution": {
-    "sessionUrl": false,
     "commit": "{Assisted,Generated}-by: <model-id>[:effort] [harness[:version]]",
-    "pr": ""
+    "pr": "",
+    "sessionUrl": false
   },
   "permissions": {
     "allow": [
@@ -48,29 +48,6 @@
     ],
     "defaultMode": "default"
   },
-  "autoMode": {
-    "allow": [
-      "$defaults"
-    ],
-    "soft_deny": [
-      "$defaults",
-      "outward facing prose under my identity which has not been approved by declaudish agent",
-      "including an PII (ex email) in user agents etc",
-      "circumventing /goal timelines (especially using sleep commands)"
-    ],
-    "hard_deny": [
-      "$defaults",
-      "nix privilege escalation--current user is trusted",
-      "docker privilege escalation--user is member of wheel"
-    ],
-    "environment": [
-      "$defaults"
-    ],
-    "classifyAllShell": false
-  },
-  "worktree": {
-    "bgIsolation": "none"
-  },
   "hooks": {
     "PreToolUse": [
       {
@@ -94,6 +71,9 @@
         ]
       }
     ]
+  },
+  "worktree": {
+    "bgIsolation": "none"
   },
   "workflowSizeGuideline": "unrestricted",
   "enabledPlugins": {
@@ -120,6 +100,7 @@
       }
     }
   },
+  "feedbackDrafts": "off",
   "spinnerTipsEnabled": false,
   "spinnerVerbs": {
     "mode": "replace",
@@ -132,6 +113,9 @@
   "modelSettings": {
     "claude-opus-5-5": {
       "effortLevel": "xhigh"
+    },
+    "claude-mythos-5-1": {
+      "effortLevel": "low"
     }
   },
   "tui": "fullscreen",
@@ -139,5 +123,24 @@
   "skipWorkflowUsageWarning": true,
   "switchModelsOnFlag": false,
   "agentPushNotifEnabled": true,
-  "feedbackDrafts": "off"
+  "autoMode": {
+    "allow": [
+      "$defaults"
+    ],
+    "soft_deny": [
+      "$defaults",
+      "outward facing prose under my identity which has not been approved by declaudish agent",
+      "including an PII (ex email) in user agents etc",
+      "circumventing /goal timelines (especially using sleep commands)"
+    ],
+    "hard_deny": [
+      "$defaults",
+      "nix privilege escalation--current user is trusted",
+      "docker privilege escalation--user is member of wheel"
+    ],
+    "environment": [
+      "$defaults"
+    ],
+    "classifyAllShell": false
+  }
 }
