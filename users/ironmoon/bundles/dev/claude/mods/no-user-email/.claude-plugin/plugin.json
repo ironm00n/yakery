@@ -1,0 +1,5 @@
+{
+  "name": "no-user-email",
+  "version": "0.1.0",
+  "description": "Keeps the account's email address out of the context, so neither the first context reminder nor a re-read after an account swap carries it"
+}
