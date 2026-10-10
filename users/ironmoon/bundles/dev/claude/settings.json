@@ -103,9 +103,6 @@
     "coq-lsp@local-coq-lsp": true,
     "typst-lsp@local-typst-lsp": true
   },
-  "appendPlugins": [
-    "email-probe@inline"
-  ],
   "extraKnownMarketplaces": {
     "local-coq-lsp": {
       "source": {

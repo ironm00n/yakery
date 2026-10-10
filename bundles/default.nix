@@ -23,6 +23,7 @@
     ./borg-hop.nix
     ./backup.nix
     ./zitadel.nix
+    ./claude-code.nix
 
     ./displaylink
   ];
