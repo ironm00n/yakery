@@ -284,6 +284,7 @@
         ok-color = import ./nix/tests/ok-color.nix { pkgs = pkgs-map.${system}; };
         borg-hop = import ./nix/tests/borg-hop.nix { pkgs = pkgs-map.${system}; };
         backup = import ./nix/tests/backup.nix { pkgs = pkgs-map.${system}; };
+        zitadel = import ./nix/tests/zitadel.nix { pkgs = pkgs-map.${system}; };
         desktop-boot = import ./nix/tests/desktop-boot.nix {
           pkgs = pkgs-map.${system};
           inherit inputs my-lib;
