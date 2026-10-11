@@ -1,9 +1,9 @@
-{ pkgs, ... }:
+{ pkgs, host, ... }:
 {
   enable = true;
   signing = {
     signByDefault = true;
-    key = null;
+    key = host.git-signing-key;
     format = "openpgp";
   };
   settings =

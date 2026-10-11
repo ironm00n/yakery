@@ -90,5 +90,10 @@ in
       type = types.nullOr types.path;
       default = null;
     };
+
+    git-signing-key = mkOption {
+      type = types.nullOr (types.strMatching "[0-9A-F]{40}");
+      default = null;
+    };
   };
 }

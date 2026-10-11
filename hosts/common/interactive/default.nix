@@ -15,6 +15,7 @@ in
     ./specializations
     ../../../users/home-manager.nix
     ../../../users/ironmoon/user.nix
+    ../../../users/ironmoon/signing.nix
   ];
 
   bundles.fonts.enable = mkDefault true;

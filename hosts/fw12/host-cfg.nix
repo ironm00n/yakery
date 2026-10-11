@@ -6,4 +6,5 @@
   additional-user-pkgs = import ./additional-user-pkgs.nix { inherit pkgs; };
   lightweight = true;
   cpu-cores = 8;
+  git-signing-key = "4EEAF95C719141D7E40BF84C017C3CE2B1EE3B29";
 }

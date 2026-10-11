@@ -68,6 +68,7 @@ in
     konsole = importWith ./programs/konsole.nix;
     okular = importWith ./programs/okular.nix;
     git = importWith ./programs/git.nix;
+    gpg = importWith ./programs/gpg.nix;
     firefox = importWith ./programs/firefox.nix;
     direnv = importWith ./programs/direnv.nix;
 
