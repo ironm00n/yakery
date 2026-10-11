@@ -21,6 +21,8 @@ const answer =
 const STOCK = { version: '2.1.287' }
 const VIEWPORT = { columns: 80, rows: 24, isFullscreen: false }
 
+const POOLED = { switch: 'on', through: 'pool', seen: true } as const
+
 function stubSession(on: On, version: { version: string; patches?: readonly string[] } = STOCK) {
   on(
     'session.usage',
@@ -69,13 +71,13 @@ const view = (agentId?: string) =>
     },
   }) as const
 
-const hintRow = (hint: string, viewport?: typeof VIEWPORT) =>
+const hintRow = (hint: string, viewport?: typeof VIEWPORT, pills?: readonly string[]) =>
   ({
     plugin: 'status-row',
     surface: 'terminal',
     component: 'PromptHint',
     ...(viewport && { viewport }),
-    props: { isDraft: false, isWorking: true, hint },
+    props: { isDraft: false, isWorking: true, hint, ...(pills && { pills }) },
   }) as const
 
 const text = (runs: { text: string }[]) => runs.map((r) => r.text).join('')
@@ -139,6 +141,21 @@ test('the shortcuts, interrupt, copy, agents and manage hints keep only their ke
   expect(stripHint('esc to interrupt · ← for agents')).toBe('esc · ←')
   expect(stripHint('1 shell · esc to interrupt · ← for agents · ↓ to manage')).toBe('1 shell · esc · ← · ↓')
   expect(stripHint('← to go back')).toBe('← to go back')
+})
+
+test('the pills a patched engine draws itself drop out of the hint whole, keys and all', () => {
+  expect(stripHint('1 shell · esc to interrupt · ↓ to manage', ['1 shell', '↓ to manage'])).toBe('esc')
+  expect(stripHint('1 shell · enter to view tasks', ['1 shell', 'enter to view tasks'])).toBe('')
+  expect(stripHint('1 shell · ↓ to manage', [])).toBe('1 shell · ↓')
+  expect(text(status({ ...SNAPSHOT, hint: '? for shortcuts · 2 shells · ↓ to manage', pills: ['2 shells', '↓ to manage'] }))).toMatch(/v2\.1\.287 · \?$/)
+})
+
+test("a patched engine's pills stay out of the drawn row", async ($, on) => {
+  stubSession(on)
+  const row = await $.ui.mount(hintRow('esc to interrupt · 1 shell · ↓ to manage', undefined, ['1 shell', '↓ to manage']))
+  expect(await row.find({ type: 'Text', text: 'esc' })).toBeDefined()
+  expect(await row.find({ type: 'Text', text: /1 shell|↓/ })).toBeUndefined()
+  await row.unmount()
 })
 
 test('heat thresholds, si units and countdown rounding', () => {
@@ -214,5 +231,33 @@ test("a subagent on the session's model borrows the session's window", async ($,
   const row = await $.ui.mount(hintRow(''))
   expect(await row.find({ type: 'Text', text: '/1m (' })).toBeDefined()
   expect(await row.find({ type: 'Text', text: '3%' })).toBeDefined()
+  await row.unmount()
+})
+
+test('a session on the pool names it before the windows, which are then the pool’s', () => {
+  const runs = status({ ...SNAPSHOT, route: POOLED })
+  expect(text(runs)).toContain(' · \u{f051f} 42m · pool · 5h 86% ')
+  expect(runs.find((r) => r.text === 'pool')).toMatchObject({ color: 'ansi256(6)' })
+  for (const route of [undefined, { ...POOLED, through: null }, { ...POOLED, seen: false }, { unavailable: 'no tap' }]) {
+    expect(text(status({ ...SNAPSHOT, route }))).not.toContain('pool')
+  }
+})
+
+const POOL_ON = {
+  name: 'pool',
+  register(on: On) {
+    on('session.start', async ($, e, next) => {
+      await $.state.set({ plugin: 'pool', key: 'route' }, { switch: 'on', through: 'pool', seen: true })
+      return next(e)
+    })
+  },
+}
+
+test('the drawn row names the route the pool mod keeps', { plugins: [POOL_ON] }, async ($, on) => {
+  stubSession(on)
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: `${HOME}/proj`, surface: 'terminal', isInteractive: true })
+  const row = await $.ui.mount(hintRow(''))
+  expect(await row.find({ type: 'Text', text: 'pool' })).toBeDefined()
   await row.unmount()
 })

@@ -92,6 +92,9 @@ const windows = ({ rateLimits, now }) =>
     return [{ text: `${label} ${percent}%`, color: heat(percent) }, ...reset]
   })
 
+// right before the windows, which are the pool's while it takes the session's turns
+const route = ({ route }) => (route?.seen && route.through ? [{ text: route.through, color: SGR.cyan }] : [])
+
 const version = ({ version }) => [{ text: `v${version}` }]
 
 const KEY_ONLY_ACTIONS = ['for shortcuts', 'to interrupt', 'to copy', 'for agents', 'to manage']
@@ -101,15 +104,22 @@ const HINT_REWRITES = [
   [new RegExp(`(\\S+) (?:${KEY_ONLY_ACTIONS.join('|')})`, 'g'), '$1'],
 ]
 
-export const stripHint = (hint) =>
-  HINT_REWRITES.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), hint)
+// a patched engine draws its pills itself, live, after the row, and names them in `pills`
+const withoutPills = (hint, pills) =>
+  hint
+    .split(' · ')
+    .filter((part) => !pills.includes(part.trim()))
+    .join(' · ')
+
+export const stripHint = (hint, pills = []) =>
+  HINT_REWRITES.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), withoutPills(hint, pills))
     .split(' · ')
     .map((part) => part.trim())
     .filter(Boolean)
     .join(' · ')
 
-const hint = ({ hint }) => {
-  const shown = stripHint(hint)
+const hint = ({ hint, pills }) => {
+  const shown = stripHint(hint, pills)
   return shown ? [{ text: shown }] : []
 }
 
@@ -120,7 +130,7 @@ const dimUncolored = (run) => (run.color === undefined ? { ...run, dimColor: tru
  * view.
  */
 export const status = (snapshot) =>
-  [dirs(snapshot), model(snapshot), context(snapshot), cache(snapshot), ...windows(snapshot), version(snapshot), hint(snapshot)]
+  [dirs(snapshot), model(snapshot), context(snapshot), cache(snapshot), route(snapshot), ...windows(snapshot), version(snapshot), hint(snapshot)]
     .filter((runs) => runs.length > 0)
     .flatMap((runs, i) => (i === 0 ? runs : [SEPARATOR, ...runs]))
     .map(dimUncolored)

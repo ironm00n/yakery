@@ -1,0 +1,6 @@
+{
+  "name": "pool",
+  "version": "0.1.0",
+  "description": "Switches this session onto the tap's session-gated rules (the seat pool) and back with /pool, and tells other mods where its turns go",
+  "types": "./types/index.d.ts"
+}
