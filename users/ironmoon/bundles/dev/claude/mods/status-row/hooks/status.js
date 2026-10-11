@@ -101,15 +101,22 @@ const HINT_REWRITES = [
   [new RegExp(`(\\S+) (?:${KEY_ONLY_ACTIONS.join('|')})`, 'g'), '$1'],
 ]
 
-export const stripHint = (hint) =>
-  HINT_REWRITES.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), hint)
+// a patched engine draws its pills itself, live, after the row, and names them in `pills`
+const withoutPills = (hint, pills) =>
+  hint
+    .split(' · ')
+    .filter((part) => !pills.includes(part.trim()))
+    .join(' · ')
+
+export const stripHint = (hint, pills = []) =>
+  HINT_REWRITES.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), withoutPills(hint, pills))
     .split(' · ')
     .map((part) => part.trim())
     .filter(Boolean)
     .join(' · ')
 
-const hint = ({ hint }) => {
-  const shown = stripHint(hint)
+const hint = ({ hint, pills }) => {
+  const shown = stripHint(hint, pills)
   return shown ? [{ text: shown }] : []
 }
 

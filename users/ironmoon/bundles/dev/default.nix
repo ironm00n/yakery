@@ -138,6 +138,11 @@ in
 
       xdg.configFile."lazygit/config.yml".source = symlink ./lazygit.yml;
       xdg.configFile."jj/config.toml".source = symlink ./jj.toml;
+      xdg.configFile."jj/conf.d/signing.toml" = mkIf (config.host.git-signing-key != null) {
+        source = (pkgs.formats.toml { }).generate "jj-signing.toml" {
+          signing.key = config.host.git-signing-key;
+        };
+      };
       xdg.configFile."jjui/config.toml".source = symlink ./jjui.toml;
     })
     (mkIf cfg.other-llm {
