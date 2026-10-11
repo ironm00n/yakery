@@ -1,0 +1,13 @@
+diff --git a/src/services/auth/oauth.ts b/src/services/auth/oauth.ts
+index 959e3ec..dfb9fa3 100644
+--- a/src/services/auth/oauth.ts
++++ b/src/services/auth/oauth.ts
+@@ -160,7 +160,6 @@ export async function startAuthFlow(username: string, returnUrl?: string | null)
+     code_challenge_method: codeChallengeMethod,
+     state,
+     login_hint: username,
+-    prompt: 'login',
+   });
+ 
+   let scope: string;
+

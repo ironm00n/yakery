@@ -15,6 +15,7 @@
   ];
 
   bundles = {
+    agent-slack.enable = true;
     displaylink.enable = true;
     gaming.enable = true;
     virtualisation = {
@@ -27,6 +28,8 @@
   };
 
   services.fwupd.enable = true;
+
+  powerManagement.cpuFreqGovernor = "performance";
 
   services.minecraft-server = {
     enable = false;

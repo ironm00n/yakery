@@ -24,6 +24,10 @@
     ./backup.nix
     ./zitadel.nix
     ./claude-code.nix
+    ./agent-slack.nix
+    ./stalwart
+    ./bulwark.nix
+    ./scheduler.nix
 
     ./displaylink
   ];

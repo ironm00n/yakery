@@ -188,7 +188,7 @@
         pkgs-master = pkgs-map-master.${system};
       };
     };
-    mk-server = { id, system, disko ? false }: {
+    mk-server = { id, system, disko ? false, no-deploy ? false }: {
       ${id} = {
         inherit system;
         additionalModules = [
@@ -201,6 +201,7 @@
           hostname = id;
         };
         no-hm = true;
+        inherit no-deploy;
       };
     };
     servers =
@@ -214,7 +215,8 @@
       # // (mk-server { id = "oracle-e2-1-micro-4"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-1"; system = "aarch64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-2"; system = "aarch64-linux"; disko = true; })
-      // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; })
+      # the anthropic-tap flake deploys it, extended with the seat pool
+      // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; no-deploy = true; })
       // (mk-server { id = "pi5"; system = "aarch64-linux"; })
         ;
     machines = {
@@ -277,7 +279,7 @@
           inputs.deploy-rs.lib.${machine.system}.activate.nixos
             self.nixosConfigurations.${id};
       }
-    ) servers;
+    ) (lib.filterAttrs (_: machine: !machine.no-deploy) servers);
 
     checks = lib.mapAttrs (
       system: deployLib:
@@ -286,12 +288,26 @@
         oom = import ./nix/tests/oom.nix { pkgs = pkgs-map.${system}; };
         ksycoca = import ./nix/tests/ksycoca.nix { pkgs = pkgs-map.${system}; };
         ok-color = import ./nix/tests/ok-color.nix { pkgs = pkgs-map.${system}; };
+        stalwart-backup = import ./nix/tests/stalwart-backup.nix { pkgs = pkgs-map.${system}; };
         borg-hop = import ./nix/tests/borg-hop.nix { pkgs = pkgs-map.${system}; };
         backup = import ./nix/tests/backup.nix { pkgs = pkgs-map.${system}; };
+        zitadel = import ./nix/tests/zitadel.nix { pkgs = pkgs-map.${system}; };
+        agent-mail = import ./nix/tests/agent-mail.nix { pkgs = pkgs-map.${system}; };
+        initrd-network = import ./nix/tests/initrd-network.nix { pkgs = pkgs-map.${system}; };
+        bulwark = import ./nix/tests/bulwark.nix { pkgs = pkgs-map.${system}; };
+        scheduler-stalwart = import ./nix/tests/scheduler-stalwart.nix { pkgs = pkgs-map.${system}; };
+        scheduler-booking = import ./nix/tests/scheduler-booking.nix { pkgs = pkgs-map.${system}; };
+        scheduler-feeds = import ./nix/tests/scheduler-feeds.nix { pkgs = pkgs-map.${system}; };
         agentd = import ./nix/tests/agentd.nix { pkgs = pkgs-map.${system}; };
+        agent-slack = import ./nix/tests/agent-slack.nix {
+          pkgs = pkgs-map.${system};
+          inherit inputs;
+        };
         # every member's tests, the shared crates' included, which no package runs; agent-mail's load the system's roots
         crates = pkgs-map.${system}.callPackage ./crates/rust.nix {
           nativeCheckInputs = [ pkgs-map.${system}.cacert ];
+          # the scheduler's tests read time zones
+          env.TZDIR = "${pkgs-map.${system}.tzdata}/share/zoneinfo";
         };
         crates-manifest = pkgs-map.${system}.runCommand "crates-manifest" { } (
           let

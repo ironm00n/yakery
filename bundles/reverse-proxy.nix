@@ -16,6 +16,8 @@ let
   cfg = config.bundles.reverse-proxy;
 
   anyTls = lib.any (h: h.tls) (lib.attrValues cfg.hosts);
+  anyOverlay = lib.any (h: h.listenOnOverlay) (lib.attrValues cfg.hosts);
+  overlayAddresses = lib.attrValues (my-lib.netbird.peers.${config.networking.hostName} or { });
 
   bracketV6 = a: if lib.hasInfix ":" a && !lib.hasPrefix "[" a then "[${a}]" else a;
 
@@ -87,7 +89,7 @@ let
     websockets = mkOption {
       type = types.bool;
       default = false;
-      description = "Enable `proxyWebsockets` on the root location.";
+      description = "Enable `proxyWebsockets` on every proxied location.";
     };
     aliases = mkOption {
       type = types.listOf types.str;
@@ -99,6 +101,14 @@ let
       default = [ ];
       description = "Addresses to bind this vhost to (empty = nginx defaults; IPv6 auto-bracketed).";
     };
+    listenOnOverlay = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Also bind this host's NetBird overlay addresses (`my-lib.netbird.peers`), for peers sent here
+        by a NetBird DNS record. Requires `listenAddresses`.
+      '';
+    };
     extraLocationConfig = mkOption {
       type = types.lines;
       default = "";
@@ -108,6 +118,43 @@ let
       type = types.lines;
       default = "";
       description = "Extra config appended at the vhost level.";
+    };
+    forwardedFor = mkOption {
+      type = types.enum [
+        "append"
+        "overwrite"
+      ];
+      default = "append";
+      description = ''
+        `append` passes on the client's own `X-Forwarded-For` with its address added (nginx's
+        recommended headers). `overwrite` sends only the client's address and drops `Forwarded`,
+        for backends that believe the first entry.
+      '';
+    };
+    locations = mkOption {
+      type = types.attrsOf (
+        types.submodule {
+          options = {
+            netbirdOnly = mkOption {
+              type = types.bool;
+              default = false;
+              description = "Refuse clients outside `my-lib.netbird.overlayCidrs` with 403.";
+            };
+            extraConfig = mkOption {
+              type = types.lines;
+              default = "";
+              description = "Extra config appended to this location block.";
+            };
+            port = mkOption {
+              type = types.nullOr types.port;
+              default = null;
+              description = "Proxy this location to `127.0.0.1:<port>` instead of the vhost's backend.";
+            };
+          };
+        }
+      );
+      default = { };
+      description = "Locations besides `/`, keyed by nginx location, proxied to the vhost's backend unless they set `port`. Requires the vhost's `port`.";
     };
     hsts = mkOption {
       type = types.submodule {
@@ -164,6 +211,34 @@ let
           "http://${defaultBackend name opts}"
         else
           "http://${nginxVar name}$request_uri";
+      overwriteForwarded = opts.forwardedFor == "overwrite";
+      forwardedHeaders = ''
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Server $hostname;
+        proxy_set_header Forwarded "";
+      ''
+      + lib.optionalString (!opts.websockets) ''
+        proxy_set_header Connection "";
+      '';
+      netbirdOnly =
+        lib.concatMapStrings (cidr: "allow ${cidr};\n") my-lib.netbird.overlayCidrs + "deny all;";
+      proxied =
+        to: extraConfig:
+        let
+          locationConfig = lib.concatStringsSep "\n" (
+            lib.optional overwriteForwarded forwardedHeaders ++ lib.optional (extraConfig != "") extraConfig
+          );
+        in
+        {
+          proxyPass = to;
+        }
+        // optionalAttrs opts.websockets { proxyWebsockets = true; }
+        // optionalAttrs overwriteForwarded { recommendedProxySettings = false; }
+        // optionalAttrs (locationConfig != "") { extraConfig = locationConfig; };
     in
     optionalAttrs opts.tls {
       enableACME = true;
@@ -171,15 +246,24 @@ let
     }
     // optionalAttrs (opts.aliases != [ ]) { serverAliases = opts.aliases; }
     // optionalAttrs (opts.listenAddresses != [ ]) {
-      listenAddresses = map bracketV6 opts.listenAddresses;
+      listenAddresses = map bracketV6 (
+        opts.listenAddresses ++ lib.optionals opts.listenOnOverlay overlayAddresses
+      );
     }
     // optionalAttrs (vhostConfig != "") { extraConfig = vhostConfig; }
     // optionalAttrs (opts.port != null) {
-      locations."/" = {
-        proxyPass = backend;
+      locations = {
+        "/" = proxied backend opts.extraLocationConfig;
       }
-      // optionalAttrs opts.websockets { proxyWebsockets = true; }
-      // optionalAttrs (opts.extraLocationConfig != "") { extraConfig = opts.extraLocationConfig; };
+      // mapAttrs (
+        _: location:
+        proxied (if location.port == null then backend else "http://127.0.0.1:${toString location.port}") (
+          lib.concatStringsSep "\n" (
+            lib.optional location.netbirdOnly netbirdOnly
+            ++ lib.optional (location.extraConfig != "") location.extraConfig
+          )
+        )
+      ) opts.locations;
     };
 in
 {
@@ -234,7 +318,24 @@ in
     ++ lib.mapAttrsToList (host: opts: {
       assertion = !opts.anubis || opts.port != null;
       message = ''bundles.reverse-proxy.hosts."${host}": `anubis` requires `port` to be set.'';
+    }) cfg.hosts
+    ++ lib.mapAttrsToList (host: opts: {
+      assertion = opts.locations == { } || opts.port != null;
+      message = ''bundles.reverse-proxy.hosts."${host}": `locations` requires `port` to be set.'';
+    }) cfg.hosts
+    ++ lib.mapAttrsToList (host: opts: {
+      assertion = !opts.listenOnOverlay || (opts.listenAddresses != [ ] && overlayAddresses != [ ]);
+      message = ''
+        bundles.reverse-proxy.hosts."${host}": `listenOnOverlay` needs `listenAddresses` and an entry
+        for ${config.networking.hostName} in `my-lib.netbird.peers`.
+      '';
     }) cfg.hosts;
+
+    # the overlay addresses only exist once NetBird is up, which can be after nginx starts
+    boot.kernel.sysctl = lib.mkIf anyOverlay {
+      "net.ipv4.ip_nonlocal_bind" = 1;
+      "net.ipv6.ip_nonlocal_bind" = 1;
+    };
 
     services.nginx = {
       enable = true;
