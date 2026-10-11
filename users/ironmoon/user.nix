@@ -2,6 +2,7 @@
   lib,
   pkgs,
   pkgs-stable,
+  mv,
   config,
   ...
 }:
@@ -10,6 +11,16 @@ let
   utils = true;
   productivity = true;
   non-essential = !config.host.lightweight;
+
+  # Zotero 10's omni.ja patching only matches ESR 140, which nixpkgs dropped: NixOS/nixpkgs#568692
+  zotero-esr-140 =
+    lib.warnIfNot
+      (
+        lib.versionOlder pkgs.zotero.version "11"
+        && lib.functionArgs pkgs.zotero.override ? firefox-esr-153-unwrapped
+      )
+      "nixpkgs zotero no longer builds Zotero 10 against ESR 153; drop the multiverse pin in users/ironmoon/user.nix"
+      (mv.at "e94cb152ed51").zotero;
 
   netbird-client = config.services.netbird.clients.netbird;
   netbird-groups = lib.optional (
@@ -101,7 +112,7 @@ in
         libreoffice-qt
         obsidian
         xournalpp
-        zotero
+        zotero-esr-140
         zoom-scoped
         slack
         zulip
