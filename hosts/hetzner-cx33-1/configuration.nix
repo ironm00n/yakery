@@ -14,7 +14,6 @@
     ./hardware-configuration.nix
     ../common/server
     ../common/hetzner-cloud
-    ./zitadel.nix
   ];
 
   boot.loader.grub = {
