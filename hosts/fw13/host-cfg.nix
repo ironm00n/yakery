@@ -10,4 +10,5 @@
   home-manager-nixos = true;
   cpu-cores = 16;
   appboxes = true;
+  git-signing-key = "05E4B5CCAC4D2E405C14CC24047E6905B5BB8193";
 }
