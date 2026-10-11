@@ -7,7 +7,8 @@
   imports = [
     ./hardware-configuration.nix
     ../common/interactive
-  ];
+  ]
+  ++ (import ./experiments);
 
   bundles = {
     displaylink.enable = true;

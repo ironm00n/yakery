@@ -6,7 +6,8 @@
 }:
 # based on https://lukadeka.com/blog/setting-up-netbird-with-zitadel-on-nixos/
 let
-  domain = "ironmoon.dev";
+  inherit (my-lib.ironmoon) domain;
+  zitadel = "https://${my-lib.ironmoon.auth.host}";
   netbirdDomain = "vpn.${domain}";
   clientId = "360244641284554753";
 
@@ -55,7 +56,7 @@ in
       enableNginx = true;
       domain = netbirdDomain;
       settings = {
-        AUTH_AUTHORITY = "https://auth.${domain}";
+        AUTH_AUTHORITY = zitadel;
         AUTH_CLIENT_ID = clientId;
         AUTH_AUDIENCE = clientId;
       };
@@ -67,7 +68,7 @@ in
       domain = netbirdDomain;
       turnDomain = netbirdDomain;
       singleAccountModeDomain = netbirdDomain;
-      oidcConfigEndpoint = "https://auth.${domain}/.well-known/openid-configuration";
+      oidcConfigEndpoint = "${zitadel}/.well-known/openid-configuration";
 
       settings = {
         HttpConfig.AuthAudience = clientId;
@@ -85,11 +86,11 @@ in
             ClientID = "netbird";
             ClientSecret._secret = get-netbird-secret "idp_mgmt_client_secret";
             GrantType = "client_credentials";
-            TokenEndpoint = "https://auth.${domain}/oauth/v2/token";
+            TokenEndpoint = "${zitadel}/oauth/v2/token";
           };
 
           ExtraConfig = {
-            ManagementEndpoint = "https://auth.${domain}/management/v1";
+            ManagementEndpoint = "${zitadel}/management/v1";
           };
         };
         DeviceAuthorizationFlow = {

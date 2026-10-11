@@ -11,6 +11,7 @@
     ./restore.nix
     ../common/interactive
     ./networking.nix
+    ./agent-vm.nix
   ];
 
   bundles = {
@@ -26,6 +27,8 @@
   };
 
   services.fwupd.enable = true;
+
+  powerManagement.cpuFreqGovernor = "performance";
 
   services.minecraft-server = {
     enable = false;

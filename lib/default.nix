@@ -5,6 +5,7 @@
   netbird = import ./netbird.nix;
   ironmoon = import ./ironmoon.nix;
   borg = import ./borg.nix { inherit lib; };
+  stalwart = import ./stalwart.nix { inherit lib; };
 
   mkDisableOption =
     name:

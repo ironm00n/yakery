@@ -24,6 +24,8 @@
     ./backup.nix
     ./zitadel.nix
     ./claude-code.nix
+    ./stalwart
+    ./bulwark.nix
 
     ./displaylink
   ];

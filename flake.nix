@@ -57,6 +57,10 @@
       url = "github:serokell/deploy-rs";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    microvm = {
+      url = "github:microvm-nix/microvm.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     # NOTE: the following have their own instance of nixpkgs since their
     # dependencies are quite finicky
     binary-ninja = {
@@ -184,7 +188,7 @@
         pkgs-master = pkgs-map-master.${system};
       };
     };
-    mk-server = { id, system, disko ? false }: {
+    mk-server = { id, system, disko ? false, no-deploy ? false }: {
       ${id} = {
         inherit system;
         additionalModules = [
@@ -197,6 +201,7 @@
           hostname = id;
         };
         no-hm = true;
+        inherit no-deploy;
       };
     };
     servers =
@@ -210,7 +215,8 @@
       # // (mk-server { id = "oracle-e2-1-micro-4"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-1"; system = "aarch64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-2"; system = "aarch64-linux"; disko = true; })
-      // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; })
+      # the anthropic-tap flake deploys it, extended with the seat pool
+      // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; no-deploy = true; })
       // (mk-server { id = "pi5"; system = "aarch64-linux"; })
         ;
     machines = {
@@ -273,7 +279,7 @@
           inputs.deploy-rs.lib.${machine.system}.activate.nixos
             self.nixosConfigurations.${id};
       }
-    ) servers;
+    ) (lib.filterAttrs (_: machine: !machine.no-deploy) servers);
 
     checks = lib.mapAttrs (
       system: deployLib:
@@ -282,8 +288,12 @@
         oom = import ./nix/tests/oom.nix { pkgs = pkgs-map.${system}; };
         ksycoca = import ./nix/tests/ksycoca.nix { pkgs = pkgs-map.${system}; };
         ok-color = import ./nix/tests/ok-color.nix { pkgs = pkgs-map.${system}; };
+        stalwart-backup = import ./nix/tests/stalwart-backup.nix { pkgs = pkgs-map.${system}; };
         borg-hop = import ./nix/tests/borg-hop.nix { pkgs = pkgs-map.${system}; };
         backup = import ./nix/tests/backup.nix { pkgs = pkgs-map.${system}; };
+        zitadel = import ./nix/tests/zitadel.nix { pkgs = pkgs-map.${system}; };
+        agent-mail = import ./nix/tests/agent-mail.nix { pkgs = pkgs-map.${system}; };
+        initrd-network = import ./nix/tests/initrd-network.nix { pkgs = pkgs-map.${system}; };
         desktop-boot = import ./nix/tests/desktop-boot.nix {
           pkgs = pkgs-map.${system};
           inherit inputs my-lib;
