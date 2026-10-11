@@ -16,6 +16,7 @@ let
     concatStringsSep
     escapeShellArg
     filter
+    getExe
     hasInfix
     listToAttrs
     mapAttrs'
@@ -31,6 +32,22 @@ let
   cfg = config.bundles.appboxes;
 
   sw = "/run/current-system/sw/bin";
+
+  # a rootless container's rootfs can only be mounted under `podman unshare`; exits 2 when dpkg
+  # was interrupted, since that rootfs must not be committed
+  clearSetupMarker = pkgs.writeShellApplication {
+    name = "appbox-clear-setup-marker";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      root=$(${sw}/podman mount "$1")
+      trap '${sw}/podman umount "$1" >/dev/null' EXIT
+      if [ -n "$(ls -A "$root/var/lib/dpkg/updates" 2>/dev/null)" ]; then
+        exit 2
+      fi
+      rm -f "$root/.containersetupdone"
+    '';
+  };
+
   hostPath = [
     "/run/host${sw}"
     "/run/host/etc/static/profiles/per-user/${config.home.username}/bin"
@@ -191,11 +208,18 @@ let
           # keep the container's rootfs (apt state) and re-apply the current definition on top of it
           rebase() {
             note "definition changed; rebasing $box on its current package state"
-            local old img
+            local old img rc=0
             old=$(${sw}/podman inspect -f '{{.ImageName}}' "$box")
             img=localhost/$box:$(date +%s)
-            ${sw}/podman start "$box" >/dev/null
-            ${sw}/podman exec --user root "$box" rm -f /.containersetupdone
+            # a running box reruns distrobox-init's setup as soon as the marker is gone, and the
+            # commit would catch apt mid-install
+            ${sw}/podman stop "$box" >/dev/null
+            ${sw}/podman unshare ${getExe clearSetupMarker} "$box" || rc=$?
+            case $rc in
+              0) ;;
+              2) fail "dpkg was interrupted in $box; repair it with 'podman start $box && podman exec --user root $box dpkg --configure -a', then rerun appbox-${name}" ;;
+              *) fail "could not clear the setup marker in $box (exit $rc)" ;;
+            esac
             ${sw}/podman commit --quiet "$box" "$img" >/dev/null
             ${sw}/distrobox rm --force "$box" >/dev/null
             sed "s|^image=.*|image=$img|" ${manifest} > "$lockdir/$box.ini"
