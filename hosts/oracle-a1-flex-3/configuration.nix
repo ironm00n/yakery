@@ -14,7 +14,6 @@
     ./hardware-configuration.nix
     ./disks.nix
     ../common/server
-    ./jellyfin.nix
   ];
 
   boot.loader = {
