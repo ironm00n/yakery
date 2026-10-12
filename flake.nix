@@ -282,6 +282,7 @@
         oom = import ./nix/tests/oom.nix { pkgs = pkgs-map.${system}; };
         ksycoca = import ./nix/tests/ksycoca.nix { pkgs = pkgs-map.${system}; };
         ok-color = import ./nix/tests/ok-color.nix { pkgs = pkgs-map.${system}; };
+        stalwart-backup = import ./nix/tests/stalwart-backup.nix { pkgs = pkgs-map.${system}; };
         borg-hop = import ./nix/tests/borg-hop.nix { pkgs = pkgs-map.${system}; };
         backup = import ./nix/tests/backup.nix { pkgs = pkgs-map.${system}; };
         desktop-boot = import ./nix/tests/desktop-boot.nix {

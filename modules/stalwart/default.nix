@@ -67,6 +67,8 @@ let
     ];
   in
 {
+  imports = [ ./backup.nix ];
+
   options.services.stalwart = {
     enable = lib.mkEnableOption "the all-in-one collaboration and mail server, Stalwart";
     package = lib.mkPackageOption pkgs "stalwart" { };
