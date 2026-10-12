@@ -70,6 +70,8 @@ let
     ];
   in
 {
+  imports = [ ./backup.nix ];
+
   options.services.stalwart = {
     enable = lib.mkEnableOption "the all-in-one collaboration and mail server, Stalwart";
     package = lib.mkPackageOption pkgs "stalwart" { };
@@ -174,6 +176,17 @@ let
           :::
         '';
         default = [ ];
+      };
+      afterApply = lib.mkOption {
+        type = lib.types.lines;
+        description = ''
+          Commands run after the plan, while Stalwart is still in recovery
+          mode, with `STALWART_URL`, `STALWART_USER` and `STALWART_PASSWORD`
+          set to reach it as the recovery admin. Their failure is logged and
+          ignored: it neither fails the plan step nor keeps Stalwart in
+          recovery mode.
+        '';
+        default = "";
       };
     };
 
@@ -306,6 +319,19 @@ let
                   ''}
                 fi
               '')
+            ]
+            # "-": the plan's own outcome decides the step, and Stalwart leaves recovery mode either way
+            ++ lib.optional (cfg.plan.afterApply != "") (
+              "-"
+              + pkgs.writeShellScript "stalwart-apply-plan-after" ''
+                if ${needsRecoveryMode}; then
+                  export STALWART_USER='${cfg.recoveryMode.user}'
+                  export STALWART_PASSWORD=$(cat $CREDENTIALS_DIRECTORY/recovery_password)
+                  ${cfg.plan.afterApply}
+                fi
+              ''
+            )
+            ++ [
               (
                 "+" # Launch last step with elevated privileges. See systemd.service(5) for more details.
                 + pkgs.writeShellScript "stalwart-apply-plan-end" ''

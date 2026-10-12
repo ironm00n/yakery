@@ -123,6 +123,13 @@ in
       '';
       webui.oauthClientId = webuiClientId;
 
+      backup = {
+        enable = true;
+        package = pkgs.callPackage ../../packages/vandelay { };
+        account = "backup@${domain}";
+        url = "http://127.0.0.1:${toString httpPort}";
+      };
+
       plan = {
         enableDefaultPlan = true;
         sequence = [
@@ -235,6 +242,18 @@ in
             roles."@type" = "Custom";
             roles.roleIds = [ ];
           })
+          (upsertOn1 "Account" "backup" [ "name" "domainId" ] {
+            "@type" = "User";
+            name = "backup";
+            domainId = ref "ironmoon";
+            permissions = {
+              "@type" = "Merge";
+              enabledPermissions = toSet config.services.stalwart.backup.permissions;
+            };
+            roles."@type" = "Custom";
+            roles.roleIds = [ ];
+            encryptionAtRest."@type" = "Disabled";
+          })
 
           (update "MtaOutboundStrategy" {
             route = if cfg.sending.enable then localThenMx else localOnly;
@@ -295,6 +314,11 @@ in
           ))
         ];
       };
+    };
+
+    bundles.backup.services.stalwart = {
+      inherit (config.services.stalwart.backup) dumpCommand;
+      readWritePaths = [ config.services.stalwart.backup.stateDir ];
     };
 
     networking.interfaces.enp1s0.ipv6.addresses = [
