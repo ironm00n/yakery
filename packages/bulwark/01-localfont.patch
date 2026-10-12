@@ -23,7 +23,7 @@ index 445e20cb..c05cc89e 100644
  
 -const geistMono = Geist_Mono({
 +const geistMono = localFont({
-+  src: '../fonts/Geist.ttf',
++  src: '../fonts/GeistMono.ttf',
    variable: "--font-geist-mono",
 -  subsets: ["latin"],
  });
