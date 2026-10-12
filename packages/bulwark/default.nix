@@ -4,18 +4,19 @@
   fetchFromGitHub,
   google-fonts,
   nodejs,
+  stdenv,
   nix-update-script,
   nixosTests,
 }:
 buildNpmPackage (finalAttrs: {
   pname = "bulwark";
-  version = "1.7.7";
+  version = "1.13.0";
 
   src = fetchFromGitHub {
     owner = "bulwarkmail";
     repo = "webmail";
-    rev = "${finalAttrs.version}";
-    hash = "sha256-7mN4GY7DKhQSK5mjjEy9oHuVvy5WGTw3EBwu48N5Tg4=";
+    tag = finalAttrs.version;
+    hash = "sha256-oEpJj5w4nb3bp5WDmukn0Xn/OCZL3Clz1K2F09kJYWY=";
     leaveDotGit = true;
     postFetch = ''
       cd "$out"
@@ -23,7 +24,7 @@ buildNpmPackage (finalAttrs: {
       find "$out" -name .git -print0 | xargs -0 rm -rf
     '';
   };
-  npmDepsHash = "sha256-cPt5CqqYOGV2pKK7VUu+bJgcmzULMTjZQZFz0oA6g/o=";
+  npmDepsHash = "sha256-ufEJsieashae6hAvRDowEOG6yD178lCr+228KhZ41lk=";
 
   strictDeps = true;
 
@@ -32,13 +33,16 @@ buildNpmPackage (finalAttrs: {
   configurePhase = ''
     runHook preConfigure
 
-    mkdir -p 'app/fonts'
+    mkdir -p app/fonts
     cp "${
       google-fonts.override { fonts = [ "Geist" ]; }
-    }/share/fonts/truetype/Geist[wght].ttf" 'app/fonts/Geist.ttf'
+    }/share/fonts/truetype/Geist[wght].ttf" app/fonts/Geist.ttf
     cp "${
       google-fonts.override { fonts = [ "GeistMono" ]; }
-    }/share/fonts/truetype/GeistMono[wght].ttf" 'app/fonts/GeistMono.ttf'
+    }/share/fonts/truetype/GeistMono[wght].ttf" app/fonts/GeistMono.ttf
+    cp "${
+      google-fonts.override { fonts = [ "HankenGrotesk" ]; }
+    }/share/fonts/truetype/HankenGrotesk[wght].ttf" app/fonts/HankenGrotesk.ttf
 
     runHook postConfigure
   '';
@@ -67,6 +71,14 @@ buildNpmPackage (finalAttrs: {
     runHook postInstall
   '';
 
+  postInstall = ''
+    # sharp picks its native binary by libc (detect-libc), so the copies built
+    # for the other libc can never be loaded.
+    rm -rf $out/node_modules/@img/*-${if stdenv.hostPlatform.isMusl then "linux" else "linuxmusl"}-*
+  '';
+
+  __structuredAttrs = true;
+
   passthru = {
     updateScript = nix-update-script { };
     tests = {
@@ -83,4 +95,3 @@ buildNpmPackage (finalAttrs: {
     mainProgram = "bulwark";
   };
 })
-
