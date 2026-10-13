@@ -112,6 +112,10 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/session-time.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-host.sh\""
           }
         ]
       }
@@ -136,6 +140,10 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/session-time.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-host.sh\""
           }
         ]
       }
