@@ -18,7 +18,11 @@ in
   options.bundles.claude-code.enable = mkEnableOption "Claude Code's machine-wide managed settings, /etc/claude-code/managed-settings.json, which outrank every user, project and remote source";
 
   config = mkIf cfg.enable {
-    environment.etc."claude-code/managed-settings.json".source =
-      format.generate "managed-settings.json" managedSettings;
+    # a copy, not a link: Claude Code watches the directory a settings file resolves into, and once
+    # native watching falls back to polling, a link into /nix/store has it stat every store entry
+    environment.etc."claude-code/managed-settings.json" = {
+      source = format.generate "managed-settings.json" managedSettings;
+      mode = "0444";
+    };
   };
 }
