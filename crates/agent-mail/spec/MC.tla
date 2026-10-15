@@ -1,5 +1,5 @@
 ---- MODULE MC ----
-\* tlc -workers auto -config OneHost.cfg MC.tla (also TwoHosts.cfg; TwoHostsOnce.cfg and TwoHostsOneReceipt.cfg must fail)
+\* tlc -workers auto -config OneHost.cfg MC.tla (also TwoHosts.cfg and TwoHostsExclusive.cfg; TwoHostsOnce.cfg must fail)
 EXTENDS AgentMail, TLC
 
 CONSTANTS s1, s2, h1, h2, m1, m2, t1, t2

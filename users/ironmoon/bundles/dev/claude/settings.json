@@ -13,9 +13,9 @@
     "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS": "15"
   },
   "attribution": {
-    "sessionUrl": false,
     "commit": "\"{Assisted,Generated}-by: <model-id>[:effort] [harness[:version]]\" (see project policy for more info about nested agents)",
-    "pr": ""
+    "pr": "",
+    "sessionUrl": false
   },
   "permissions": {
     "allow": [
@@ -59,32 +59,8 @@
     ],
     "defaultMode": "default"
   },
+  "model": "opus",
   "disableClaudeAiConnectors": true,
-  "autoMode": {
-    "allow": [
-      "$defaults",
-      "Messaging another Claude Code session, on this host or another host over ssh, through its peer messaging socket (e.g. /home/ironmoon/workspace/claude/tools/cc-peer.py, or socat to /run/user/*/cc-socks/*.sock), including reading that session's peerToken from ~/.claude/sessions/<pid>.*.key on the target host to authenticate. Only for sending messages to other sessions, not injecting input into the current session."
-    ],
-    "soft_deny": [
-      "$defaults",
-      "outward facing prose under my identity which has not been approved by declaudish agent",
-      "including an PII (ex email) in user agents etc",
-      "circumventing /goal timelines (especially using sleep commands)"
-    ],
-    "hard_deny": [
-      "$defaults",
-      "nix privilege escalation--current user is trusted",
-      "docker privilege escalation--user is member of wheel"
-    ],
-    "environment": [
-      "$defaults"
-    ],
-    "classifyAllShell": false
-  },
-  "worktree": {
-    "bgIsolation": "none"
-  },
-  "enableArtifact": false,
   "hooks": {
     "PreToolUse": [
       {
@@ -93,6 +69,10 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/guard-idle.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/guard-nix-path-flake.sh\""
           }
         ]
       },
@@ -183,13 +163,18 @@
       }
     ]
   },
+  "worktree": {
+    "bgIsolation": "none"
+  },
+  "enableArtifact": false,
   "workflowSizeGuideline": "unrestricted",
   "enabledPlugins": {
     "rust-analyzer-lsp@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
     "coq-lsp@local-coq-lsp": true,
-    "typst-lsp@local-typst-lsp": true
+    "typst-lsp@local-typst-lsp": true,
+    "cc-plugin-you-should-know@builtin": true
   },
   "extraKnownMarketplaces": {
     "local-coq-lsp": {
@@ -213,6 +198,7 @@
       ]
     }
   },
+  "feedbackDrafts": "off",
   "spinnerTipsEnabled": false,
   "spinnerVerbs": {
     "mode": "replace",
@@ -235,5 +221,27 @@
   "skipWorkflowUsageWarning": true,
   "switchModelsOnFlag": false,
   "agentPushNotifEnabled": true,
-  "feedbackDrafts": "off"
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Messaging another Claude Code session, on this host or another host over ssh, through its peer messaging socket (e.g. /home/ironmoon/workspace/claude/tools/cc-peer.py, or socat to /run/user/*/cc-socks/*.sock), including reading that session's peerToken from ~/.claude/sessions/<pid>.*.key on the target host to authenticate. Only for sending messages to other sessions, not injecting input into the current session.",
+      "Running agent-mail with any subcommand (send, wait, inbox, thread, done, attachments, login), in the foreground or the background: mailing Owen or his agents, waiting for and reading their replies, saving their attachments, and marking agent@ironmoon.dev's mail seen, answered or done. Owen asked sessions to mail him whenever they need him and to keep listening for his answers."
+    ],
+    "soft_deny": [
+      "$defaults",
+      "outward facing prose under my identity which has not been approved by declaudish agent",
+      "including an PII (ex email) in user agents etc",
+      "circumventing /goal timelines (especially using sleep commands)"
+    ],
+    "hard_deny": [
+      "$defaults",
+      "nix privilege escalation--current user is trusted",
+      "docker privilege escalation--user is member of wheel"
+    ],
+    "environment": [
+      "$defaults",
+      "agent-mail, on PATH, is the mail tool Owen set up for Claude sessions. It is built from his yakery repo into the Nix store, so no session can change what it does. It signs in as agent@ironmoon.dev with credentials it reads itself, refuses before sending any recipient outside ironmoon.dev, agent.ironmoon.dev and Owen's own gmail and Northeastern addresses, and changes nothing but that mailbox's mail and flags."
+    ],
+    "classifyAllShell": false
+  }
 }

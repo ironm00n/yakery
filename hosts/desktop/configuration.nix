@@ -28,6 +28,8 @@
 
   services.fwupd.enable = true;
 
+  powerManagement.cpuFreqGovernor = "performance";
+
   services.minecraft-server = {
     enable = false;
     eula = true;
