@@ -13,7 +13,7 @@
   },
   "attribution": {
     "sessionUrl": false,
-    "commit": "{Assisted,Generated}-by: <model-id>[:effort] [harness[:version]]",
+    "commit": "\"{Assisted,Generated}-by: <model-id>[:effort] [harness[:version]]\" (see project policy for more info about nested agents)",
     "pr": ""
   },
   "permissions": {
@@ -46,8 +46,17 @@
       "Bash(command -v:*)",
       "Bash(echo \"exit:$?\")"
     ],
+    "deny": [
+      "Skill(artifact-capabilities)",
+      "Artifact(*)",
+      "ShareOnboardingGuide(*)",
+      "mcp__claude_ai_*",
+      "RemoteTrigger",
+      "DesignSync"
+    ],
     "defaultMode": "default"
   },
+  "disableClaudeAiConnectors": true,
   "autoMode": {
     "allow": [
       "$defaults"
@@ -71,6 +80,7 @@
   "worktree": {
     "bgIsolation": "none"
   },
+  "enableArtifact": false,
   "hooks": {
     "PreToolUse": [
       {
