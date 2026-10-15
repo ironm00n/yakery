@@ -2,6 +2,7 @@
   lib,
   pkgs,
   pkgs-stable,
+  mv,
   config,
   ...
 }:
@@ -11,29 +12,27 @@ let
   productivity = true;
   non-essential = !config.host.lightweight;
 
+  # Zotero 10's omni.ja patching only matches ESR 140, which nixpkgs dropped: NixOS/nixpkgs#568692
+  zotero-esr-140 =
+    lib.warnIfNot
+      (
+        lib.versionOlder pkgs.zotero.version "11"
+        && lib.functionArgs pkgs.zotero.override ? firefox-esr-153-unwrapped
+      )
+      "nixpkgs zotero no longer builds Zotero 10 against ESR 153; drop the multiverse pin in users/ironmoon/user.nix"
+      (mv.at "e94cb152ed51").zotero;
+
   netbird-client = config.services.netbird.clients.netbird;
   netbird-groups = lib.optional (
     config.bundles.vpn.netbird.enable && netbird-client.hardened
   ) netbird-client.user.group;
 
-  # Run Zoom in an app-us.zoom.Zoom-* systemd scope (even when running from terminal) so the portal
-  # reports that app_id, which `force_linear_apps` matches.
-  zoom-scoped =
-    let
-      zoom = pkgs.zoom-us.override {
-        hyprlandXdgDesktopPortalSupport = config.host.hyprland;
-        plasma6XdgDesktopPortalSupport = config.host.kde;
-      };
-    in
-    pkgs.symlinkJoin {
-      name = "zoom-us-app-scoped";
-      paths = [
-        (pkgs.writeShellScriptBin "zoom" ''
-          exec ${pkgs.systemd}/bin/systemd-run --user --scope --unit="app-us.zoom.Zoom-$RANDOM" ${zoom}/bin/zoom "$@"
-        '')
-        zoom
-      ];
+  zoom-scoped = pkgs.callPackage ../../packages/zoom-scoped {
+    zoom-us = pkgs.zoom-us.override {
+      hyprlandXdgDesktopPortalSupport = config.host.hyprland;
+      plasma6XdgDesktopPortalSupport = config.host.kde;
     };
+  };
 in
 {
   # user account.
@@ -101,7 +100,7 @@ in
         libreoffice-qt
         obsidian
         xournalpp
-        zotero
+        zotero-esr-140
         zoom-scoped
         slack
         zulip
