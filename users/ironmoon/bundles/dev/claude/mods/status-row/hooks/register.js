@@ -3,6 +3,7 @@ import { budget, status } from './status.js'
 const COUNTDOWN_MS = 60_000
 
 const AGENT = { plugin: 'status-row', key: 'agent' }
+const ROUTE = { plugin: 'pool', key: 'route' }
 const member = (agentId) => agentId ?? 'main'
 
 let viewed
@@ -19,8 +20,8 @@ function tick($) {
 
 const contextTokens = (usage) => usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
 
-async function snapshot($, hint) {
-  const [usage, root, cwd, home, sessionModel, { version, patches }, now, { value: agent }] = await Promise.all([
+async function snapshot($, { hint, pills }) {
+  const [usage, root, cwd, home, sessionModel, { version, patches }, now, { value: agent }, { value: route }] = await Promise.all([
     $.session.usage(),
     $.session.root(),
     $.session.cwd(),
@@ -29,6 +30,7 @@ async function snapshot($, hint) {
     $.session.version(),
     $.clock.now(),
     $.state.get({ ...AGENT, id: member(viewed) }),
+    $.state.get(ROUTE),
   ])
   const view =
     viewed === undefined
@@ -38,7 +40,7 @@ async function snapshot($, hint) {
           effort: agent.effort,
           context: { tokens: agent.tokens, window: agent.model === sessionModel ? usage.context.window : undefined },
         }
-  return { home, root, cwd, ...view, promptCache: usage.prompt_cache, rateLimits: usage.rateLimits, version, patches, hint, now }
+  return { home, root, cwd, ...view, promptCache: usage.prompt_cache, route, rateLimits: usage.rateLimits, version, patches, hint, pills, now }
 }
 
 export function register(on) {
@@ -72,7 +74,7 @@ export function register(on) {
 
   on('ui.render', { component: 'PromptHint' }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const shot = await snapshot($, e.props.hint)
+    const shot = await snapshot($, e.props)
     const row = Text({ wrap: 'truncate', children: status(shot).map(({ text, ...style }) => Text({ ...style, children: [text] })) })
     const width = budget(shot.patches, e.viewport)
     return width === undefined ? row : Box({ width, children: [row] })
