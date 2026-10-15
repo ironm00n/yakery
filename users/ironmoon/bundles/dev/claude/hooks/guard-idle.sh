@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash) guard: denies commands whose only effect is to spend wall-clock time — long
-# sleeps, loops that poll `date`, `at`/systemd self-wakeups. A timed /goal is a floor on work, so
-# reaching the end of the window by waiting is circumvention rather than compliance. autoMode's
+# PreToolUse(Bash) guard, active only while a /goal runs: denies commands whose only effect is to
+# spend wall-clock time — long sleeps, loops that poll `date`, `at`/systemd self-wakeups. A timed
+# /goal is a floor on work, so reaching the end of the window by waiting is circumvention rather
+# than compliance; outside a goal, waiting on something is just waiting. The goal's state is the
+# last goal_status attachment in the session transcript: met=false while it runs. autoMode's
 # soft_deny says as much, but the classifier only runs in auto mode; this is deterministic and
 # mode-independent. Short sleeps pass — waiting a few seconds on a process that is coming up is
 # real work. Total sleep summed inside a loop is not accounted for (undecidable in general); the
@@ -14,7 +16,16 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 MAX_SLEEP_SECS=60
 
+goal_active() {
+  local transcript
+  transcript=$(jq -r '.transcript_path // ""' <<<"$payload")
+  [[ -r "$transcript" ]] || return 1
+  [[ "$(tac -- "$transcript" | grep -F '"type":"goal_status"' | head -n 5 |
+    jq -rs 'map(select(.type == "attachment" and .attachment.type == "goal_status"))[0].attachment.met')" == false ]]
+}
+
 deny() {
+  goal_active || exit 0
   local advice="A /goal window is satisfied by work, not by elapsed time: re-trace the last change,"
   advice+=" re-derive a claim from primary source, attack the weakest artifact, or report what is"
   advice+=" left and its expected value so it can be redirected."
