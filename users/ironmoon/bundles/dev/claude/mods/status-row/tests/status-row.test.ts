@@ -69,13 +69,13 @@ const view = (agentId?: string) =>
     },
   }) as const
 
-const hintRow = (hint: string, viewport?: typeof VIEWPORT) =>
+const hintRow = (hint: string, viewport?: typeof VIEWPORT, pills?: readonly string[]) =>
   ({
     plugin: 'status-row',
     surface: 'terminal',
     component: 'PromptHint',
     ...(viewport && { viewport }),
-    props: { isDraft: false, isWorking: true, hint },
+    props: { isDraft: false, isWorking: true, hint, ...(pills && { pills }) },
   }) as const
 
 const text = (runs: { text: string }[]) => runs.map((r) => r.text).join('')
@@ -139,6 +139,21 @@ test('the shortcuts, interrupt, copy, agents and manage hints keep only their ke
   expect(stripHint('esc to interrupt · ← for agents')).toBe('esc · ←')
   expect(stripHint('1 shell · esc to interrupt · ← for agents · ↓ to manage')).toBe('1 shell · esc · ← · ↓')
   expect(stripHint('← to go back')).toBe('← to go back')
+})
+
+test('the pills a patched engine draws itself drop out of the hint whole, keys and all', () => {
+  expect(stripHint('1 shell · esc to interrupt · ↓ to manage', ['1 shell', '↓ to manage'])).toBe('esc')
+  expect(stripHint('1 shell · enter to view tasks', ['1 shell', 'enter to view tasks'])).toBe('')
+  expect(stripHint('1 shell · ↓ to manage', [])).toBe('1 shell · ↓')
+  expect(text(status({ ...SNAPSHOT, hint: '? for shortcuts · 2 shells · ↓ to manage', pills: ['2 shells', '↓ to manage'] }))).toMatch(/v2\.1\.287 · \?$/)
+})
+
+test("a patched engine's pills stay out of the drawn row", async ($, on) => {
+  stubSession(on)
+  const row = await $.ui.mount(hintRow('esc to interrupt · 1 shell · ↓ to manage', undefined, ['1 shell', '↓ to manage']))
+  expect(await row.find({ type: 'Text', text: 'esc' })).toBeDefined()
+  expect(await row.find({ type: 'Text', text: /1 shell|↓/ })).toBeUndefined()
+  await row.unmount()
 })
 
 test('heat thresholds, si units and countdown rounding', () => {

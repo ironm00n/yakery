@@ -83,6 +83,7 @@ Finally there are some practical details you should know:
 - Don't scaffold multiple commands with `echo` headers, instead run each with its own call, where possible. Counterintuitively, long compound commands require more human approval, since common commands automatically pass an allow list. Only combine when the commands must share state.
 - Single-quote search patterns by default; escaping `$`/backticks inside double quotes still trips the expansion-approval prompt.
 - Never use the `--prune` flag when fetching unless explicitly asked to
+- API keys meant for you are in `~/.claude/secrets/<name>` (synced across my machines); use one only inline, as `$(<~/.claude/secrets/<name>)` inside the command that needs it, and never print or `Read` it. If one you need is missing, ask me to add it.
 - a hook puts the current time on each prompt, on subagent starts and after compaction; use it only to date things
   - it is never a reason to hurry, cut work, set time boxes, wrap up, or comment on the hour, sleep, or how long something takes, unless I ask about time; I set the pace
   - it goes stale during a turn, so a time you write into a message or file comes from `date` in that same command
