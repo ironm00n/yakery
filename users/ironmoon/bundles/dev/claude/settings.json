@@ -96,6 +96,15 @@
         ]
       },
       {
+        "matcher": "Bash|Read|Edit|MultiEdit|Write|NotebookEdit|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/guard-secrets.sh\""
+          }
+        ]
+      },
+      {
         "hooks": [
           {
             "type": "command",
