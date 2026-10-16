@@ -24,6 +24,7 @@
     ./backup.nix
     ./zitadel.nix
     ./stalwart
+    ./bulwark.nix
 
     ./displaylink
   ];
