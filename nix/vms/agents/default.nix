@@ -6,7 +6,8 @@
   ...
 }:
 let
-  agents = import ./agents.nix;
+  agents = import ./agents.nix { inherit lib; };
+  agentd = pkgs.callPackage ../../../packages/agentd/package.nix { };
   mac = "02:61:67:6e:74:01";
   mib = gib: gib * 1024;
   bytes = gib: mib gib * 1024 * 1024;
@@ -26,6 +27,10 @@ let
   overlay = volume "nix-rw" overlayDir 256 [ ];
   overlayDevice = "/dev/disk/by-label/${overlay.label}";
   buildDir = "${overlayDir}/build";
+  home = volume "home" "/home" 640 [
+    "-O"
+    "quota"
+  ];
 in
 {
   microvm = {
@@ -40,10 +45,7 @@ in
     writableStoreOverlay = overlayDir;
     volumes = [
       overlay
-      (volume "home" "/home" 512 [
-        "-O"
-        "quota"
-      ])
+      home
     ];
     interfaces = [
       {
@@ -119,6 +121,29 @@ in
         toString (mib agent.homeQuotaGiB * 1024)
       } 0 0 /home"
     ) agents;
+  };
+
+  environment.etc."agentd/agents.json".text = builtins.toJSON (
+    lib.mapAttrs (_: agent: agent.uid) agents
+  );
+  systemd.services.agentd = {
+    description = "Agent sessions and their API socket";
+    wantedBy = [ "multi-user.target" ];
+    path = [ config.systemd.package ];
+    serviceConfig = {
+      ExecStart = lib.escapeShellArgs [
+        (lib.getExe' agentd "agentd")
+        "--agents"
+        "/etc/agentd/agents.json"
+        "--claude"
+        (lib.getExe pkgs.claude-code)
+        "--quota-device"
+        "/dev/disk/by-label/${home.label}"
+      ];
+      RuntimeDirectory = "agentd";
+      RuntimeDirectoryMode = "0755";
+      OOMScoreAdjust = -1000;
+    };
   };
 
   services.openssh = {

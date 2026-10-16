@@ -10,10 +10,9 @@ in
 {
   imports = [ inputs.microvm.nixosModules.host ];
 
-  microvm.vms.agents = {
-    config = ../../nix/vms/agents;
-    autostart = false;
-  };
+  microvm.vms.agents.config = ../../nix/vms/agents;
+
+  environment.systemPackages = [ (pkgs.callPackage ../../packages/agentd/package.nix { }) ];
 
   systemd.services."microvm@agents" = {
     unitConfig.RequiresMountsFor = [ imageDir ];
