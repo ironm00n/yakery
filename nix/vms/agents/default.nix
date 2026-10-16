@@ -99,6 +99,14 @@ in
   };
   systemd.tmpfiles.settings."10-nix-build".${buildDir}.d.mode = "0755";
 
+  systemd.tmpfiles.settings."10-agents-shared"."/home/shared" = {
+    d = {
+      group = "agents";
+      mode = "2775";
+    };
+    "a+".argument = "group:agents:rwx,default:group:agents:rwx,default:mask::rwx";
+  };
+
   users.mutableUsers = false;
   users.groups.agents = { };
   users.users =
