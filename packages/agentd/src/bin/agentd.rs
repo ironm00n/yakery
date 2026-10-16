@@ -20,7 +20,7 @@ use serde_json::value::RawValue;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, copy_bidirectional};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio_vsock::{VsockAddr, VsockListener, VsockStream};
 
 /// How long a session stays open after a turn ends. A message injected while
@@ -45,6 +45,9 @@ struct Args {
     ca_port: u32,
     #[arg(long, default_value = "8G")]
     memory_max: String,
+    /// Sessions that may run at once; wakes past it wait for one to end.
+    #[arg(long, default_value_t = 4)]
+    sessions: usize,
 }
 
 struct Session {
@@ -75,6 +78,7 @@ struct State {
     args: Args,
     agents: HashMap<String, u32>,
     sessions: Mutex<HashMap<String, Session>>,
+    slots: Arc<Semaphore>,
 }
 
 impl State {
@@ -94,13 +98,19 @@ impl State {
             .agents
             .get(agent)
             .with_context(|| format!("no agent named {agent}"))?;
-        let mut sessions = self.sessions.lock().await;
-        if let Some(session) = sessions.get_mut(agent) {
+        if let Some(session) = self.sessions.lock().await.get_mut(agent) {
             session.send(message).await?;
             return Ok(Woken::Injected);
         }
         if !has_quota(&self.args.quota_device, uid)? {
             bail!("{agent} has no home quota");
+        }
+        let slot = self.slots.clone().acquire_owned().await?;
+        let mut sessions = self.sessions.lock().await;
+        // Another wake may have started this agent while this one waited.
+        if let Some(session) = sessions.get_mut(agent) {
+            session.send(message).await?;
+            return Ok(Woken::Injected);
         }
         self.refresh_ca().await.context("fetch the gateway's CA")?;
         let mut child = self.spawn(agent, uid)?;
@@ -112,7 +122,10 @@ impl State {
         sessions.insert(agent.to_owned(), session);
         let stdout = child.stdout.take().expect("piped");
         let (tx, rx) = mpsc::unbounded_channel();
-        tokio::spawn(self.clone().drive(agent.to_owned(), child, stdout, tx));
+        tokio::spawn(
+            self.clone()
+                .drive(agent.to_owned(), child, stdout, tx, slot),
+        );
         Ok(Woken::Started(rx))
     }
 
@@ -188,6 +201,7 @@ impl State {
         mut child: Child,
         stdout: ChildStdout,
         tx: mpsc::UnboundedSender<Reply>,
+        _slot: OwnedSemaphorePermit,
     ) {
         #[derive(Deserialize)]
         struct Kind {
@@ -327,6 +341,7 @@ async fn main() -> Result<()> {
     std::fs::set_permissions(&socket, Permissions::from_mode(0o666))?;
     let control = VsockListener::bind(VsockAddr::new(libc::VMADDR_CID_ANY, CONTROL_PORT))?;
     let state = Arc::new(State {
+        slots: Arc::new(Semaphore::new(args.sessions)),
         args,
         agents,
         sessions: Mutex::default(),

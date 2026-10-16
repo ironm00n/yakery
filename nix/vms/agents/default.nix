@@ -123,9 +123,6 @@ in
     ) agents;
   };
 
-  environment.etc."agentd/agents.json".text = builtins.toJSON (
-    lib.mapAttrs (_: agent: agent.uid) agents
-  );
   systemd.services.agentd = {
     description = "Agent sessions and their API socket";
     wantedBy = [ "multi-user.target" ];
@@ -134,7 +131,7 @@ in
       ExecStart = lib.escapeShellArgs [
         (lib.getExe' agentd "agentd")
         "--agents"
-        "/etc/agentd/agents.json"
+        (import ./agents-json.nix { inherit lib pkgs; })
         "--claude"
         (lib.getExe pkgs.claude-code)
         "--quota-device"
