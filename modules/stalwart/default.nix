@@ -44,6 +44,9 @@ let
             "/admin" = true;
             "/account" = true;
           };
+        }
+        // lib.optionalAttrs (cfg.webui.oauthClientId != null) {
+          inherit (cfg.webui) oauthClientId;
         };
       };
     }
@@ -72,6 +75,15 @@ let
   options.services.stalwart = {
     enable = lib.mkEnableOption "the all-in-one collaboration and mail server, Stalwart";
     package = lib.mkPackageOption pkgs "stalwart" { };
+
+    webui.oauthClientId = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        OAuth client id the bundled web UI signs in with. Stalwart writes it into the UI's
+        index.html; without it the UI asks the identity provider for client `stalwart-webui`.
+      '';
+    };
 
     dataDir = lib.mkOption {
       type = lib.types.path;
