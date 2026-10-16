@@ -11,6 +11,7 @@
     ./restore.nix
     ../common/interactive
     ./networking.nix
+    ./agent-vm.nix
   ];
 
   bundles = {

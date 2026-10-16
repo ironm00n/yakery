@@ -57,6 +57,10 @@
       url = "github:serokell/deploy-rs";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    microvm = {
+      url = "github:microvm-nix/microvm.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     # NOTE: the following have their own instance of nixpkgs since their
     # dependencies are quite finicky
     binary-ninja = {
