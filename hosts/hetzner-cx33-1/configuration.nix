@@ -16,8 +16,6 @@
     ../common/hetzner-cloud
   ];
 
-  bundles.zitadel.enable = true;
-
   boot.loader.grub = {
     enable = true;
     device = "/dev/sda";

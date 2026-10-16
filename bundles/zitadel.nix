@@ -9,6 +9,7 @@
 let
   cfg = config.bundles.zitadel;
   domain = "ironmoon.dev";
+  port = 39995;
   ips = inputs.secrets.data.ips.${config.networking.hostName};
   zitadelAddr = "${ips.ipv6.prefix}::1:1";
   zitadel-secrets =
@@ -18,40 +19,54 @@ let
         sopsFile = inputs.secrets.lib.zitadel;
         prefix = "zitadel";
         separator = "-";
-        owner = "zitadel";
-        group = "zitadel";
       }
       [
         "master_key"
         "admin_steps"
         "settings"
-        {
-          key = "postgres_env";
-          owner = null;
-          group = null;
-        }
       ];
   get-zitadel-secret = zitadel-secrets.get-path;
+
+  # one role over the socket with peer auth: Admin = User, so init's admin steps skip themselves
+  role = "zitadel";
+  database = "zitadel";
+  socketDir = "/run/postgresql";
+  postgres = config.services.postgresql.package;
 in
 {
   options.bundles.zitadel.enable = lib.mkEnableOption "ZITADEL at auth.${domain}";
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = config.systemd.services.zitadel.serviceConfig ? LoadCredential;
+        message = ''
+          bundles.zitadel keeps its secrets root-owned and needs services.zitadel from
+          modules/zitadel, which passes them in as credentials. Import it and add
+          "services/web-apps/zitadel.nix" to disabledModules.
+        '';
+      }
+    ];
+
     sops.secrets = zitadel-secrets.secrets;
 
-    users.users.zitadel = {
-      isSystemUser = true;
-      group = "zitadel";
+    services.postgresql = {
+      enable = true;
+      package = pkgs.postgresql_18;
+      ensureDatabases = [ database ];
+      ensureUsers = [
+        {
+          name = role;
+          ensureDBOwnership = true;
+        }
+      ];
     };
-    users.groups.zitadel = { };
 
-    # setup inspired by https://lukadeka.com/blog/setting-up-netbird-with-zitadel-on-nixos/
     services.zitadel = {
       enable = true;
+      package = pkgs.callPackage ../packages/zitadel { };
+      user = role;
       openFirewall = false;
-
-      user = "zitadel";
-      group = "zitadel";
 
       masterKeyFile = get-zitadel-secret "master_key";
       extraStepsPaths = [ (get-zitadel-secret "admin_steps") ];
@@ -59,43 +74,48 @@ in
 
       tlsMode = "external";
       settings = {
-        Port = 39995;
+        Port = port;
         ExternalPort = 443;
         ExternalDomain = "auth.${domain}";
-        Database = {
-          postgres = {
-            Host = "127.0.0.1";
-            Port = 5432;
-            Database = "zitadel";
+        Database.postgres =
+          let
+            connection = {
+              Username = role;
+              Password = "";
+              SSL.Mode = "disable";
+            };
+          in
+          {
+            Host = socketDir;
+            Port = config.services.postgresql.settings.port;
+            Database = database;
             MaxOpenConns = 15;
             MaxIdleConns = 10;
             MaxConnLifetime = "1h";
             MaxConnIdleTime = "5m";
+            User = connection;
+            Admin = connection // {
+              ExistingDatabase = database;
+            };
           };
+        # the default asks for an RFC1918 address, the GCE metadata server, or panics
+        Machine.Identification = {
+          PrivateIp.Enabled = false;
+          Hostname.Enabled = true;
+          Webhook.Enabled = false;
         };
+        ServicePing.Enabled = false;
       };
     };
-    virtualisation.oci-containers.containers.zitadel-db = {
-      image = "postgres:17";
-      ports = [ "127.0.0.1:5432:5432" ];
-      environmentFiles = [ (get-zitadel-secret "postgres_env") ];
-      volumes = [
-        "/var/lib/zitadel-db:/var/lib/postgresql/data"
-      ];
+
+    systemd.services.zitadel = {
+      requires = [ "postgresql.target" ];
+      after = [ "postgresql.target" ];
     };
 
-    # the backup job's ProtectSystem=strict leaves podman nothing to write, so dump through the published port
     bundles.backup.services.zitadel.dumpCommand = pkgs.writeShellScript "zitadel-dump" ''
-      env=${get-zitadel-secret "postgres_env"}
-      value() { ${pkgs.gnused}/bin/sed -n "s/^$1=//p" "$env"; }
-      user=$(value POSTGRES_USER)
-      PGPASSWORD=$(value POSTGRES_PASSWORD) exec ${pkgs.postgresql_17}/bin/pg_dump \
-        --format=custom --host=127.0.0.1 --username="''${user:-postgres}" zitadel
-    '';
-
-    # Ensure the mounted directory for the database exists
-    system.activationScripts.makeZitadelDir = lib.stringAfter [ "var" ] ''
-      mkdir -p /var/lib/zitadel-db
+      exec ${pkgs.util-linux}/bin/setpriv --reuid=${role} --regid=${role} --clear-groups \
+        ${postgres}/bin/pg_dump --format=custom --host=${socketDir} ${database}
     '';
 
     networking.interfaces.enp1s0.ipv6.addresses = [
@@ -110,7 +130,7 @@ in
       openFirewall = true;
       acme-email = "me@ironmoon.dev";
       hosts."auth.${domain}" = {
-        port = 39995;
+        inherit port;
         websockets = true;
         listenAddresses = [
           ips.ipv4.address
