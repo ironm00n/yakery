@@ -16,6 +16,13 @@
     ../common/hetzner-cloud
   ];
 
+  bundles.stalwart.enable = true;
+  bundles.bulwark.enable = true;
+  bundles.vpn.netbird = {
+    enable = true;
+    useSetupKey = true;
+  };
+
   boot.loader.grub = {
     enable = true;
     device = "/dev/sda";
