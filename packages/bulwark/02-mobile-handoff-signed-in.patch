@@ -1,0 +1,35 @@
+--- a/app/(main)/[locale]/login/page.tsx
++++ b/app/(main)/[locale]/login/page.tsx
+@@ -374,6 +374,9 @@
+         window.location.replace(`${mobileRedirectUri}#${fragment.toString()}`);
+         return;
+       }
++      // A web session already open in this browser is not the app's sign-in:
++      // the effect after startServerSideSso runs the mobile SSO flow instead.
++      if (isMobileHandoff && serverOauthEnabled) return;
+       let redirectTo = '/';
+       try {
+         const saved = sessionStorage.getItem('redirect_after_login');
+@@ -384,7 +387,7 @@
+       } catch { /* ignore */ }
+       router.push(toRouterPath(redirectTo));
+     }
+-  }, [isAuthenticated, router, isAddAccountMode, isMobileHandoff, mobileRedirectUri, mobileState]);
++  }, [isAuthenticated, router, isAddAccountMode, isMobileHandoff, serverOauthEnabled, mobileRedirectUri, mobileState]);
+ 
+   useEffect(() => {
+     clearError();
+@@ -539,6 +542,13 @@
+     startServerSideSso();
+   }, [autoSsoEnabled, oauthOnly, oauthDiscoveryDone, oauthMetadata, ssoError, isAddAccountMode, isAuthenticated, jmapServers.length, startServerSideSso]);
+ 
++  useEffect(() => {
++    if (!isMobileHandoff || !serverOauthEnabled || !isAuthenticated || isAddAccountMode) return;
++    if (ssoError || mobileHandoffPayloadRef.current || autoSsoTriggered.current) return;
++    autoSsoTriggered.current = true;
++    startServerSideSso();
++  }, [isMobileHandoff, serverOauthEnabled, isAuthenticated, isAddAccountMode, ssoError, startServerSideSso]);
++
+   const handleThemeSelect = useCallback((newTheme: "light" | "dark" | "system") => {
+     setTheme(newTheme);
+     setShowThemeMenu(false);

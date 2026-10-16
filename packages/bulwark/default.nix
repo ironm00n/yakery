@@ -28,7 +28,10 @@ buildNpmPackage (finalAttrs: {
 
   strictDeps = true;
 
-  patches = [ ./01-localfont.patch ];
+  patches = [
+    ./01-localfont.patch
+    ./02-mobile-handoff-signed-in.patch
+  ];
 
   configurePhase = ''
     runHook preConfigure
