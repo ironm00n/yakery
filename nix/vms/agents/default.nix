@@ -2,7 +2,6 @@
   config,
   lib,
   pkgs,
-  utils,
   ...
 }:
 let
@@ -25,7 +24,6 @@ let
   };
   overlayDir = "/nix/.rw-store";
   overlay = volume "nix-rw" overlayDir 256 [ ];
-  overlayDevice = "/dev/disk/by-label/${overlay.label}";
   buildDir = "${overlayDir}/build";
   home = volume "home" "/home" 640 [
     "-O"
@@ -60,27 +58,6 @@ in
     ];
   };
 
-  # A kept overlay keeps GC's whiteouts over erofs paths that a later image ships again, and the nix
-  # database on the tmpfs root forgets what the overlay holds; every boot starts both empty.
-  boot.initrd.systemd = {
-    extraBin."mkfs.ext4" = "${pkgs.e2fsprogs}/bin/mkfs.ext4";
-    services.fresh-store-overlay = {
-      description = "Empty store overlay";
-      unitConfig.DefaultDependencies = false;
-      requires = [ "${utils.escapeSystemdPath overlayDevice}.device" ];
-      after = [ "${utils.escapeSystemdPath overlayDevice}.device" ];
-      before = [
-        "${utils.escapeSystemdPath "/sysroot${overlayDir}"}.mount"
-        "systemd-fsck@${utils.escapeSystemdPath overlayDevice}.service"
-      ];
-      requiredBy = [ "${utils.escapeSystemdPath "/sysroot${overlayDir}"}.mount" ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-      };
-      script = "mkfs.ext4 -F -q -L ${overlay.label} ${lib.escapeShellArgs overlay.mkfsExtraArgs} ${overlayDevice}";
-    };
-  };
   boot.initrd.kernelModules = [ "quota_v2" ];
 
   fileSystems."/home" = {
