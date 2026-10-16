@@ -41,6 +41,7 @@ let
       ];
   get-stalwart-secret = stalwart-secrets.get-path;
   credential = name: "/run/credentials/stalwart.service/${name}";
+  certDir = config.security.acme.certs.${hostname}.directory;
 
   defaults = import ./default-perms.nix {
     inherit lib;
@@ -82,6 +83,10 @@ in
       delivery to other mail servers. While off, every recipient is routed to local delivery, so
       mail for other domains bounces instead of leaving
     '';
+    receiving.enable = lib.mkEnableOption ''
+      SMTP on port 25 of the public addresses, with STARTTLS on the ACME certificate nginx keeps for
+      ${hostname}, so mail from other servers reaches the local domains
+    '';
     deliveryWebhooks = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -107,6 +112,10 @@ in
       credentials = {
         s3_access_key = get-stalwart-secret "s3_access_key";
         s3_secret_key = get-stalwart-secret "s3_secret_key";
+      }
+      // lib.optionalAttrs cfg.receiving.enable {
+        tls_certificate = "${certDir}/fullchain.pem";
+        tls_key = "${certDir}/key.pem";
       };
 
       environmentFile = pkgs.writeText "stalwart-env" ''
@@ -117,7 +126,7 @@ in
       plan = {
         enableDefaultPlan = true;
         sequence = [
-          (reconcile "NetworkListener" [ "name" ] {
+          (reconcile "NetworkListener" [ "name" ] ({
             http = {
               name = "http";
               bind = toSet [
@@ -128,7 +137,27 @@ in
               useTls = false;
               tlsImplicit = false;
             };
-          })
+          }
+          // lib.optionalAttrs cfg.receiving.enable {
+            smtp = {
+              name = "smtp";
+              bind = toSet [
+                "${ips.ipv4.address}:25"
+                "[${address}]:25"
+              ];
+              protocol = "smtp";
+              useTls = true;
+              tlsImplicit = false;
+            };
+          }))
+          (reconcile "Certificate" [ "certificate" ] (
+            lib.optionalAttrs cfg.receiving.enable {
+              mail = {
+                certificate = fileSecret (credential "tls_certificate");
+                privateKey = fileSecret (credential "tls_key");
+              };
+            }
+          ))
           (update "Http" {
             useXForwarded = true;
             # Bulwark calls JMAP from its own origin
@@ -187,6 +216,8 @@ in
           (update "SystemSettings" {
             defaultHostname = hostname;
             defaultDomainId = ref "ironmoon";
+            # SMTP clients often send no SNI
+            defaultCertificateId = if cfg.receiving.enable then ref "mail" else null;
           })
           (upsertOn1 "Account" "root" [ "name" "domainId" ] {
             "@type" = "User";
@@ -233,6 +264,14 @@ in
         prefixLength = ips.ipv6.prefixLength;
       }
     ];
+
+    networking.firewall.allowedTCPPorts = lib.optional cfg.receiving.enable 25;
+    # Stalwart reads the certificate files only at start
+    security.acme.certs.${hostname}.reloadServices = lib.optional cfg.receiving.enable "stalwart.service";
+    systemd.services.stalwart = lib.mkIf cfg.receiving.enable {
+      wants = [ "acme-${hostname}.service" ];
+      after = [ "acme-${hostname}.service" ];
+    };
 
     bundles.reverse-proxy = {
       enable = true;

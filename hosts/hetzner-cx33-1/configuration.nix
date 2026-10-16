@@ -21,6 +21,7 @@
     enable = true;
     # agent-dispatch on desktop wakes the agents a delivery is addressed to
     deliveryWebhooks = [ "http://${my-lib.netbird.peers.desktop.v4}:7310/" ];
+    receiving.enable = true;
   };
   bundles.bulwark.enable = true;
   bundles.vpn.netbird = {
