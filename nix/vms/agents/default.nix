@@ -171,6 +171,7 @@ in
   };
 
   environment.systemPackages = [ pkgs.quota ];
+  environment.etc."claude-code/CLAUDE.md".source = ./CLAUDE.md;
 
   system.stateVersion = "26.11";
 }
