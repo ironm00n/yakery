@@ -23,6 +23,7 @@
     ./borg-hop.nix
     ./backup.nix
     ./zitadel.nix
+    ./stalwart
 
     ./displaylink
   ];
