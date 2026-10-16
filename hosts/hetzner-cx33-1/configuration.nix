@@ -7,6 +7,7 @@
   lib,
   pkgs,
   inputs,
+  my-lib,
   ...
 }:
 {
@@ -16,7 +17,11 @@
     ../common/hetzner-cloud
   ];
 
-  bundles.stalwart.enable = true;
+  bundles.stalwart = {
+    enable = true;
+    # agent-dispatch on desktop wakes the agents a delivery is addressed to
+    deliveryWebhooks = [ "http://${my-lib.netbird.peers.desktop.v4}:7310/" ];
+  };
   bundles.bulwark.enable = true;
   bundles.vpn.netbird = {
     enable = true;

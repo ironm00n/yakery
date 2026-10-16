@@ -82,6 +82,14 @@ in
       delivery to other mail servers. While off, every recipient is routed to local delivery, so
       mail for other domains bounces instead of leaving
     '';
+    deliveryWebhooks = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = ''
+        URLs Stalwart posts `delivery.completed` events to, with the delivery span's sender and
+        recipients, for every message the queue finishes. Webhooks not listed here are removed.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -200,6 +208,21 @@ in
           (update "MtaOutboundStrategy" {
             route = if cfg.sending.enable then localThenMx else localOnly;
           })
+
+          (reconcile "WebHook" [ "url" ] (
+            lib.listToAttrs (
+              lib.imap0 (i: url: {
+                name = "delivery-${toString i}";
+                value = {
+                  inherit url;
+                  enable = true;
+                  events = toSet [ "delivery.completed" ];
+                  eventsPolicy = "include";
+                  lossy = false;
+                };
+              }) cfg.deliveryWebhooks
+            )
+          ))
         ];
       };
     };
