@@ -240,6 +240,19 @@ in
             route = if cfg.sending.enable then localThenMx else localOnly;
           })
 
+          # relaxed, Stalwart's default on port 25, only records a failed p=reject
+          (update "SenderAuth" {
+            dmarcVerify = {
+              match = [
+                {
+                  "if" = "local_port == 25";
+                  "then" = "strict";
+                }
+              ];
+              "else" = "disable";
+            };
+          })
+
           # Stalwart re-creates both default throttles whenever none exist,
           # so the one turned off stays as a disabled object
           (reconcile "MtaInboundThrottle" [ "description" ] {
