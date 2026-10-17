@@ -184,7 +184,7 @@
         pkgs-master = pkgs-map-master.${system};
       };
     };
-    mk-server = { id, system, disko ? false }: {
+    mk-server = { id, system, disko ? false, no-deploy ? false }: {
       ${id} = {
         inherit system;
         additionalModules = [
@@ -197,6 +197,7 @@
           hostname = id;
         };
         no-hm = true;
+        inherit no-deploy;
       };
     };
     servers =
@@ -210,7 +211,8 @@
       # // (mk-server { id = "oracle-e2-1-micro-4"; system = "x86_64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-1"; system = "aarch64-linux"; disko = true; })
       // (mk-server { id = "oracle-a1-flex-2"; system = "aarch64-linux"; disko = true; })
-      // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; })
+      # the anthropic-tap flake deploys it, extended with the seat pool
+      // (mk-server { id = "oracle-a1-flex-3"; system = "aarch64-linux"; disko = true; no-deploy = true; })
       // (mk-server { id = "pi5"; system = "aarch64-linux"; })
         ;
     machines = {
@@ -273,7 +275,7 @@
           inputs.deploy-rs.lib.${machine.system}.activate.nixos
             self.nixosConfigurations.${id};
       }
-    ) servers;
+    ) (lib.filterAttrs (_: machine: !machine.no-deploy) servers);
 
     checks = lib.mapAttrs (
       system: deployLib:
