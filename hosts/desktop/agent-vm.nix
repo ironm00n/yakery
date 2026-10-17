@@ -18,7 +18,10 @@ in
 {
   imports = [ inputs.microvm.nixosModules.host ];
 
-  microvm.vms.agents.config = ../../nix/vms/agents;
+  microvm.vms.agents.config = {
+    imports = [ ../../nix/vms/agents ];
+    nixpkgs.flake.source = config.nixpkgs.flake.source;
+  };
 
   environment.systemPackages = [ agentd ];
 
