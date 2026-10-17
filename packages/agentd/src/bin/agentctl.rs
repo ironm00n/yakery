@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use agentd::{CONTROL_PORT, Reply, Request, WAKE, prove, read_key};
+use agentd::{CONTROL_PORT, Reply, Request, Service, WAKE, prove, read_key};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -38,7 +38,7 @@ async fn main() -> Result<ExitCode> {
         std::io::stdin().read_to_string(&mut message)?;
     }
     let mut stream = VsockStream::connect(VsockAddr::new(args.cid, CONTROL_PORT)).await?;
-    prove(&mut stream, &read_key(&args.key)?, WAKE).await?;
+    prove(&mut stream, &read_key(&args.key)?, Service::Control, WAKE).await?;
     let (read, mut write) = tokio::io::split(stream);
     let mut request = serde_json::to_string(&Request::Wake { agent, message })?;
     request.push('\n');

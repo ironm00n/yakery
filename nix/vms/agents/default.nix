@@ -32,8 +32,8 @@ let
     "-O"
     "quota"
   ];
-  # The key agentd shares with the host, which writes this image before every start. A raw
-  # device in the guest is readable by root alone.
+  # The key agentd shares with the host, which writes this image once a boot. A raw device in the
+  # guest is readable by root alone.
   key = {
     image = imagePath "agentd-key";
     serial = "agentd-key";
@@ -129,6 +129,7 @@ in
     wantedBy = [ "multi-user.target" ];
     requires = [ keyDeviceUnit ];
     after = [ keyDeviceUnit ];
+    startLimitIntervalSec = 0;
     path = [ config.systemd.package ];
     serviceConfig = {
       ExecStart = lib.escapeShellArgs [
@@ -151,6 +152,8 @@ in
       RuntimeDirectory = "agentd";
       RuntimeDirectoryMode = "0755";
       OOMScoreAdjust = -1000;
+      Restart = "always";
+      RestartSec = "1s";
     };
   };
 

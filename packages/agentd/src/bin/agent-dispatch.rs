@@ -4,12 +4,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agentd::{CONTROL_PORT, Key, Request, WAKE, prove, read_key};
+use agentd::{CONTROL_PORT, Key, Request, Service, WAKE, accept, prove, read_key};
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use clap::Parser;
@@ -35,6 +35,10 @@ const ATTEMPTS: u32 = 30;
 struct Args {
     #[arg(long)]
     listen: SocketAddr,
+    /// The mail server's addresses, which alone may post: this holds the key,
+    /// so it must not wake agents for anyone else who can reach it.
+    #[arg(long, required = true)]
+    allow_from: Vec<IpAddr>,
     /// JSON object of agent name to uid, the same file the VM's daemon reads.
     #[arg(long)]
     agents: PathBuf,
@@ -89,7 +93,7 @@ impl Dispatch {
 
     async fn wake(&self, agent: &str) -> Result<String> {
         let mut stream = VsockStream::connect(VsockAddr::new(self.cid, CONTROL_PORT)).await?;
-        prove(&mut stream, &self.key, WAKE).await?;
+        prove(&mut stream, &self.key, Service::Control, WAKE).await?;
         let (read, mut write) = tokio::io::split(stream);
         let request = Request::Wake {
             agent: agent.to_owned(),
@@ -168,7 +172,11 @@ async fn main() -> Result<()> {
     });
     let listener = TcpListener::bind(args.listen).await?;
     loop {
-        let (stream, _) = listener.accept().await?;
+        let (stream, peer) = accept(async || listener.accept().await).await;
+        if !args.allow_from.contains(&peer.ip().to_canonical()) {
+            eprintln!("refused a connection from {peer}");
+            continue;
+        }
         let dispatch = dispatch.clone();
         tokio::spawn(async move {
             let service = service_fn(move |request| {

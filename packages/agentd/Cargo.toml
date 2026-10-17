@@ -16,3 +16,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 tokio-vsock = "0.7"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }

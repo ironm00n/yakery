@@ -14,7 +14,10 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use agentd::{CONTROL_PORT, HOST_CID, Key, Reply, Request, WAKE, challenge, prove, read_key};
+use agentd::{
+    CA, CONTROL_PORT, HOST_CID, Key, Reply, Request, Service, WAKE, accept, challenge, prove,
+    read_key,
+};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use serde::Deserialize;
@@ -149,6 +152,7 @@ impl State {
 
     async fn refresh_ca(&self) -> Result<()> {
         let mut gateway = VsockStream::connect(VsockAddr::new(HOST_CID, self.args.ca_port)).await?;
+        prove(&mut gateway, &self.key, Service::Ca, CA).await?;
         let mut pem = Vec::new();
         gateway.read_to_end(&mut pem).await?;
         let staged = self.ca().with_extension("new");
@@ -348,9 +352,9 @@ fn proc_net_address(field: &str) -> Option<SocketAddrV4> {
     Some(SocketAddrV4::new(ip, u16::from_str_radix(port, 16).ok()?))
 }
 
-async fn relay<L: Local>(listener: L, state: Arc<State>) -> Result<()> {
+async fn relay<L: Local>(listener: L, state: Arc<State>) {
     loop {
-        let client = listener.next().await?;
+        let client = accept(async || listener.next().await).await;
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(e) = tunnel::<L>(client, &state).await {
@@ -367,14 +371,20 @@ async fn tunnel<L: Local>(mut client: L::Stream, state: &State) -> Result<()> {
     }
     let mut gateway =
         VsockStream::connect(VsockAddr::new(HOST_CID, state.args.gateway_port)).await?;
-    prove(&mut gateway, &state.key, &format!("uid {uid}")).await?;
+    prove(
+        &mut gateway,
+        &state.key,
+        Service::Gateway,
+        &format!("uid {uid}"),
+    )
+    .await?;
     copy_bidirectional(&mut client, &mut gateway).await?;
     Ok(())
 }
 
-async fn serve(listener: VsockListener, state: Arc<State>) -> Result<()> {
+async fn serve(listener: VsockListener, state: Arc<State>) {
     loop {
-        let (stream, peer) = listener.accept().await?;
+        let (stream, peer) = accept(async || listener.accept().await).await;
         if peer.cid() != HOST_CID {
             continue;
         }
@@ -389,7 +399,7 @@ async fn serve(listener: VsockListener, state: Arc<State>) -> Result<()> {
 
 async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
     let mut stream = BufReader::new(stream);
-    let claim = challenge(&mut stream, &state.key).await?;
+    let claim = challenge(&mut stream, &state.key, Service::Control).await?;
     if claim != WAKE {
         bail!("a control connection claimed {claim:?}");
     }
@@ -441,11 +451,11 @@ async fn main() -> Result<()> {
         agents,
         sessions: Mutex::default(),
     });
-    tokio::try_join!(
+    tokio::join!(
         relay(api, state.clone()),
         relay(direct, state.clone()),
         serve(control, state)
-    )?;
+    );
     Ok(())
 }
 
