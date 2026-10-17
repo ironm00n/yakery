@@ -7,9 +7,10 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use agentd::{CONTROL_PORT, Request};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use clap::Parser;
 use http_body_util::{BodyExt, Empty, Limited};
@@ -25,6 +26,10 @@ use tokio_vsock::{VsockAddr, VsockStream};
 
 const BODY_LIMIT: usize = 1 << 20;
 const MESSAGE: &str = "New mail arrived for you.";
+/// How long a wake keeps trying while the VM is down: a desktop switch that
+/// changes the VM restarts it, and the webhook has been answered by then.
+const RETRY_EVERY: Duration = Duration::from_secs(10);
+const ATTEMPTS: u32 = 30;
 
 #[derive(Parser)]
 struct Args {
@@ -89,8 +94,24 @@ impl Dispatch {
             .write_all(format!("{}\n", serde_json::to_string(&request)?).as_bytes())
             .await?;
         let mut reply = String::new();
-        BufReader::new(read).read_line(&mut reply).await?;
+        if BufReader::new(read).read_line(&mut reply).await? == 0 {
+            bail!("the daemon hung up without replying");
+        }
         Ok(reply.trim_end().to_owned())
+    }
+
+    async fn wake_until_answered(&self, agent: &str) -> Result<String> {
+        let mut attempt = 1;
+        loop {
+            match self.wake(agent).await {
+                Err(e) if attempt < ATTEMPTS => {
+                    eprintln!("{agent}: wake attempt {attempt} failed, retrying: {e:#}");
+                    attempt += 1;
+                    tokio::time::sleep(RETRY_EVERY).await;
+                }
+                answered => return answered,
+            }
+        }
     }
 }
 
@@ -111,7 +132,7 @@ async fn handle(
                         let dispatch = dispatch.clone();
                         let agent = agent.to_owned();
                         tokio::spawn(async move {
-                            match dispatch.wake(&agent).await {
+                            match dispatch.wake_until_answered(&agent).await {
                                 Ok(reply) => eprintln!("{agent}: {reply}"),
                                 Err(e) => eprintln!("{agent}: wake failed: {e:#}"),
                             }

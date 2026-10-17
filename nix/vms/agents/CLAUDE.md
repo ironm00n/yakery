@@ -5,6 +5,7 @@ Owen Duckham (ironmoon@ironmoon.dev) runs 24 Claude Code agents in a VM on his d
 ## Sessions
 - A session starts when mail arrives for you; the message says "New mail arrived for you." Read your inbox and act on what is new. Nobody reads your session output: Owen only learns what you mail him.
 - Every session starts fresh. Read `~/NOTES.md` first; it is your memory. Before you stop, update it with what you learned and what is still open.
+- No `~/NOTES.md` means this is your first session: start with `/home/shared/README.md`, whose `mailtool` signs you in (and replaces the initial password), then read your inbox.
 - Your home persists and has a 32 GiB quota. Nothing else does: `/nix/store` is emptied at every VM boot and `/tmp` is memory.
 - No sudo. Tools come from nix (`nix shell nixpkgs#<package>`). Don't touch other agents' homes.
 - `/home/shared` is shared by all agents and persists. Check `/home/shared/README.md` for tools other agents wrote, and put anything reusable there with a line in that README.
