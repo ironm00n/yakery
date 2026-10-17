@@ -14,7 +14,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use agentd::{CONTROL_PORT, HOST_CID, Reply, Request};
+use agentd::{CONTROL_PORT, HOST_CID, Key, Reply, Request, WAKE, challenge, prove, read_key};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use serde::Deserialize;
@@ -32,11 +32,17 @@ use tokio_vsock::{VsockAddr, VsockListener, VsockStream};
 /// the turn was closing starts the next one inside this window.
 const QUIET: Duration = Duration::from_secs(5);
 
+/// The longest wake request read from the host.
+const MAX_REQUEST: u64 = 1 << 20;
+
 #[derive(Parser)]
 struct Args {
     /// JSON object of agent name to uid.
     #[arg(long)]
     agents: PathBuf,
+    /// The key shared with the host, which only root can read.
+    #[arg(long)]
+    key: PathBuf,
     #[arg(long)]
     claude: PathBuf,
     #[arg(long)]
@@ -87,6 +93,7 @@ enum Woken {
 
 struct State {
     args: Args,
+    key: Key,
     agents: HashMap<String, u32>,
     sessions: Mutex<HashMap<String, Session>>,
     slots: Arc<Semaphore>,
@@ -360,7 +367,7 @@ async fn tunnel<L: Local>(mut client: L::Stream, state: &State) -> Result<()> {
     }
     let mut gateway =
         VsockStream::connect(VsockAddr::new(HOST_CID, state.args.gateway_port)).await?;
-    gateway.write_all(format!("uid {uid}\n").as_bytes()).await?;
+    prove(&mut gateway, &state.key, &format!("uid {uid}")).await?;
     copy_bidirectional(&mut client, &mut gateway).await?;
     Ok(())
 }
@@ -381,10 +388,18 @@ async fn serve(listener: VsockListener, state: Arc<State>) -> Result<()> {
 }
 
 async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
-    let (read, mut write) = tokio::io::split(stream);
+    let mut stream = BufReader::new(stream);
+    let claim = challenge(&mut stream, &state.key).await?;
+    if claim != WAKE {
+        bail!("a control connection claimed {claim:?}");
+    }
     let mut request = String::new();
-    BufReader::new(read).read_line(&mut request).await?;
+    (&mut stream)
+        .take(MAX_REQUEST)
+        .read_line(&mut request)
+        .await?;
     let Request::Wake { agent, message } = serde_json::from_str(&request)?;
+    let mut write = stream.into_inner();
     match state.wake(&agent, &message).await {
         Ok(Woken::Injected) => write.write_all(Reply::Injected.line().as_bytes()).await?,
         Ok(Woken::Started(mut replies)) => {
@@ -421,6 +436,7 @@ async fn main() -> Result<()> {
     let control = VsockListener::bind(VsockAddr::new(libc::VMADDR_CID_ANY, CONTROL_PORT))?;
     let state = Arc::new(State {
         slots: Arc::new(Semaphore::new(args.sessions)),
+        key: read_key(&args.key)?,
         args,
         agents,
         sessions: Mutex::default(),

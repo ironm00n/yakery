@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agentd::{CONTROL_PORT, Request};
+use agentd::{CONTROL_PORT, Key, Request, WAKE, prove, read_key};
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use clap::Parser;
@@ -43,6 +43,9 @@ struct Args {
     /// The agent VM's vsock CID.
     #[arg(long, default_value_t = 4)]
     cid: u32,
+    /// The key shared with the VM's daemon.
+    #[arg(long)]
+    key: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +64,7 @@ struct Dispatch {
     agents: BTreeSet<String>,
     domain: String,
     cid: u32,
+    key: Key,
 }
 
 impl Dispatch {
@@ -84,7 +88,8 @@ impl Dispatch {
     }
 
     async fn wake(&self, agent: &str) -> Result<String> {
-        let stream = VsockStream::connect(VsockAddr::new(self.cid, CONTROL_PORT)).await?;
+        let mut stream = VsockStream::connect(VsockAddr::new(self.cid, CONTROL_PORT)).await?;
+        prove(&mut stream, &self.key, WAKE).await?;
         let (read, mut write) = tokio::io::split(stream);
         let request = Request::Wake {
             agent: agent.to_owned(),
@@ -159,6 +164,7 @@ async fn main() -> Result<()> {
         agents: agents.into_keys().collect(),
         domain: args.domain,
         cid: args.cid,
+        key: read_key(&args.key)?,
     });
     let listener = TcpListener::bind(args.listen).await?;
     loop {
@@ -186,6 +192,7 @@ mod tests {
             agents: ["alpha", "beta"].map(String::from).into(),
             domain: "agent.ironmoon.dev".into(),
             cid: 4,
+            key: [0; 32],
         };
         let batch: Batch = serde_json::from_value(serde_json::json!({ "events": [
             { "type": "delivery.completed", "data": { "to": [

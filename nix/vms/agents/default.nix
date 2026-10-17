@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  utils,
   ...
 }:
 let
@@ -11,8 +12,9 @@ let
   apiAddress = "127.0.0.9";
   mib = gib: gib * 1024;
   bytes = gib: mib gib * 1024 * 1024;
+  imagePath = name: "/var/lib/agents/vm/${name}.img";
   volume = name: mountPoint: sizeGiB: mkfsArgs: {
-    image = "/var/lib/agents/vm/${name}.img";
+    image = imagePath name;
     label = name;
     inherit mountPoint;
     size = mib sizeGiB;
@@ -30,6 +32,18 @@ let
     "-O"
     "quota"
   ];
+  # The key agentd shares with the host, which writes this image before every start. A raw
+  # device in the guest is readable by root alone.
+  key = {
+    image = imagePath "agentd-key";
+    serial = "agentd-key";
+    readOnly = true;
+    autoCreate = false;
+    mountPoint = null;
+    size = 1;
+  };
+  keyDevice = "/dev/disk/by-id/virtio-${key.serial}";
+  keyDeviceUnit = "${utils.escapeSystemdPath keyDevice}.device";
 in
 {
   microvm = {
@@ -45,6 +59,7 @@ in
     volumes = [
       overlay
       home
+      key
     ];
     interfaces = [
       {
@@ -112,12 +127,16 @@ in
   systemd.services.agentd = {
     description = "Agent sessions and their way to the gateway";
     wantedBy = [ "multi-user.target" ];
+    requires = [ keyDeviceUnit ];
+    after = [ keyDeviceUnit ];
     path = [ config.systemd.package ];
     serviceConfig = {
       ExecStart = lib.escapeShellArgs [
         (lib.getExe' agentd "agentd")
         "--agents"
         (import ./agents-json.nix { inherit lib pkgs; })
+        "--key"
+        keyDevice
         "--claude"
         (lib.getExe pkgs.claude-code)
         "--mkdir"

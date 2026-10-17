@@ -2,9 +2,10 @@
 //! print what the daemon replies, one JSON line each.
 
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use agentd::{CONTROL_PORT, Reply, Request};
+use agentd::{CONTROL_PORT, Reply, Request, WAKE, prove, read_key};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -15,6 +16,9 @@ struct Args {
     /// The agent VM's vsock CID.
     #[arg(long, default_value_t = 4)]
     cid: u32,
+    /// The key shared with the VM's daemon.
+    #[arg(long)]
+    key: PathBuf,
     #[command(subcommand)]
     command: Cmd,
 }
@@ -33,7 +37,8 @@ async fn main() -> Result<ExitCode> {
         message.clear();
         std::io::stdin().read_to_string(&mut message)?;
     }
-    let stream = VsockStream::connect(VsockAddr::new(args.cid, CONTROL_PORT)).await?;
+    let mut stream = VsockStream::connect(VsockAddr::new(args.cid, CONTROL_PORT)).await?;
+    prove(&mut stream, &read_key(&args.key)?, WAKE).await?;
     let (read, mut write) = tokio::io::split(stream);
     let mut request = serde_json::to_string(&Request::Wake { agent, message })?;
     request.push('\n');
