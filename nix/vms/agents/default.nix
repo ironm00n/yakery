@@ -8,6 +8,7 @@ let
   agents = import ./agents.nix { inherit lib; };
   agentd = pkgs.callPackage ../../../packages/agentd/package.nix { };
   mac = "02:61:67:6e:74:01";
+  apiAddress = "127.0.0.9";
   mib = gib: gib * 1024;
   bytes = gib: mib gib * 1024 * 1024;
   volume = name: mountPoint: sizeGiB: mkfsArgs: {
@@ -109,7 +110,7 @@ in
   };
 
   systemd.services.agentd = {
-    description = "Agent sessions and their API socket";
+    description = "Agent sessions and their way to the gateway";
     wantedBy = [ "multi-user.target" ];
     path = [ config.systemd.package ];
     serviceConfig = {
@@ -123,6 +124,8 @@ in
         "/dev/disk/by-label/${home.label}"
         "--sessions"
         (toString config.microvm.vcpu)
+        "--api-address"
+        "${apiAddress}:443"
       ];
       RuntimeDirectory = "agentd";
       RuntimeDirectoryMode = "0755";
@@ -142,7 +145,7 @@ in
 
   networking = {
     useNetworkd = true;
-    hosts."127.0.0.9" = [ "api.anthropic.com" ];
+    hosts.${apiAddress} = [ "api.anthropic.com" ];
   };
   systemd.network.networks."10-lan" = {
     matchConfig.MACAddress = mac;

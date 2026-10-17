@@ -1,10 +1,12 @@
-//! The agent VM's root daemon. Every agent uid gets one Claude Code API socket
-//! that leads to the host's gateway, tagged with the uid it came from, and the
+//! The agent VM's root daemon. Claude Code reaches the host's gateway through
+//! it, over the API socket or at the address the VM's hosts file gives
+//! api.anthropic.com, each connection tagged with the uid it came from, and the
 //! host's wakes run as transient units in the agent's slice.
 
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::Permissions;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{PermissionsExt, chown};
 use std::path::{Path, PathBuf};
@@ -17,8 +19,11 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use serde::Deserialize;
 use serde_json::value::RawValue;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, copy_bidirectional};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+    copy_bidirectional,
+};
+use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio_vsock::{VsockAddr, VsockListener, VsockStream};
@@ -39,6 +44,10 @@ struct Args {
     quota_device: PathBuf,
     #[arg(long, default_value = "/run/agentd")]
     run_dir: PathBuf,
+    /// Where the VM's hosts file sends api.anthropic.com, for what Claude Code
+    /// fetches there instead of over the API socket.
+    #[arg(long)]
+    api_address: SocketAddrV4,
     #[arg(long, default_value_t = 5000)]
     gateway_port: u32,
     #[arg(long, default_value_t = 5001)]
@@ -263,20 +272,81 @@ fn has_quota(device: &Path, uid: u32) -> Result<bool> {
     Ok(quota.dqb_bhardlimit != 0)
 }
 
-async fn relay(listener: UnixListener, state: Arc<State>) -> Result<()> {
+/// A listener for processes on this machine, which can name the uid of
+/// whoever opened a connection.
+trait Local {
+    type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;
+
+    async fn next(&self) -> std::io::Result<Self::Stream>;
+
+    fn uid(stream: &Self::Stream) -> Result<u32>;
+}
+
+impl Local for UnixListener {
+    type Stream = UnixStream;
+
+    async fn next(&self) -> std::io::Result<UnixStream> {
+        Ok(self.accept().await?.0)
+    }
+
+    fn uid(stream: &UnixStream) -> Result<u32> {
+        Ok(stream.peer_cred()?.uid())
+    }
+}
+
+impl Local for TcpListener {
+    type Stream = TcpStream;
+
+    async fn next(&self) -> std::io::Result<TcpStream> {
+        Ok(self.accept().await?.0)
+    }
+
+    /// On loopback the client's end is in this kernel's table too, with its
+    /// owner.
+    fn uid(stream: &TcpStream) -> Result<u32> {
+        let (SocketAddr::V4(client), SocketAddr::V4(server)) =
+            (stream.peer_addr()?, stream.local_addr()?)
+        else {
+            bail!("not an IPv4 connection");
+        };
+        std::fs::read_to_string("/proc/net/tcp")?
+            .lines()
+            .skip(1)
+            .find_map(|row| {
+                let mut fields = row.split_whitespace().skip(1);
+                let local = proc_net_address(fields.next()?)?;
+                let remote = proc_net_address(fields.next()?)?;
+                if (local, remote) != (client, server) {
+                    return None;
+                }
+                fields.nth(4)?.parse().ok()
+            })
+            .with_context(|| format!("no socket owner for {client}"))
+    }
+}
+
+/// An address as /proc/net/tcp writes it: the IPv4 address as one hex word in
+/// host order, then the port in hex.
+fn proc_net_address(field: &str) -> Option<SocketAddrV4> {
+    let (ip, port) = field.split_once(':')?;
+    let ip = Ipv4Addr::from(u32::from_str_radix(ip, 16).ok()?.to_ne_bytes());
+    Some(SocketAddrV4::new(ip, u16::from_str_radix(port, 16).ok()?))
+}
+
+async fn relay<L: Local>(listener: L, state: Arc<State>) -> Result<()> {
     loop {
-        let (client, _) = listener.accept().await?;
+        let client = listener.next().await?;
         let state = state.clone();
         tokio::spawn(async move {
-            if let Err(e) = tunnel(client, &state).await {
+            if let Err(e) = tunnel::<L>(client, &state).await {
                 eprintln!("api tunnel: {e:#}");
             }
         });
     }
 }
 
-async fn tunnel(mut client: UnixStream, state: &State) -> Result<()> {
-    let uid = client.peer_cred()?.uid();
+async fn tunnel<L: Local>(mut client: L::Stream, state: &State) -> Result<()> {
+    let uid = L::uid(&client)?;
     if state.agent_of(uid).is_none() {
         bail!("uid {uid} is not an agent");
     }
@@ -339,6 +409,7 @@ async fn main() -> Result<()> {
     let _ = std::fs::remove_file(&socket);
     let api = UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, Permissions::from_mode(0o666))?;
+    let direct = TcpListener::bind(args.api_address).await?;
     let control = VsockListener::bind(VsockAddr::new(libc::VMADDR_CID_ANY, CONTROL_PORT))?;
     let state = Arc::new(State {
         slots: Arc::new(Semaphore::new(args.sessions)),
@@ -346,6 +417,37 @@ async fn main() -> Result<()> {
         agents,
         sessions: Mutex::default(),
     });
-    tokio::try_join!(relay(api, state.clone()), serve(control, state))?;
+    tokio::try_join!(
+        relay(api, state.clone()),
+        relay(direct, state.clone()),
+        serve(control, state)
+    )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_proc_net_addresses() {
+        assert_eq!(
+            proc_net_address("0900007F:01BB"),
+            Some(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 9), 443))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_loopback_client_is_its_owner() {
+        let listener = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 9), 0))
+            .await
+            .unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let server = listener.next().await.unwrap();
+        assert_eq!(TcpListener::uid(&server).unwrap(), unsafe {
+            libc::getuid()
+        });
+    }
 }
