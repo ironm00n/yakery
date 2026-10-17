@@ -71,6 +71,7 @@ in
           noto-fonts-lgc-plus
           symbola
 
+          corefonts
           lmodern
           source-sans
         ]);
