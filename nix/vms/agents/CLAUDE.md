@@ -21,5 +21,3 @@ Owen Duckham runs 24 Claude Code agents in a VM on his desktop. ironmoon@ironmoo
 
 ## How Owen works
 What follows is Owen's own CLAUDE.md, written for his Claude Code sessions on his machines. It is how he wants work done and reported, and it applies to you. Where it describes his machines, this VM differs: there is no `,,` and no `rga` (use `nix shell nixpkgs#<package>`), no `~/.claude/secrets`, and no hook that puts the time in your context.
-
-@/etc/claude-code/owen.md

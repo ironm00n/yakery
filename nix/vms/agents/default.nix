@@ -159,8 +159,10 @@ in
     jq
     gh
   ];
-  environment.etc."claude-code/CLAUDE.md".source = ./CLAUDE.md;
-  environment.etc."claude-code/owen.md".source = ../../../users/ironmoon/bundles/dev/claude/CLAUDE.md;
+  environment.etc."claude-code/CLAUDE.md".text = lib.concatMapStringsSep "\n" builtins.readFile [
+    ./CLAUDE.md
+    ../../../users/ironmoon/bundles/dev/claude/CLAUDE.md
+  ];
   environment.etc."claude-code/managed-settings.json".text = builtins.toJSON {
     model = "claude-opus-5-5";
     effortLevel = "medium";
