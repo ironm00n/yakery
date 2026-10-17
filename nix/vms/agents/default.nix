@@ -149,6 +149,10 @@ in
 
   environment.systemPackages = [ pkgs.quota ];
   environment.etc."claude-code/CLAUDE.md".source = ./CLAUDE.md;
+  environment.etc."claude-code/managed-settings.json".text = builtins.toJSON {
+    model = "claude-opus-5-5";
+    effortLevel = "medium";
+  };
 
   system.stateVersion = "26.11";
 }
