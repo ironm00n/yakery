@@ -127,6 +127,12 @@ in
     '';
   };
 
+  services.openssh.settings = {
+    PerSourcePenalties = "crash:90s grace-exceeded:10s authfail:0s invaliduser:0s noauth:0s";
+    MaxStartups = "64:30:256";
+    LoginGraceTime = "30s";
+  };
+
   services.openssh.extraConfig = ''
     Match User git
       AuthorizedKeysCommand /etc/ssh/forgejo-authorized-keys %u %t %k
