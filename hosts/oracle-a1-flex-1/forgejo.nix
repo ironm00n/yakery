@@ -127,6 +127,12 @@ in
     '';
   };
 
+  services.openssh.settings = {
+    PerSourcePenalties = "crash:90s grace-exceeded:10s authfail:0s invaliduser:0s noauth:0s";
+    MaxStartups = "64:30:256";
+    LoginGraceTime = "30s";
+  };
+
   services.openssh.extraConfig = ''
     Match User git
       AuthorizedKeysCommand /etc/ssh/forgejo-authorized-keys %u %t %k
@@ -171,7 +177,7 @@ in
         --provider openidConnect
         --key ${clientId}
         --secret "$CSEC"
-        --auto-discover-url "https://auth.ironmoon.dev/.well-known/openid-configuration"
+        --auto-discover-url "https://${my-lib.ironmoon.auth.host}/.well-known/openid-configuration"
         --scopes "openid profile email"
         --group-claim-name groups
         --required-claim-name groups
