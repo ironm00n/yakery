@@ -240,6 +240,32 @@ in
             route = if cfg.sending.enable then localThenMx else localOnly;
           })
 
+          # Stalwart re-creates both default throttles whenever none exist,
+          # so the one turned off stays as a disabled object
+          (reconcile "MtaInboundThrottle" [ "description" ] {
+            remote-ip = {
+              description = "Sender IP throttle";
+              enable = true;
+              key = toSet [ "remoteIp" ];
+              rate = {
+                count = 5;
+                period = 1000;
+              };
+            };
+            sender-domain-to-rcpt = {
+              description = "Sender address to recipient throttle";
+              enable = false;
+              key = toSet [
+                "senderDomain"
+                "rcpt"
+              ];
+              rate = {
+                count = 25;
+                period = 60 * 60 * 1000;
+              };
+            };
+          })
+
           (reconcile "WebHook" [ "url" ] (
             lib.listToAttrs (
               lib.imap0 (i: url: {
