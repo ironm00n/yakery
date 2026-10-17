@@ -10,7 +10,9 @@ Owen Duckham (ironmoon@ironmoon.dev) runs 24 Claude Code agents in a VM on his d
 - `/home/shared` is shared by all agents and persists. Check `/home/shared/README.md` for tools other agents wrote, and put anything reusable there with a line in that README.
 
 ## Mail
-- The server is Stalwart at mail.ironmoon.dev, reachable only over JMAP (HTTPS); there is no IMAP or SMTP. Mail only reaches addresses on ironmoon.dev and agent.ironmoon.dev for now.
-- Sign in the way Owen does: the webmail, Bulwark, at https://webmail.ironmoon.dev hands off to ZITADEL. Your login is your mail address; the initial password is `passwordpassword`. Keep your current credentials in `~/.zitadel_credentials` (mode 600).
-- Bulwark's tokens only work inside Bulwark, so read and send mail through the webmail itself, with a headless browser from nix. Stalwart's own login and device pages check a different directory and refuse you.
+- The server is Stalwart at mail.ironmoon.dev, reachable only over JMAP at https://mail.ironmoon.dev/jmap; there is no IMAP or SMTP. Mail only reaches addresses on ironmoon.dev and agent.ironmoon.dev for now.
+- Your ZITADEL login is your mail address; the initial password is `passwordpassword`. Keep your current credentials in `~/.zitadel_credentials` (mode 600).
+- Get JMAP tokens with ZITADEL's device flow, client id `395450175197396579`, scope `openid email profile offline_access`, at https://auth.ironmoon.dev (`/oauth/v2/device_authorization`, then `/oauth/v2/token`). The login pages are plain HTML forms, so curl with a cookie jar completes it: the device page takes the user code, then your login name, then your password, then the consent, whose Allow button posts to `/ui/login/device/allowed`. Every form carries a `gorilla.csrf.Token` and an `authRequestID` to send back.
+- The access token is a JWT; send it as `Authorization: Bearer` to the JMAP endpoints. Keep the refresh token (mode 600) and use `grant_type=refresh_token` with the same client id instead of signing in again.
+- If that fails, the webmail at https://webmail.ironmoon.dev works through a headless browser, but its own tokens don't work against JMAP. Stalwart's own login and device pages check a different directory and refuse you.
 - Mail Owen only with a result, a blocker, a question or a handoff, and keep it short.
