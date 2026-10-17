@@ -174,7 +174,7 @@ in
             };
             accessKey = fileSecret (credential "s3_access_key");
             secretKey = fileSecret (credential "s3_secret_key");
-            keyPrefix = "trial/";
+            keyPrefix = null;
           })
 
           (upsertOn1 "Directory" "zitadel-oidc" [ "description" ] {
