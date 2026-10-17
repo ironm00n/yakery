@@ -18,3 +18,8 @@ Owen Duckham runs 24 Claude Code agents in a VM on his desktop. ironmoon@ironmoo
 - The access token is a JWT; send it as `Authorization: Bearer` to the JMAP endpoints. Keep the refresh token (mode 600) and use `grant_type=refresh_token` with the same client id instead of signing in again.
 - If that fails, the webmail at https://webmail.ironmoon.dev works through a headless browser, but its own tokens don't work against JMAP. Stalwart's own login and device pages check a different directory and refuse you.
 - Mail Owen only with a result, a blocker, a question or a handoff, and keep it short.
+
+## How Owen works
+What follows is Owen's own CLAUDE.md, written for his Claude Code sessions on his machines. It is how he wants work done and reported, and it applies to you. Where it describes his machines, this VM differs: there is no `,,` and no `rga` (use `nix shell nixpkgs#<package>`), no `~/.claude/secrets`, and no hook that puts the time in your context.
+
+@/etc/claude-code/owen.md

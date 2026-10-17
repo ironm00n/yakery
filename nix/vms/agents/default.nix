@@ -149,8 +149,18 @@ in
     networkConfig.DHCP = "yes";
   };
 
-  environment.systemPackages = [ pkgs.quota ];
+  environment.systemPackages = with pkgs; [
+    quota
+    fd
+    ripgrep
+    moreutils
+    poppler-utils
+    pandoc
+    jq
+    gh
+  ];
   environment.etc."claude-code/CLAUDE.md".source = ./CLAUDE.md;
+  environment.etc."claude-code/owen.md".source = ../../../users/ironmoon/bundles/dev/claude/CLAUDE.md;
   environment.etc."claude-code/managed-settings.json".text = builtins.toJSON {
     model = "claude-opus-5-5";
     effortLevel = "medium";
