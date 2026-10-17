@@ -46,7 +46,7 @@ struct Args {
     #[arg(long, default_value = "8G")]
     memory_max: String,
     /// Sessions that may run at once; wakes past it wait for one to end.
-    #[arg(long, default_value_t = 4)]
+    #[arg(long)]
     sessions: usize,
 }
 

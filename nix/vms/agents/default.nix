@@ -121,6 +121,8 @@ in
         (lib.getExe pkgs.claude-code)
         "--quota-device"
         "/dev/disk/by-label/${home.label}"
+        "--sessions"
+        (toString config.microvm.vcpu)
       ];
       RuntimeDirectory = "agentd";
       RuntimeDirectoryMode = "0755";
