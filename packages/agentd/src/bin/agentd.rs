@@ -8,7 +8,7 @@ use std::ffi::CString;
 use std::fs::Permissions;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{PermissionsExt, chown};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -39,6 +39,8 @@ struct Args {
     agents: PathBuf,
     #[arg(long)]
     claude: PathBuf,
+    #[arg(long)]
+    mkdir: PathBuf,
     /// Block device of the homes filesystem, whose quotas gate every wake.
     #[arg(long)]
     quota_device: PathBuf,
@@ -152,12 +154,7 @@ impl State {
     fn spawn(&self, agent: &str, uid: u32) -> Result<Child> {
         let home = Path::new("/home").join(agent);
         let config = home.join(".claude");
-        let cache = home.join(".cache");
-        let tmp = cache.join("tmp");
-        for dir in [&config, &cache, &tmp] {
-            std::fs::create_dir_all(dir)?;
-            chown(dir, Some(uid), None)?;
-        }
+        let tmp = home.join(".cache").join("tmp");
         let path = format!(
             "{home}/.nix-profile/bin:/etc/profiles/per-user/{agent}/bin:/run/wrappers/bin:/run/current-system/sw/bin",
             home = home.display()
@@ -183,6 +180,17 @@ impl State {
             .arg(format!("--uid={uid}"))
             .arg(format!("--working-directory={}", home.display()))
             .arg(format!("--property=MemoryMax={}", self.args.memory_max))
+            // Made by the session itself: agentd, as root, would follow
+            // symlinks the agent planted in its home.
+            .arg(format!(
+                "--property=ExecStartPre={} -p {} {}",
+                self.args.mkdir.display(),
+                config.display(),
+                tmp.display()
+            ))
+            // Only agentd reaches the host over vsock, so the uid it sends
+            // the gateway is one it checked.
+            .arg("--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK")
             .args(
                 env.iter()
                     .map(|(name, value)| format!("--setenv={name}={value}")),

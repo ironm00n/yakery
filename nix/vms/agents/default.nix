@@ -120,6 +120,8 @@ in
         (import ./agents-json.nix { inherit lib pkgs; })
         "--claude"
         (lib.getExe pkgs.claude-code)
+        "--mkdir"
+        (lib.getExe' pkgs.coreutils "mkdir")
         "--quota-device"
         "/dev/disk/by-label/${home.label}"
         "--sessions"
