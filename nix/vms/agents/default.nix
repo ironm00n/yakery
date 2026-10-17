@@ -161,6 +161,23 @@ in
     pandoc
     jq
     gh
+    git
+    gnupg
+    openssh
+    python3
+    file
+    unzip
+    zip
+    coreutils-full
+    findutils
+    diffutils
+    gawk
+    gnused
+    gnugrep
+    binutils
+    gnumake
+    just
+    tree
   ];
   environment.etc."claude-code/CLAUDE.md".text = lib.concatMapStringsSep "\n" builtins.readFile [
     ./CLAUDE.md
