@@ -114,6 +114,26 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_url_stops_before_trailing_punctuation() {
+        let url = "https://artifacts.ironmoon.dev/claude/v6.pdf";
+        let link = format!(r#"<a href="{url}">{url}</a>"#);
+        for (markdown, after) in [
+            (
+                format!("v6 attached ({url}): the new flow"),
+                "): the new flow",
+            ),
+            (format!("the deck: {url}."), "."),
+            (format!("see {url}, then reply"), ", then reply"),
+        ] {
+            let html = html(&markdown);
+            assert!(
+                html.contains(&format!("{link}{after}")),
+                "{markdown} gave {html}"
+            );
+        }
+    }
+
+    #[test]
     fn tables_render_with_inline_styles() {
         let html = html("| a | b |\n|---|--:|\n| 1 | 2 |\n");
         assert!(
