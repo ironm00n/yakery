@@ -171,6 +171,11 @@ in
             usePermissiveCors = true;
           })
 
+          # Claude sessions all sign in as agent@, and each one waiting for mail holds a request open
+          (update "Jmap" {
+            maxConcurrentRequests = 32;
+          })
+
           (update "BlobStore" {
             "@type" = "S3";
             bucket = "ironmoon-mail-blobs";
