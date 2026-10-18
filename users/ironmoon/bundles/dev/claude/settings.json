@@ -21,6 +21,7 @@
     "allow": [
       "Read(//nix/store)",
       "Agent(Explore)",
+      "Bash(agent-mail:*)",
       "Bash(ls:*)",
       "Bash(rg:*)",
       "Bash(jq:*)",
@@ -202,6 +203,14 @@
         "source": "directory",
         "path": "/home/ironmoon/.claude/my-marketplaces/typst-lsp"
       }
+    }
+  },
+  "sandbox": {
+    "network": {
+      "allowedDomains": [
+        "auth.ironmoon.dev",
+        "mail.ironmoon.dev"
+      ]
     }
   },
   "spinnerTipsEnabled": false,
