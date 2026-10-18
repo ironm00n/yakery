@@ -80,6 +80,20 @@ let
   );
   agentRcptForbidden = "(${isAgentSender}) && !(${agentMayReach})";
 
+  # RCPT-stage scripts see only the recipient being added
+  unreceivable =
+    let
+      parts = lib.splitString "@" config.services.stalwart.backup.account;
+      local = lib.head parts;
+      host = lib.last parts;
+    in
+    ''
+      require ["envelope", "reject"];
+      if envelope :all :matches "to" ["${local}@${host}", "${local}+*@${host}"] {
+        reject "550 5.1.1 mailbox unavailable";
+      }
+    '';
+
   # sieve-rs joins the DATA-stage recipients into one string, hence :matches with * on both sides.
   # A DMARC pass vouches for the From domain; Gmail and the like vouch for its local part.
   agentInbound =
@@ -419,6 +433,30 @@ in
               isActive = true;
               contents = agentInbound;
             };
+            unreceivable = {
+              name = "unreceivable";
+              description = "Refuses accounts that can't receive, so their bounces can't go to forged senders";
+              isActive = true;
+              contents = unreceivable;
+            };
+          })
+          (update "MtaStageRcpt" {
+            script = {
+              match = [
+                {
+                  "if" = "local_port == 25";
+                  "then" = "'unreceivable'";
+                }
+              ];
+              "else" = "false";
+            };
+          })
+          # a user's reject bounces its own text to the sender, past the agent allowlist
+          (update "SieveUserInterpreter" {
+            disableCapabilities = toSet [
+              "reject"
+              "ereject"
+            ];
           })
           (update "MtaStageData" {
             script = {
