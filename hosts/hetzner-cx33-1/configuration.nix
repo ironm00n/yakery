@@ -23,7 +23,10 @@
     deliveryWebhooks = [ "http://${my-lib.netbird.peers.desktop.v4}:7310/" ];
     receiving.enable = true;
     sending.enable = true;
-    sharedMailboxes = [ "catchall" ];
+    sharedMailboxes = [
+      "catchall"
+      "pool"
+    ];
     catchAll = "catchall";
     inherit (inputs.secrets.data.mail) agentCorrespondents;
   };
