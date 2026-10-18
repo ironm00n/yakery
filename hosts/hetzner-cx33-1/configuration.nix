@@ -22,6 +22,8 @@
     # agent-dispatch on desktop wakes the agents a delivery is addressed to
     deliveryWebhooks = [ "http://${my-lib.netbird.peers.desktop.v4}:7310/" ];
     receiving.enable = true;
+    sharedMailboxes = [ "catchall" ];
+    catchAll = "catchall";
     inherit (inputs.secrets.data.mail) agentCorrespondents;
   };
   bundles.bulwark.enable = true;

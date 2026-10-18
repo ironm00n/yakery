@@ -132,6 +132,20 @@ in
       delivery to other mail servers. While off, every recipient is routed to local delivery, so
       mail for other domains bounces instead of leaving
     '';
+    sharedMailboxes = lib.mkOption {
+      type = lib.types.listOf (lib.types.strMatching "[a-z0-9._-]+");
+      default = [ ];
+      example = [ "catchall" ];
+      description = ''
+        Groups at ${domain}, each a shared mailbox, besides postmaster.
+      '';
+    };
+    catchAll = lib.mkOption {
+      type = lib.types.nullOr (lib.types.strMatching "[a-z0-9._-]+");
+      default = null;
+      example = "catchall";
+      description = "Shared mailbox that gets mail for addresses at ${domain} no account or alias holds.";
+    };
     agentCorrespondents = lib.mkOption {
       type = lib.types.listOf (lib.types.strMatching "[a-z0-9._+-]+@[a-z0-9.-]+");
       default = [ ];
@@ -158,6 +172,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.catchAll == null || lib.elem cfg.catchAll cfg.sharedMailboxes;
+        message = "bundles.stalwart.catchAll must be one of bundles.stalwart.sharedMailboxes";
+      }
+    ];
+
     sops.secrets = stalwart-secrets.secrets;
 
     services.stalwart = {
@@ -295,7 +316,7 @@ in
             };
           })
           (upsertOn "Domain" [ "name" ] (
-            lib.mapAttrs (_: name: {
+            lib.recursiveUpdate (lib.mapAttrs (_: name: {
               inherit name;
               dkimManagement = {
                 "@type" = "Automatic";
@@ -310,7 +331,7 @@ in
                 origin = dkimZone name;
                 publishRecords = toSet [ "dkim" ];
               };
-            }) domains
+            }) domains) { ironmoon.catchAllAddress = lib.mapNullable (g: "${g}@${domain}") cfg.catchAll; }
           ))
           (update "SystemSettings" {
             defaultHostname = hostname;
@@ -326,14 +347,22 @@ in
             roles."@type" = "Admin";
             encryptionAtRest."@type" = "Disabled";
           })
-          (upsertOn1 "Account" "postmaster" [ "name" "domainId" ] {
-            "@type" = "Group";
-            name = "postmaster";
-            domainId = ref "ironmoon";
-            permissions."@type" = "Inherit";
-            roles."@type" = "Custom";
-            roles.roleIds = [ ];
-          })
+          (upsertOn "Account" [ "name" "domainId" ] (
+            lib.mapAttrs
+              (_: name: {
+                "@type" = "Group";
+                inherit name;
+                domainId = ref "ironmoon";
+                # with no role, delivery to the group fails and bounces
+                permissions = {
+                  "@type" = "Merge";
+                  enabledPermissions = toSet [ "emailReceive" ];
+                };
+                roles."@type" = "Custom";
+                roles.roleIds = [ ];
+              })
+              (lib.genAttrs ([ "postmaster" ] ++ cfg.sharedMailboxes) lib.id)
+          ))
           (upsertOn1 "Account" "backup" [ "name" "domainId" ] {
             "@type" = "User";
             name = "backup";
