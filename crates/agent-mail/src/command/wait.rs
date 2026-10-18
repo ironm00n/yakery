@@ -28,7 +28,10 @@ use crate::{
     auth::{Auth, is_permanent, store::now},
     config::Config,
     identity::Login,
-    mail::{AGENT_MAIL, ANSWERED, HANDLED, MDN_SENT, Mail, NeedsSignIn, SEEN, busy, has_keyword},
+    mail::{
+        AGENT_MAIL, ANSWERED, HANDLED, MDN_SENT, Mail, NeedsSignIn, SEEN, busy, has_keyword,
+        refused_token,
+    },
     mdn::{self, Asked},
     outbox::Outbox,
     random::Draws,
@@ -562,7 +565,15 @@ impl Watch<'_> {
                     Duration::from_secs(30)
                 }
                 Err(Interruption::Failed(e)) => {
-                    warn(&format!("{e:#}; trying again in {}s", backoff.as_secs()));
+                    let why = if refused_token(&e) {
+                        "the access token expired".to_owned()
+                    } else {
+                        format!("{e:#}")
+                    };
+                    warn(&format!(
+                        "{why}; signing in again in {}s",
+                        backoff.as_secs()
+                    ));
                     let pause = backoff;
                     backoff = (backoff * 2).min(BACKOFF_MAX);
                     if !self.pause(pause).await {
@@ -571,7 +582,7 @@ impl Watch<'_> {
                     match self.mail.reconnect().await {
                         Err(e) if is_permanent(&e) => return Err(e),
                         Err(e) => warn(&format!("{e:#}")),
-                        Ok(()) => {}
+                        Ok(()) => warn("signed in again; waiting"),
                     }
                     continue;
                 }

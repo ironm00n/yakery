@@ -255,6 +255,12 @@ pub fn busy(e: &anyhow::Error) -> bool {
         .is_some_and(throttled)
 }
 
+/// Whether Stalwart refused the access token, which is what an expired one looks like.
+pub fn refused_token(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<jmap_client::Error>()
+        .is_some_and(unauthorized)
+}
+
 fn unauthorized(e: &jmap_client::Error) -> bool {
     match e {
         jmap_client::Error::Problem(problem) => problem.status() == Some(401),
@@ -593,6 +599,14 @@ impl Responses {
 mod tests {
     use super::*;
     use crate::auth::is_permanent;
+
+    #[test]
+    fn a_refused_token_is_recognised_through_context() {
+        let refused = anyhow::Error::from(jmap_client::Error::Server("401 Unauthorized".into()));
+        assert!(refused_token(&refused.context("stalwart")));
+        let other = anyhow::Error::from(jmap_client::Error::Server("500 Internal".into()));
+        assert!(!refused_token(&other.context("stalwart")));
+    }
 
     #[test]
     fn the_session_must_belong_to_the_configured_login() {
