@@ -10,6 +10,7 @@ let
   inherit (my-lib.stalwart)
     reconcile
     update
+    upsertOn
     upsertOn1
     ref
     toSet
@@ -52,12 +53,18 @@ let
     inherit defaults;
   };
 
-  domainOp =
-    id: name:
-    upsertOn1 "Domain" id [ "name" ] {
-      inherit name;
-      dkimManagement."@type" = "Manual";
-    };
+  domains = {
+    ironmoon = domain;
+    agent = agentDomain;
+  };
+
+  # Stalwart rotates the DKIM keys of each domain in this zone, delegated to Knot on this host
+  dkimZone = name: "_domainkey.${name}";
+  tsig = {
+    keyName = "stalwart";
+    algorithm = "hmac-sha512";
+    dir = "/var/lib/stalwart-dkim-tsig";
+  };
 
   localOnly = {
     match = [ ];
@@ -112,6 +119,7 @@ in
       credentials = {
         s3_access_key = get-stalwart-secret "s3_access_key";
         s3_secret_key = get-stalwart-secret "s3_secret_key";
+        dkim_tsig = "${tsig.dir}/secret";
       }
       // lib.optionalAttrs cfg.receiving.enable {
         tls_certificate = "${certDir}/fullchain.pem";
@@ -223,8 +231,34 @@ in
             defaultAdminRoleIds = toSet [ (ref "super-admin") ];
           })
 
-          (domainOp "ironmoon" domain)
-          (domainOp "agent" agentDomain)
+          (reconcile "DnsServer" [ "description" ] {
+            knot = {
+              "@type" = "Tsig";
+              description = "Knot on this host, for the delegated _domainkey zones";
+              host = "127.0.0.1";
+              inherit (tsig) keyName;
+              key = fileSecret (credential "dkim_tsig");
+              tsigAlgorithm = tsig.algorithm;
+            };
+          })
+          (upsertOn "Domain" [ "name" ] (
+            lib.mapAttrs (_: name: {
+              inherit name;
+              dkimManagement = {
+                "@type" = "Automatic";
+                algorithms = toSet [
+                  "Dkim1RsaSha256"
+                  "Dkim1Ed25519Sha256"
+                ];
+              };
+              dnsManagement = {
+                "@type" = "Automatic";
+                dnsServerId = ref "knot";
+                origin = dkimZone name;
+                publishRecords = toSet [ "dkim" ];
+              };
+            }) domains
+          ))
           (update "SystemSettings" {
             defaultHostname = hostname;
             defaultDomainId = ref "ironmoon";
@@ -262,6 +296,16 @@ in
 
           (update "MtaOutboundStrategy" {
             route = if cfg.sending.enable then localThenMx else localOnly;
+          })
+          # unpinned, IPv6 mail leaves from whichever address the kernel prefers, today webmail's
+          (reconcile "MtaConnectionStrategy" [ "name" ] {
+            default = {
+              name = "default";
+              sourceIps = map (sourceIp: { inherit sourceIp; }) [
+                ips.ipv4.address
+                address
+              ];
+            };
           })
 
           # relaxed, Stalwart's default on port 25, only records a failed p=reject
@@ -333,7 +377,76 @@ in
       }
     ];
 
-    networking.firewall.allowedTCPPorts = lib.optional cfg.receiving.enable 25;
+    services.knot = {
+      enable = true;
+      keyFiles = [ "/run/credentials/knot.service/tsig.conf" ];
+      settings = {
+        server.listen = [
+          "${ips.ipv4.address}@53"
+          "${address}@53"
+          "127.0.0.1@53"
+        ];
+        acl = [
+          {
+            id = "stalwart";
+            address = [ "127.0.0.1" ];
+            key = tsig.keyName;
+            action = "update";
+          }
+        ];
+        mod-rrl = [ { id = "default"; } ];
+        template = [
+          {
+            id = "default";
+            global-module = "mod-rrl/default";
+            # the store's zone files hold SOA and NS; Stalwart's TXT records live only in the journal
+            zonefile-sync = -1;
+            zonefile-load = "difference-no-serial";
+            journal-content = "all";
+            zonefile-skip = [ "TXT" ];
+          }
+        ];
+        zone = lib.mapAttrsToList (_: name: {
+          domain = dkimZone name;
+          file = pkgs.writeText "${dkimZone name}.zone" ''
+            @ 3600 SOA ${hostname}. hostmaster.${domain}. 1 3600 900 1209600 300
+            @ 3600 NS ${hostname}.
+          '';
+          acl = "stalwart";
+        }) domains;
+      };
+    };
+    systemd.services.knot.serviceConfig.LoadCredential = "tsig.conf:${tsig.dir}/knot.conf";
+    systemd.services.stalwart-dkim-tsig = {
+      description = "TSIG key Stalwart signs its DKIM updates to Knot with";
+      before = [
+        "knot.service"
+        "stalwart.service"
+      ];
+      requiredBy = [
+        "knot.service"
+        "stalwart.service"
+      ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        StateDirectory = baseNameOf tsig.dir;
+        UMask = "0077";
+      };
+      script = ''
+        cd ${tsig.dir}
+        if [ ! -s secret ]; then
+          head -c 64 /dev/urandom | base64 -w0 > secret.new
+          mv secret.new secret
+        fi
+        printf 'key:\n  - id: %s\n    algorithm: %s\n    secret: %s\n' \
+          ${tsig.keyName} ${tsig.algorithm} "$(cat secret)" > knot.conf.new
+        mv knot.conf.new knot.conf
+      '';
+    };
+
+    networking.firewall.allowedUDPPorts = [ 53 ];
+    networking.firewall.allowedTCPPorts = [ 53 ] ++ lib.optional cfg.receiving.enable 25;
     # Stalwart reads the certificate files only at start
     security.acme.certs.${hostname}.reloadServices = lib.optional cfg.receiving.enable "stalwart.service";
     systemd.services.stalwart = lib.mkIf cfg.receiving.enable {
