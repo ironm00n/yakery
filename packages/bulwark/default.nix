@@ -31,6 +31,7 @@ buildNpmPackage (finalAttrs: {
   patches = [
     ./01-localfont.patch
     ./02-mobile-handoff-signed-in.patch
+    ./03-mail-frames-match-the-page.patch
   ];
 
   configurePhase = ''
