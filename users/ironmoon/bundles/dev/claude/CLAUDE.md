@@ -76,5 +76,8 @@ Finally there are some practical details you should know:
 - Don't scaffold multiple commands with `echo` headers, instead run each with its own call, where possible. Counterintuitively, long compound commands require more human approval, since common commands automatically pass an allow list. Only combine when the commands must share state.
 - Single-quote search patterns by default; escaping `$`/backticks inside double quotes still trips the expansion-approval prompt.
 - Never use the `--prune` flag when fetching unless explicitly asked to
-- never reference the "current" time unless it came from a tool-call from a _recent_ tool-call _in the same turn_
+- a hook puts the current time on each prompt, on subagent starts and after compaction; use it only to date things
+  - it is never a reason to hurry, cut work, set time boxes, wrap up, or comment on the hour, sleep, or how long something takes, unless I ask about time; I set the pace
+  - it goes stale during a turn, so a time you write into a message or file comes from `date` in that same command
+  - midnight to 4am my "tomorrow" means the current date; 4 to 8am my day words are ambiguous, so ask
 

@@ -20,8 +20,13 @@ use jmap_client::{
 };
 
 use crate::{
-    auth::Auth, config::ConfigError, identity::Login, origin::Origin, policy::JMAP_HOST,
-    random::Draws, secret::Secret,
+    auth::Auth,
+    config::ConfigError,
+    identity::Login,
+    origin::{self, Origin, Pinned},
+    policy::JMAP_HOST,
+    random::Draws,
+    secret::Secret,
 };
 
 const THROTTLE_BACKOFF: Duration = Duration::from_millis(500);
@@ -45,6 +50,7 @@ pub fn has_keyword(m: &Email, keyword: &str) -> bool {
 pub struct Session {
     pub client: Client,
     token: Secret,
+    downloads: reqwest::Client,
     mailboxes: Vec<(Role, String)>,
 }
 
@@ -93,6 +99,32 @@ impl Session {
             .context("stalwart")
     }
 
+    /// The blob's bytes, or `None` once they pass the byte bound.
+    async fn download(&self, blob: &str, bounds: Bounds) -> jmap_client::Result<Option<Vec<u8>>> {
+        let url = download_url(
+            self.client.session().download_url(),
+            self.client.default_account_id(),
+            blob,
+        )
+        .map_err(|e| jmap_client::Error::Internal(format!("{e:#}")))?;
+        let response = self
+            .downloads
+            .get(url.as_str())
+            .bearer_auth(self.token.expose())
+            .timeout(bounds.time)
+            .send()
+            .await?;
+        let mut response = Client::handle_error(response).await?;
+        let mut bytes = vec![];
+        while let Some(chunk) = response.chunk().await? {
+            if bytes.len() + chunk.len() > bounds.bytes {
+                return Ok(None);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(Some(bytes))
+    }
+
     /// The session names the URLs every later request goes to, so they are checked before any of them is used, and
     /// from then on no request follows a redirect. The account must be the configured login's, since the
     /// recipient policy is keyed on that login.
@@ -125,6 +157,7 @@ impl Session {
         let mut session = Session {
             client,
             token,
+            downloads: origin::download_client()?,
             mailboxes: vec![],
         };
         let mut request = session.request();
@@ -141,6 +174,42 @@ impl Session {
             .collect();
         Ok(session)
     }
+}
+
+/// An RFC 8620 id: 1 to 255 of `[A-Za-z0-9_-]`, so safe unescaped in a URL path and as a file name.
+#[derive(Clone, Copy)]
+pub struct JmapId<'a>(&'a str);
+
+impl<'a> JmapId<'a> {
+    pub fn new(id: &'a str) -> Result<JmapId<'a>> {
+        let valid = (1..=255).contains(&id.len())
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        ensure!(valid, "{} is not a JMAP id", id.escape_debug());
+        Ok(JmapId(id))
+    }
+
+    pub fn as_str(self) -> &'a str {
+        self.0
+    }
+}
+
+/// How much of a download is taken, and how long it may take in all; each read is bounded besides.
+#[derive(Clone, Copy)]
+pub struct Bounds {
+    pub bytes: usize,
+    pub time: Duration,
+}
+
+/// The session's download template filled in, under the same origin check as the template.
+fn download_url(template: &str, account: &str, blob: &str) -> Result<Pinned> {
+    let url = template
+        .replace("{accountId}", JmapId::new(account)?.as_str())
+        .replace("{blobId}", JmapId::new(blob)?.as_str())
+        .replace("{name}", "attachment")
+        .replace("{type}", "application%2Foctet-stream");
+    Origin::Mail.check(&url)
 }
 
 /// The recipient policy is keyed on the configured login, so the server must agree that is whose account this is.
@@ -401,6 +470,11 @@ impl Mail {
         }
     }
 
+    /// The blob's bytes, or `None` once they pass the byte bound. A download sets no keyword.
+    pub async fn download(&self, blob: &str, bounds: Bounds) -> Result<Option<Vec<u8>>> {
+        self.with(async |s| s.download(blob, bounds).await).await
+    }
+
     /// The id `id` has now. Stalwart puts the thread in an email's id and answers Email/get with the thread of the
     /// id it was asked for, so after a merge only a query returns the current one. `None` when the email is gone.
     pub async fn current(&self, id: &str) -> Result<Option<String>> {
@@ -528,5 +602,19 @@ mod tests {
             .err()
             .unwrap();
         assert!(is_permanent(&other), "{other:#}");
+    }
+
+    #[test]
+    fn downloads_stay_on_the_mail_origin() {
+        let template =
+            "https://mail.ironmoon.dev/jmap/download/{accountId}/{blobId}/{name}?accept={type}";
+        assert_eq!(
+            download_url(template, "b", "Ab_9-z").unwrap().as_str(),
+            "https://mail.ironmoon.dev/jmap/download/b/Ab_9-z/attachment?accept=application%2Foctet-stream"
+        );
+        for blob in ["", "../x", "a/b", "a?b", "a%2Fb", "@evil.com"] {
+            assert!(download_url(template, "b", blob).is_err(), "{blob}");
+        }
+        assert!(download_url("https://{blobId}/x", "b", "evilcom").is_err());
     }
 }

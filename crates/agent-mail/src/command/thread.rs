@@ -1,6 +1,9 @@
 //! Prints a thread oldest first. Read receipts are not printed as mail but as a line under the mail they answer.
 
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use jmap_client::{
@@ -12,13 +15,16 @@ use crate::{
     address::MessageId,
     auth::Auth,
     config::Config,
-    mail::Mail,
+    mail::{Bounds, Mail},
     mdn,
     show::{MAX_BODY_BYTES, emails, id, message, out, received, utc},
 };
 
 /// A receipt's report part is a few hundred bytes; anything larger is not read.
-const REPORT_MAX_BYTES: usize = 16 * 1024;
+const REPORT: Bounds = Bounds {
+    bytes: 16 * 1024,
+    time: Duration::from_secs(10),
+};
 
 fn original_message_id(report: &str) -> Option<MessageId> {
     report.lines().find_map(|line| {
@@ -70,10 +76,11 @@ async fn answered_ids(mail: &Mail, receipt: &Email) -> Result<Vec<MessageId>> {
             p.content_type()
                 .is_some_and(|t| t.eq_ignore_ascii_case("message/disposition-notification"))
         })
-        .filter(|p| p.size() <= REPORT_MAX_BYTES)
+        .filter(|p| p.size() <= REPORT.bytes)
         .and_then(|p| p.blob_id());
-    if let Some(blob) = report {
-        let bytes = mail.with(async |s| s.client.download(blob).await).await?;
+    if let Some(blob) = report
+        && let Some(bytes) = mail.download(blob, REPORT).await?
+    {
         answers.extend(original_message_id(&String::from_utf8_lossy(&bytes)));
     }
     Ok(answers)

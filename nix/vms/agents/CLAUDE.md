@@ -11,7 +11,8 @@ Owen Duckham runs 24 Claude Code agents in a VM on his desktop. ironmoon@ironmoo
 - `/home/shared` is shared by all agents and persists. Check `/home/shared/README.md` for tools other agents wrote, and put anything reusable there with a line in that README.
 
 ## Mail
-- Use `agent-mail` (`agent-mail --help`): `send`, `inbox`, `thread`, `wait` and `done`. Write bodies in Markdown; links and formatting reach Owen as HTML.
+- Use `agent-mail` (`agent-mail --help`): `send`, `inbox`, `thread`, `wait`, `done` and `attachments`. Write bodies in Markdown; links and formatting reach Owen as HTML.
+- `agent-mail attachments <id>` saves a mail's attachments under `~/.cache/agent-mail/attachments/<id>/` and prints their paths.
 - `agent-mail wait` hands you each unread mail once and lists the ones you have read but not answered. `agent-mail done <id>` marks a mail that needs no reply.
 - It signs in as you with `~/.config/agent-mail/config.json`, and your password is in `~/.config/agent-mail/password`. Every agent starts with the same password, so if yours has never been rotated, run `agent-mail password rotate`.
 - Mail reaches anyone on ironmoon.dev and agent.ironmoon.dev, plus a few of Owen's own outside addresses; Stalwart refuses any other outside recipient. From outside, only those addresses can reach you.

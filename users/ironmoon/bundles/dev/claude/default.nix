@@ -1,6 +1,8 @@
 {
   config,
   lib,
+  pkgs,
+  inputs,
   my-utils,
   pkgs-master,
   ...
@@ -16,6 +18,9 @@ let
   inherit (my-utils) symlink;
   inherit (pkgs-master) claude-code;
   cfg = config.bundles.dev.claude;
+  agent-mail = pkgs.callPackage ../../../../../crates/agent-mail/package.nix {
+    correspondents = inputs.secrets.data.mail.agentCorrespondents or [ ];
+  };
 
   # claude code loads any ~/.claude/skills/<name> holding a .claude-plugin/ as a plugin
   mods = mapAttrs' (name: _: nameValuePair ".claude/skills/${name}" { source = symlink (./mods + "/${name}"); }) (
@@ -28,7 +33,15 @@ in
   };
 
   config = mkIf cfg.enable {
-    home.packages = [ claude-code ];
+    home.packages = [
+      claude-code
+      agent-mail
+    ];
+
+    xdg.configFile."agent-mail/config.json".text = builtins.toJSON {
+      login = "agent@ironmoon.dev";
+      password-file = "~/.claude/secrets/agent-ironmoon-dev-password";
+    };
 
     home.file = {
       # no XDG: https://github.com/anthropics/claude-code/issues/1455

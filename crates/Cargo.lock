@@ -16,6 +16,7 @@ dependencies = [
  "libc",
  "lol_html",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",

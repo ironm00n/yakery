@@ -6,20 +6,22 @@
     "CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF": "1",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
     "CLAUDE_CODE_DISABLE_FAST_MODE": "1",
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "0",
     "CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "10000",
     "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "5",
-    "CLAUDE_CODE_NO_MODEL_FALLBACK": "1"
+    "CLAUDE_CODE_NO_MODEL_FALLBACK": "1",
+    "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS": "15"
   },
   "attribution": {
     "sessionUrl": false,
-    "commit": "{Assisted,Generated}-by: <model-id>[:effort] [harness[:version]]",
+    "commit": "\"{Assisted,Generated}-by: <model-id>[:effort] [harness[:version]]\" (see project policy for more info about nested agents)",
     "pr": ""
   },
   "permissions": {
     "allow": [
       "Read(//nix/store)",
       "Agent(Explore)",
+      "Bash(agent-mail:*)",
       "Bash(ls:*)",
       "Bash(rg:*)",
       "Bash(jq:*)",
@@ -44,13 +46,24 @@
       "Bash(gh pr list:*)",
       "Bash(gh search:*)",
       "Bash(command -v:*)",
-      "Bash(echo \"exit:$?\")"
+      "Bash(echo \"exit:$?\")",
+      "Bash(/home/ironmoon/workspace/claude/tools/cc-peer.py *)"
+    ],
+    "deny": [
+      "Skill(artifact-capabilities)",
+      "Artifact(*)",
+      "ShareOnboardingGuide(*)",
+      "mcp__claude_ai_*",
+      "RemoteTrigger",
+      "DesignSync"
     ],
     "defaultMode": "default"
   },
+  "disableClaudeAiConnectors": true,
   "autoMode": {
     "allow": [
-      "$defaults"
+      "$defaults",
+      "Messaging another Claude Code session, on this host or another host over ssh, through its peer messaging socket (e.g. /home/ironmoon/workspace/claude/tools/cc-peer.py, or socat to /run/user/*/cc-socks/*.sock), including reading that session's peerToken from ~/.claude/sessions/<pid>.*.key on the target host to authenticate. Only for sending messages to other sessions, not injecting input into the current session."
     ],
     "soft_deny": [
       "$defaults",
@@ -71,6 +84,7 @@
   "worktree": {
     "bgIsolation": "none"
   },
+  "enableArtifact": false,
   "hooks": {
     "PreToolUse": [
       {
@@ -79,6 +93,14 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/guard-idle.sh\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-facts.sh\""
           }
         ]
       }
@@ -93,6 +115,72 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-facts.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-time.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-host.sh\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-facts.sh\""
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-facts.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-time.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-host.sh\""
+          }
+        ]
+      }
+    ],
+    "PostModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-facts.sh\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/session-time.sh\""
+          }
+        ]
+      }
     ]
   },
   "workflowSizeGuideline": "unrestricted",
@@ -103,9 +191,6 @@
     "coq-lsp@local-coq-lsp": true,
     "typst-lsp@local-typst-lsp": true
   },
-  "appendPlugins": [
-    "email-probe@inline"
-  ],
   "extraKnownMarketplaces": {
     "local-coq-lsp": {
       "source": {
@@ -120,6 +205,14 @@
       }
     }
   },
+  "sandbox": {
+    "network": {
+      "allowedDomains": [
+        "auth.ironmoon.dev",
+        "mail.ironmoon.dev"
+      ]
+    }
+  },
   "spinnerTipsEnabled": false,
   "spinnerVerbs": {
     "mode": "replace",
@@ -132,6 +225,9 @@
   "modelSettings": {
     "claude-opus-5-5": {
       "effortLevel": "xhigh"
+    },
+    "claude-mythos-5-1": {
+      "effortLevel": "low"
     }
   },
   "tui": "fullscreen",

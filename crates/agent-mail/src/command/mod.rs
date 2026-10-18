@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod done;
 pub mod inbox;
 pub mod send;

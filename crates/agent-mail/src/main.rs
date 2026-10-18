@@ -5,6 +5,8 @@ mod auth;
 mod body;
 mod command;
 mod config;
+mod folder;
+mod home;
 mod identity;
 mod mail;
 mod mdn;
@@ -40,6 +42,14 @@ enum Command {
     /// Print the thread of an email, oldest first, with read receipts as a line under the mail they answer;
     /// read-only.
     Thread {
+        #[arg(value_name = "EMAIL_ID")]
+        id: String,
+    },
+    /// Save each attachment of an email into <passwd home>/.cache/agent-mail/attachments/<email id>/ and print
+    /// the absolute path of each, one per line; read-only. Names are cut down to [A-Za-z0-9._-]. A file saved by
+    /// an earlier run is printed again, not replaced. Exits 1 if any attachment was skipped, over 50 MiB each or
+    /// 200 MiB in all, or failed; each is named on stderr with why.
+    Attachments {
         #[arg(value_name = "EMAIL_ID")]
         id: String,
     },
@@ -104,6 +114,7 @@ async fn run() -> ExitCode {
         Command::Send(args) => command::send::run(args).await,
         Command::Inbox(args) => command::inbox::run(args).await,
         Command::Thread { id } => command::thread::run(id).await,
+        Command::Attachments { id } => command::attachments::run(id).await,
         Command::Wait(args) => match command::wait::run(args).await {
             Ok(Waited::TimedOut) => return ExitCode::from(2),
             waited => waited.map(drop),
