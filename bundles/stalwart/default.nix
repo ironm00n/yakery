@@ -152,6 +152,7 @@ in
       example = [ "catchall" ];
       description = ''
         Groups at ${domain}, each a shared mailbox, besides postmaster.
+        Its members are the users whose ZITADEL `mail_groups` claim names it.
       '';
     };
     catchAll = lib.mkOption {
@@ -291,6 +292,7 @@ in
             issuerUrl = "https://auth.${domain}";
             requireAudience = webuiClientId;
             claimUsername = "preferred_username";
+            claimGroups = "mail_groups";
             usernameDomain = domain;
             # HACK until https://github.com/zitadel/zitadel/pull/12180 lands
             requireScopes = [ ];
