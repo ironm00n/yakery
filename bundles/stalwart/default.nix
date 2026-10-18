@@ -66,6 +66,43 @@ let
     dir = "/var/lib/stalwart-dkim-tsig";
   };
 
+  # the host sessions' account; every account on agentDomain is an agent too
+  agentLocalPart = "agent";
+
+  # the queue keeps the local part's case
+  isAgentSender = "sender_domain == '${agentDomain}' || (sender_domain == '${domain}' && (starts_with(to_lowercase(sender), '${agentLocalPart}@') || starts_with(to_lowercase(sender), '${agentLocalPart}+')))";
+  agentMayReach = lib.concatStringsSep " || " (
+    [
+      "rcpt_domain == '${domain}'"
+      "ends_with(rcpt_domain, '.${domain}')"
+    ]
+    ++ map (rcpt: "to_lowercase(rcpt) == '${rcpt}'") cfg.agentCorrespondents
+  );
+  agentRcptForbidden = "(${isAgentSender}) && !(${agentMayReach})";
+
+  # sieve-rs joins the DATA-stage recipients into one string, hence :matches with * on both sides.
+  # A DMARC pass vouches for the From domain; Gmail and the like vouch for its local part.
+  agentInbound =
+    let
+      senders =
+        lib.optional (cfg.agentCorrespondents != [ ])
+          ''address :all :is "from" [${
+            lib.concatMapStringsSep ", " builtins.toJSON cfg.agentCorrespondents
+          }]''
+        ++ [
+          ''address :domain :is "from" "${domain}"''
+          ''address :domain :matches "from" "*.${domain}"''
+        ];
+    in
+    ''
+      require ["envelope", "reject", "variables", "relational", "comparator-i;ascii-numeric"];
+      if envelope :all :matches "to" ["*@${agentDomain}*", "*${agentLocalPart}@${domain}*", "*${agentLocalPart}+*@${domain}*"] {
+        if not allof (string :is "''${env.dmarc.result}" "pass", address :count "eq" :comparator "i;ascii-numeric" "from" "1", anyof (${lib.concatStringsSep ", " senders})) {
+          reject "550 5.7.1 agents take mail only from their correspondents";
+        }
+      }
+    '';
+
   localOnly = {
     match = [ ];
     "else" = "'local'";
@@ -74,6 +111,11 @@ let
     match = [
       {
         "if" = "is_local_domain(rcpt_domain)";
+        "then" = "'local'";
+      }
+      # Sieve redirects and vacation replies reach the queue without the RCPT check
+      {
+        "if" = agentRcptForbidden;
         "then" = "'local'";
       }
     ];
@@ -90,6 +132,17 @@ in
       delivery to other mail servers. While off, every recipient is routed to local delivery, so
       mail for other domains bounces instead of leaving
     '';
+    agentCorrespondents = lib.mkOption {
+      type = lib.types.listOf (lib.types.strMatching "[a-z0-9._+-]+@[a-z0-9.-]+");
+      default = [ ];
+      example = [ "someone@example.com" ];
+      description = ''
+        Addresses outside ${domain} that agent@${domain} and the agents on ${agentDomain} may
+        exchange mail with, besides ${domain} and its subdomains. Agents' mail to anyone else is
+        refused at RCPT, or bounced when it reaches the queue another way, such as a Sieve redirect.
+        Mail to the agents over port 25 is refused unless it passes DMARC as one of these senders.
+      '';
+    };
     receiving.enable = lib.mkEnableOption ''
       SMTP on port 25 of the public addresses, with STARTTLS on the ACME certificate nginx keeps for
       ${hostname}, so mail from other servers reaches the local domains
@@ -305,6 +358,48 @@ in
                 ips.ipv4.address
                 address
               ];
+            };
+          })
+          (update "MtaStageRcpt" {
+            allowRelaying = {
+              match = [
+                {
+                  "if" = "is_empty(authenticated_as)";
+                  "then" = "false";
+                }
+                {
+                  "if" = agentRcptForbidden;
+                  "then" = "false";
+                }
+              ];
+              "else" = "true";
+            };
+          })
+          # a forged local sender would get the bounce of an undeliverable message, past agent-inbound
+          (update "MtaStageMail" {
+            isSenderAllowed = {
+              match = [ ];
+              "else" =
+                "!is_empty(authenticated_as) || (!key_exists('spam-block', sender_domain) && !is_local_domain(sender_domain))";
+            };
+          })
+          (reconcile "SieveSystemScript" [ "name" ] {
+            agent-inbound = {
+              name = "agent-inbound";
+              description = "Refuses mail to ${agentDomain} from anyone but its correspondents";
+              isActive = true;
+              contents = agentInbound;
+            };
+          })
+          (update "MtaStageData" {
+            script = {
+              match = [
+                {
+                  "if" = "local_port == 25";
+                  "then" = "'agent-inbound'";
+                }
+              ];
+              "else" = "false";
             };
           })
 
