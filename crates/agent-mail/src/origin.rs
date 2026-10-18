@@ -13,6 +13,7 @@ use crate::{
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const REDIRECTS: usize = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +109,17 @@ fn redirect(from: &Pinned, status: StatusCode, location: Option<&str>) -> Result
         StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT
     );
     Ok((from.join(location)?, keeps_body))
+}
+
+/// For bodies too large to bound with one timeout, so each read is bounded instead. A redirect is returned, not
+/// followed.
+pub fn download_client() -> Result<Client> {
+    Ok(Client::builder()
+        .redirect(redirect::Policy::none())
+        .https_only(true)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
+        .build()?)
 }
 
 /// Follows redirects itself, and only within the origin of the request.

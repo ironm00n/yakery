@@ -4,13 +4,9 @@
 //! so every session of one user on one host takes the same lock files.
 
 use std::{
-    ffi::CStr,
     fs::{self, DirBuilder, File, OpenOptions, Permissions},
     io::{ErrorKind, Write},
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
-    },
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -20,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Fingerprint,
+    home::home,
     random::{ALPHANUMERIC, Draws},
     secret::Secret,
 };
@@ -73,26 +70,7 @@ pub fn now() -> i64 {
 
 /// `<home>/.local/state/agent-mail/locks`, with home from the passwd entry of the real user.
 pub fn locks_dir() -> Result<PathBuf> {
-    let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
-    let mut buf = vec![0 as libc::c_char; 16 * 1024];
-    let mut found = std::ptr::null_mut();
-    // SAFETY: every pointer refers to storage that outlives the call, and `buf.len()` is its size.
-    let status = unsafe {
-        libc::getpwuid_r(
-            libc::getuid(),
-            entry.as_mut_ptr(),
-            buf.as_mut_ptr(),
-            buf.len(),
-            &mut found,
-        )
-    };
-    if status != 0 || found.is_null() {
-        bail!("no passwd entry for this user");
-    }
-    // SAFETY: getpwuid_r succeeded, so `entry` is filled in and `pw_dir` points into `buf`.
-    let home = unsafe { CStr::from_ptr(entry.assume_init().pw_dir) };
-    Ok(Path::new(std::ffi::OsStr::from_bytes(home.to_bytes()))
-        .join(".local/state/agent-mail/locks"))
+    Ok(home()?.join(".local/state/agent-mail/locks"))
 }
 
 fn private_dir(dir: &Path) -> Result<()> {
