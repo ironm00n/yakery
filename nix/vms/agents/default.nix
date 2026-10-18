@@ -46,6 +46,8 @@ let
   keyDeviceUnit = "${utils.escapeSystemdPath keyDevice}.device";
 in
 {
+  imports = [ ./agent-mail.nix ];
+
   microvm = {
     hypervisor = "qemu";
     vcpu = 16;
@@ -188,7 +190,6 @@ in
     git
     gnupg
     openssh
-    python3
     file
     unzip
     zip
