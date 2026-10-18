@@ -1,0 +1,160 @@
+diff --git a/components/email/email-viewer.tsx b/components/email/email-viewer.tsx
+index 2d018bf..5165aaf 100644
+--- a/components/email/email-viewer.tsx
++++ b/components/email/email-viewer.tsx
+@@ -9,6 +9,7 @@ import { getRenderableHtmlBody } from "@/lib/email-body-selection";
+ import { collectReferencedCids, isEmbeddedInBody } from "@/lib/attachment-visibility";
+ import { collapsePlainTextQuotes, setupQuoteCollapse } from "@/lib/quote-collapse";
+ import { DARK_PENDING_CLASS, applyEmailDarkMode, emailColorScheme, emailDarkModeCss, emailHasNativeDarkMode as htmlHasNativeDarkMode, resolveColorSchemeMedia } from "@/lib/email-dark-mode";
++import { EMAIL_FRAME_FONT_FAMILY, adoptFrameLook } from "@/lib/email-frame-look";
+ import { fitEmailBodyWidth } from "@/lib/email-fit-width";
+ import { withBasePath } from "@/lib/browser-navigation";
+ import { buildContactsPath, buildMailPath } from "@/lib/deep-links";
+@@ -2820,7 +2821,7 @@ export function EmailViewer({
+      verification email rendered as a logo-only 150px strip). Neutralise the
+      full-height trick on any element so the body grows to its content. */
+   [style*="height:100%"], [style*="height: 100%"] { height: auto !important; }
+-  body { margin: 0; padding: ${bodyPadding}; overflow-x: auto; overflow-y: hidden; height: auto !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; line-height: 1.6; color: #1a1a1a; background: #ffffff; word-wrap: break-word; overflow-wrap: break-word; }
++  body { margin: 0; padding: ${bodyPadding}; overflow-x: auto; overflow-y: hidden; height: auto !important; font-family: ${EMAIL_FRAME_FONT_FAMILY}; font-size: 14px; line-height: 1.6; color: #1a1a1a; background: #ffffff; word-wrap: break-word; overflow-wrap: break-word; }
+   @media (max-width: 640px) { body { padding-left: ${mobileBodyPaddingX}; padding-right: ${mobileBodyPaddingX}; } }
+   /* Only force the cap on images that set no width of their own: an
+      !important 100% also overrides a sender's inline max-width, and an
+@@ -2971,6 +2972,8 @@ export function EmailViewer({
+           hide: t('hide_quoted_text'),
+         });
+ 
++        adoptFrameLook(iframe);
++
+         // Before the height wiring and after the quote toggle exists, so the
+         // toggle is converted too. Reads the mail's computed colours and
+         // un-hides the body when done.
+diff --git a/components/email/thread-conversation-view.tsx b/components/email/thread-conversation-view.tsx
+index c60315b..4830b48 100644
+--- a/components/email/thread-conversation-view.tsx
++++ b/components/email/thread-conversation-view.tsx
+@@ -11,6 +11,7 @@ import { collectReferencedCids, isEmbeddedInBody } from "@/lib/attachment-visibi
+ import { collapsePlainTextQuotes, setupQuoteCollapse } from "@/lib/quote-collapse";
+ import { fitEmailBodyWidth } from "@/lib/email-fit-width";
+ import { DARK_PENDING_CLASS, applyEmailDarkMode, emailDarkModeCss } from "@/lib/email-dark-mode";
++import { EMAIL_FRAME_FONT_FAMILY, adoptFrameLook } from "@/lib/email-frame-look";
+ import { useThemeStore } from "@/stores/theme-store";
+ import { useShallow } from "zustand/react/shallow";
+ import { Avatar } from "@/components/ui/avatar";
+@@ -63,6 +64,9 @@ interface ThreadConversationViewProps {
+   mailboxRole?: string | null;
+ }
+ 
++/** For plain-text and HTML bodies alike. */
++const BODY_FONT_SIZE = '13px';
++
+ // Helper function to get file icon based on mime type or extension
+ const getFileIcon = (name?: string, type?: string) => {
+   const ext = name?.split('.').pop()?.toLowerCase();
+@@ -685,7 +689,7 @@ export function ConversationEmailBody({
+      on a phone fitEmailBodyWidth() shrinks it to the screen first, so the pan is
+      only left for content too wide to stay legible when scaled. */
+   html { overflow: hidden; }
+-  body { overflow-x: auto; overflow-y: hidden; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; line-height: 1.6; color: #1a1a1a; background: #ffffff; word-wrap: break-word; overflow-wrap: break-word; }
++  body { overflow-x: auto; overflow-y: hidden; margin: 0; padding: 0; font-family: ${EMAIL_FRAME_FONT_FAMILY}; font-size: ${BODY_FONT_SIZE}; line-height: 1.6; color: #1a1a1a; background: #ffffff; word-wrap: break-word; overflow-wrap: break-word; }
+   /* Only force the cap on images that set no width of their own: an
+      !important 100% also overrides a sender's inline max-width, and an
+      image sized by max-width + max-height + width:100% then grows to
+@@ -727,6 +731,7 @@ export function ConversationEmailBody({
+         show: t('email_viewer.show_quoted_text'),
+         hide: t('email_viewer.hide_quoted_text'),
+       });
++      adoptFrameLook(iframe);
+       if (isDark) applyEmailDarkMode(doc, { remoteContentAllowed: allowExternal });
+       const resize = () => {
+         // Fit desktop-width mail to the screen before measuring: the transform
+@@ -813,7 +818,7 @@ export function ConversationEmailBody({
+               "[&_table]:border-collapse [&_td]:p-2 [&_th]:p-2",
+               "[&_img]:max-w-full [&_img]:h-auto"
+             )}
+-            style={{ whiteSpace: 'pre-wrap', ...(plainTextFont === 'mono' && { fontFamily: 'ui-monospace, "SF Mono", Consolas, monospace' }), fontSize: '13px' }}
++            style={{ whiteSpace: 'pre-wrap', ...(plainTextFont === 'mono' && { fontFamily: 'ui-monospace, "SF Mono", Consolas, monospace' }), fontSize: BODY_FONT_SIZE }}
+             dangerouslySetInnerHTML={plainBodyHtml}
+           />
+         )}
+diff --git a/lib/email-dark-mode.ts b/lib/email-dark-mode.ts
+index e95d268..a0e56be 100644
+--- a/lib/email-dark-mode.ts
++++ b/lib/email-dark-mode.ts
+@@ -20,6 +20,8 @@
+  * the same way, whether or not remote content is loaded.
+  */
+ 
++import { FRAME_SURFACE, FRAME_TEXT } from '@/lib/email-frame-look';
++
+ /** Whether the email ships its own dark styles. */
+ export function emailHasNativeDarkMode(html: string): boolean {
+   return /prefers-color-scheme\s*:\s*dark/i.test(html);
+@@ -52,7 +54,7 @@ export function resolveColorSchemeMedia(html: string, isDark: boolean): string {
+       (scheme.toLowerCase() === 'dark') === isDark ? ALWAYS : NEVER) + close);
+ }
+ 
+-/** Canvas the converted mail sits on (white maps to this). */
++/** Canvas the converted mail sits on (white maps to this) until the frame adopts the page's. */
+ export const EMAIL_DARK_BACKGROUND = '#141414';
+ const DARK_TEXT = '#e6e6e6';
+ const DARK_LINK = '#8ab4f8';
+@@ -68,8 +70,8 @@ export const DARK_PENDING_CLASS = 'bulwark-dark-pending';
+  */
+ export function emailDarkModeCss(): string {
+   return `
+-      html { background: ${EMAIL_DARK_BACKGROUND}; }
+-      body { color: ${DARK_TEXT}; background: ${EMAIL_DARK_BACKGROUND}; }
++      html { background: var(${FRAME_SURFACE}, ${EMAIL_DARK_BACKGROUND}); }
++      body { color: var(${FRAME_TEXT}, ${DARK_TEXT}); background: var(${FRAME_SURFACE}, ${EMAIL_DARK_BACKGROUND}); }
+       a { color: ${DARK_LINK}; }
+       @keyframes bulwark-dark-reveal { to { visibility: visible; } }
+       html.${DARK_PENDING_CLASS} body { visibility: hidden; animation: bulwark-dark-reveal 0s 1.5s forwards; }
+diff --git a/lib/email-frame-look.ts b/lib/email-frame-look.ts
+new file mode 100644
+index 0000000..5223c86
+--- /dev/null
++++ b/lib/email-frame-look.ts
+@@ -0,0 +1,43 @@
++/**
++ * A mail frame is a document of its own and inherits nothing from the page.
++ * {@link adoptFrameLook} carries the reader's font and text colour into it, and
++ * the background the frame sits on, so an HTML mail reads like a plain-text one
++ * beside it.
++ */
++
++export const FRAME_SURFACE = '--bulwark-frame-surface';
++export const FRAME_TEXT = '--bulwark-frame-text';
++const FRAME_FONT = '--bulwark-frame-font';
++
++/** The frame body's font: the reader's once {@link adoptFrameLook} ran. */
++export const EMAIL_FRAME_FONT_FAMILY = `var(${FRAME_FONT}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif)`;
++
++/**
++ * Call once the frame's document has parsed and before applyEmailDarkMode,
++ * which reads its canvas from the frame.
++ */
++export function adoptFrameLook(frame: HTMLIFrameElement): void {
++  const root = frame.contentDocument?.documentElement;
++  if (!root) return;
++  const style = getComputedStyle(frame);
++  root.style.setProperty(FRAME_FONT, style.fontFamily);
++  const text = srgb(style.color);
++  if (text) root.style.setProperty(FRAME_TEXT, text.css);
++  for (let el = frame.parentElement; el; el = el.parentElement) {
++    const background = srgb(getComputedStyle(el).backgroundColor);
++    if (background?.opaque) {
++      root.style.setProperty(FRAME_SURFACE, background.css);
++      return;
++    }
++  }
++}
++
++/** Any CSS colour in the rgb()/rgba() form, the only one the dark-mode pass parses. */
++function srgb(color: string): { css: string; opaque: boolean } | null {
++  const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
++  if (!ctx) return null;
++  ctx.fillStyle = color;
++  ctx.fillRect(0, 0, 1, 1);
++  const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
++  return { css: a === 255 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${+(a / 255).toFixed(3)})`, opaque: a === 255 };
++}
