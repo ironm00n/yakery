@@ -34,6 +34,7 @@ buildNpmPackage (finalAttrs: {
     ./03-mail-frames-match-the-page.patch
     ./04-mail-keeps-its-vector-images.patch
     ./05-expanded-threads-stay-whole.patch
+    ./06-threads-read-inline.patch
   ];
 
   configurePhase = ''
