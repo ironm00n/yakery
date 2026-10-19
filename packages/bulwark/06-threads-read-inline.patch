@@ -1,0 +1,1013 @@
+diff --git a/components/email/__tests__/email-list-thread-expand-mark-read.test.tsx b/components/email/__tests__/email-list-thread-expand-mark-read.test.tsx
+index c605a2e0..dc905e48 100644
+--- a/components/email/__tests__/email-list-thread-expand-mark-read.test.tsx
++++ b/components/email/__tests__/email-list-thread-expand-mark-read.test.tsx
+@@ -80,6 +80,8 @@ beforeEach(() => {
+   useEmailStore.setState(initialEmailState, true);
+   useEmailStore.setState({ selectedMailbox: 'inbox', emails: THREAD });
+   useMessageListTabsStore.setState(initialTabsState, true);
++  // Beside a reading pane a thread opens there instead of unfolding in the list.
++  useSettingsStore.setState({ mailLayout: 'focus' });
+ });
+ 
+ afterEach(() => {
+diff --git a/components/email/__tests__/mv-conversation-expand.test.tsx b/components/email/__tests__/mv-conversation-expand.test.tsx
+index 2f7162b1..8d5747b8 100644
+--- a/components/email/__tests__/mv-conversation-expand.test.tsx
++++ b/components/email/__tests__/mv-conversation-expand.test.tsx
+@@ -1,4 +1,4 @@
+-import { render, screen, fireEvent, act } from '@testing-library/react';
++import { render, screen, fireEvent, act, within } from '@testing-library/react';
+ import { describe, it, expect, vi, beforeEach } from 'vitest';
+ import type { Email, Mailbox } from '@/lib/jmap/types';
+ import { useSettingsStore } from '@/stores/settings-store';
+@@ -132,7 +132,7 @@ describe('Mountain View conversation folding (#1222)', () => {
+     );
+     const header = container.querySelector('[data-mv-conversation-expanded][data-email-id="m1"] [data-mv-conversation-header]')!;
+     fireEvent.click(header.querySelector('button[aria-label]')!);
+-    expect(onReply).toHaveBeenCalledWith(expect.objectContaining({ id: 'm1' }));
++    expect(onReply).toHaveBeenCalledWith(expect.objectContaining({ id: 'm1' }), 'reply');
+     expect(expandedIds(container)).toEqual(['m1', 'm2']);
+ 
+     fireEvent.click(header);
+@@ -209,3 +209,73 @@ describe('Mountain View conversation folding (#1222)', () => {
+     expect(container.querySelector('[data-mv-open-header]')).toBeNull();
+   });
+ });
++
++describe('the default interface reading a thread as a conversation', () => {
++  beforeEach(() => {
++    useSettingsStore.setState({ interfaceLayout: 'default', mailLayout: 'split', markAsReadDelay: 0 });
++  });
++
++  it('draws the conversation around the open message, its unread messages unfolded', () => {
++    const open = withBody(mail(4), 'Open body');
++    const conversation = [mail(1), mail(2, { keywords: {} }), open, mail(5)];
++    const { container } = renderViewer(conversation, open, { onLoadConversationEmail: vi.fn() });
++
++    expect(expandedIds(container)).toEqual(['m2']);
++    expect(foldedIds(container)).toEqual(['m1', 'm5']);
++    expect(container.querySelector('[data-mv-reply-row]')).toBeNull();
++  });
++
++  it('holds the message back while its conversation is on its way', () => {
++    const open = withBody(mail(3), 'Open body');
++    const { container } = renderViewer(undefined as unknown as Email[], open, { mvConversationPending: true });
++    expect(container.querySelector('[data-mv-conversation-pending]')).not.toBeNull();
++  });
++});
++
++// Bulwark Mobile's thread view: the count on the subject line, each message's
++// date and star on its sender line, and Reply / Reply all / Forward under
++// every unfolded message.
++describe('the default interface drawing a conversation as Bulwark Mobile does', () => {
++  beforeEach(() => {
++    useSettingsStore.setState({ interfaceLayout: 'default', mailLayout: 'split', markAsReadDelay: 0, toolbarPosition: 'top' });
++  });
++
++  const replyRows = (c: HTMLElement) => [...c.querySelectorAll('[data-conversation-reply-row]')];
++
++  it('counts the messages on the subject line and dates the open one on its sender line', () => {
++    const open = withBody(mail(3), 'Open body');
++    const { container } = renderViewer([mail(1), mail(2), open], open);
++
++    expect(container.querySelector('[data-conversation-count]')).toHaveTextContent('3');
++    expect(container.querySelector('[data-mv-sender-date]')).not.toBeNull();
++  });
++
++  it('replies to, replies to all of and forwards each unfolded message from the buttons under it', () => {
++    const open = withBody(mail(3), 'Open body');
++    const onReplyConversationEmail = vi.fn();
++    const onReplyAll = vi.fn();
++    const onForward = vi.fn();
++    const { container } = renderViewer([mail(1), withBody(mail(2, { keywords: {} }), 'Second body'), open], open, {
++      onReplyConversationEmail, onReplyAll, onForward,
++    });
++
++    const [unfolded, opened] = replyRows(container);
++    expect(replyRows(container)).toHaveLength(2);
++    expect(unfolded.closest('[data-mv-conversation-expanded]')).toHaveAttribute('data-email-id', 'm2');
++    expect(container.querySelector('[data-mv-conversation-header] button[aria-label]')).toBeNull();
++
++    fireEvent.click(within(unfolded as HTMLElement).getByText('reply_all'));
++    expect(onReplyConversationEmail).toHaveBeenCalledWith(expect.objectContaining({ id: 'm2' }), 'replyAll');
++    fireEvent.click(within(opened as HTMLElement).getByText('forward'));
++    expect(onForward).toHaveBeenCalled();
++    expect(onReplyAll).not.toHaveBeenCalled();
++  });
++
++  it('lists every folded message, without Mountain View\'s count standing in for the middle ones', () => {
++    const open = withBody(mail(6), 'Open body');
++    const { container } = renderViewer([mail(1), mail(2), mail(3), mail(4), mail(5), open], open);
++
++    expect(foldedIds(container)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5']);
++    expect(container.querySelector('[data-mv-conversation-more]')).toBeNull();
++  });
++});
+diff --git a/components/email/__tests__/thread-list-item.test.tsx b/components/email/__tests__/thread-list-item.test.tsx
+index 37c42021..4f99c855 100644
+--- a/components/email/__tests__/thread-list-item.test.tsx
++++ b/components/email/__tests__/thread-list-item.test.tsx
+@@ -339,11 +339,11 @@ describe('ThreadListItem whole row toggles in selection mode', () => {
+ 
+   function setup(
+     emails: Email[],
+-    { layout = 'default', mobile = false, selected = ['other'], isExpanded = false }: {
+-      layout?: 'mountain-view' | 'default'; mobile?: boolean; selected?: string[]; isExpanded?: boolean;
++    { layout = 'default', mailLayout = 'split', mobile = false, selected = ['other'], isExpanded = false }: {
++      layout?: 'mountain-view' | 'default'; mailLayout?: 'split' | 'focus'; mobile?: boolean; selected?: string[]; isExpanded?: boolean;
+     } = {},
+   ) {
+-    useSettingsStore.setState({ interfaceLayout: layout, mailLayout: 'split', density: 'regular' } as never);
++    useSettingsStore.setState({ interfaceLayout: layout, mailLayout, density: 'regular' } as never);
+     useUIStore.setState({ isMobile: mobile, isTablet: false, isDesktop: !mobile });
+     useEmailStore.setState({ selectedEmailKeys: new Set(selected), selectedMailbox: 'inbox' });
+     const onEmailSelect = vi.fn();
+@@ -402,7 +402,8 @@ describe('ThreadListItem whole row toggles in selection mode', () => {
+   });
+ 
+   it('still unfolds the thread from its chevron', () => {
+-    const { container, onToggleExpand } = setup(conversation());
++    // The focus layout: beside a reading pane a thread row has no chevron.
++    const { container, onToggleExpand } = setup(conversation(), { mailLayout: 'focus' });
+     fireEvent.click(container.querySelector('[data-expand-toggle]')!);
+     expect(onToggleExpand).toHaveBeenCalledTimes(1);
+     expect(selection()).toEqual(['other']);
+@@ -781,3 +782,52 @@ describe('ThreadListItem date (#891)', () => {
+     expect(container.textContent).not.toMatch(/2024/);
+   });
+ });
++
++describe('ThreadListItem beside a reading pane that holds the conversation', () => {
++  const renderThread = (onToggleExpand: () => void, onEmailSelect: (email: Email) => void) => {
++    const [thread] = groupEmailsByThread([
++      makeEmail({ id: 'email-1', receivedAt: '2024-01-15T10:00:00Z' }),
++      makeEmail({ id: 'email-2', receivedAt: '2024-01-16T10:00:00Z' }),
++    ]);
++    return render(
++      <ThreadListItem thread={thread} isExpanded={false} onToggleExpand={onToggleExpand} onEmailSelect={onEmailSelect} />,
++    );
++  };
++
++  beforeEach(() => {
++    useSettingsStore.setState({ emailKeywords: [...DEFAULT_KEYWORDS], showPreview: false, interfaceLayout: 'default', listColumns: false });
++    useEmailStore.setState({ selectedEmailKeys: new Set<string>(), selectedMailbox: 'inbox' });
++  });
++
++  it('opens the latest message without unfolding the thread, and offers no unfold toggle', () => {
++    useSettingsStore.setState({ mailLayout: 'split' });
++    const onToggleExpand = vi.fn();
++    const onEmailSelect = vi.fn();
++    const { container } = renderThread(onToggleExpand, onEmailSelect);
++    fireEvent.click(container.querySelector('[data-unread]')!);
++    expect(onEmailSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'email-2' }));
++    expect(onToggleExpand).not.toHaveBeenCalled();
++    expect(container.querySelector('[data-expand-toggle]')).toBeNull();
++  });
++
++  it('offers no unfold toggle in the column rows under a bottom reading pane either', () => {
++    useSettingsStore.setState({ mailLayout: 'horizontal', listColumns: true });
++    const onToggleExpand = vi.fn();
++    const onEmailSelect = vi.fn();
++    const { container } = renderThread(onToggleExpand, onEmailSelect);
++    expect(container.querySelector('[data-list-from]')).not.toBeNull();
++    expect(container.querySelector('[data-expand-toggle]')).toBeNull();
++    fireEvent.click(container.querySelector('[data-unread]')!);
++    expect(onEmailSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'email-2' }));
++    expect(onToggleExpand).not.toHaveBeenCalled();
++  });
++
++  it('still unfolds the thread in the list in the focus layout, which has no reading pane', () => {
++    useSettingsStore.setState({ mailLayout: 'focus' });
++    const onToggleExpand = vi.fn();
++    const { container } = renderThread(onToggleExpand, vi.fn());
++    fireEvent.click(container.querySelector('[data-unread]')!);
++    expect(onToggleExpand).toHaveBeenCalled();
++    expect(container.querySelector('[data-expand-toggle]')).not.toBeNull();
++  });
++});
+diff --git a/components/email/email-viewer.tsx b/components/email/email-viewer.tsx
+index 72b781bc..f14fb2db 100644
+--- a/components/email/email-viewer.tsx
++++ b/components/email/email-viewer.tsx
+@@ -25,6 +25,7 @@ import { itemsToHide } from "@/lib/toolbar-overflow";
+ import { formatScheduledSendAt } from "@/lib/scheduled-send-label";
+ import { buildMoveTargets, resolveMoveOwnerAccountId } from "@/lib/move-targets";
+ import { emailDisplayDate } from "@/lib/email-date";
++import type { ComposerOpenMode } from "@/lib/plugin-compose-gate";
+ import { TagBadge } from "./tag-badge";
+ import { TagPicker } from "./tag-picker";
+ import { useMeasuredTagDisplay } from "@/hooks/use-tag-display";
+@@ -198,8 +199,8 @@ interface EmailViewerProps {
+   onLoadConversationEmail?: (email: Email) => void;
+   /** Mountain View: an unfolded conversation message was read. */
+   onMarkConversationEmailRead?: (email: Email) => void;
+-  /** Mountain View: reply to one message of the conversation. */
+-  onReplyConversationEmail?: (email: Email) => void;
++  /** Reply to, reply to all of or forward one message of the conversation. */
++  onReplyConversationEmail?: (email: Email, mode: ConversationReplyMode) => void;
+   /** Mountain View: a reply being written in place, shown under the conversation instead of the reply buttons. */
+   mvInlineComposer?: React.ReactNode;
+   onShowShortcuts?: () => void;
+@@ -709,6 +710,42 @@ function mvSenderDate(date: Date | string, timeFormat: '12h' | '24h'): string {
+   return ago ? `${when} (${ago})` : when;
+ }
+ 
++/**
++ * How a conversation's messages are drawn: as Mountain View's Gmail cards, on
++ * the desktop or the phone, or in the default interface's reading pane, which
++ * draws them as Bulwark Mobile's thread view does.
++ */
++export type ConversationLook = 'mountain-view' | 'mountain-view-phone' | 'reader';
++
++export type ConversationReplyMode = Exclude<ComposerOpenMode, 'compose'>;
++
++const CONVERSATION_LOOKS: Record<ConversationLook, {
++  /** The gutter of a message's sender line. */
++  row: string;
++  /** The date on a message's sender line. */
++  date: (date: Date | string, timeFormat: '12h' | '24h') => string;
++  /** An unfolded message's surface and sender line, and the inset and padding of its details and body. */
++  card: string;
++  header: string;
++  content: string;
++  body: React.CSSProperties;
++  /** Reply from a button on the sender line, rather than from a row of buttons under the body. */
++  replyOnSenderLine: boolean;
++}> = {
++  'mountain-view': {
++    row: "gap-4 px-6", date: mvSenderDate,
++    card: "", header: "", content: "ps-[80px] pe-6", body: { paddingBlock: '0.25rem 0.5rem' }, replyOnSenderLine: true,
++  },
++  'mountain-view-phone': {
++    row: "gap-3 px-4", date: (date) => formatDate(date),
++    card: "", header: "", content: "px-4", body: { paddingBlock: '0.25rem 0.5rem' }, replyOnSenderLine: true,
++  },
++  reader: {
++    row: "gap-3 px-6", date: (date, timeFormat) => formatDateTime(date, timeFormat, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }),
++    card: "bg-background", header: "border-b border-border", content: "px-6", body: { paddingBlock: '1rem 0' }, replyOnSenderLine: false,
++  },
++};
++
+ /**
+  * One message of a Mountain View conversation, folded to its sender, date and
+  * snippet. Clicking it unfolds the message in place.
+@@ -740,6 +777,69 @@ function MvConversationCard({ email, onOpen, timeFormat, compact }: { email: Ema
+   );
+ }
+ 
++/**
++ * A folded message of the reading pane's conversation, as Bulwark Mobile
++ * folds one: a tinted row with a small avatar, the sender in bold only while
++ * unread, and the date and snippet in small muted type.
++ */
++function ReaderConversationCard({ email, onOpen, timeFormat }: { email: Email; onOpen?: (email: Email) => void; timeFormat: '12h' | '24h' }) {
++  const sender = email.from?.[0];
++  const unread = !email.keywords?.$seen;
++  return (
++    <button
++      type="button"
++      onClick={() => onOpen?.(email)}
++      data-mv-conversation-card=""
++      data-email-id={email.id}
++      className={cn("w-full flex items-center py-3 border-t border-border bg-secondary text-start hover:bg-muted transition-colors", CONVERSATION_LOOKS.reader.row)}
++    >
++      <Avatar name={sender?.name} email={sender?.email} size="sm" className="flex-shrink-0" />
++      <span className="flex-1 min-w-0">
++        <span className="flex items-center gap-1">
++          <span className={cn("flex-1 min-w-0 text-sm truncate", unread && "font-bold")}>
++            {sender?.name || sender?.email || ''}
++          </span>
++          {email.hasAttachment && <Paperclip className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
++          <span className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
++            {CONVERSATION_LOOKS.reader.date(emailDisplayDate(email), timeFormat)}
++          </span>
++        </span>
++        <span className="block mt-0.5 text-xs text-muted-foreground truncate">{cleanPreview(email.preview)}</span>
++      </span>
++      {email.keywords?.$flagged && <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400 flex-shrink-0" />}
++    </button>
++  );
++}
++
++function FoldedConversationCard({ look, ...props }: { email: Email; onOpen?: (email: Email) => void; timeFormat: '12h' | '24h'; look: ConversationLook }) {
++  return look === 'reader'
++    ? <ReaderConversationCard {...props} />
++    : <MvConversationCard {...props} compact={look === 'mountain-view-phone'} />;
++}
++
++/**
++ * Reply, Reply all and Forward under an unfolded message of the reading
++ * pane's conversation, as Bulwark Mobile ends each open message.
++ */
++function ConversationReplyRow({ onReply, className }: { onReply: (mode: ConversationReplyMode) => void; className?: string }) {
++  const t = useTranslations('email_viewer');
++  const actions = [
++    { mode: 'reply', Icon: Reply, label: t('reply') },
++    { mode: 'replyAll', Icon: ReplyAll, label: t('reply_all') },
++    { mode: 'forward', Icon: Forward, label: t('forward') },
++  ] as const;
++  return (
++    <div className={cn("flex gap-2 px-6 py-2 border-t border-border bg-background", className)} data-conversation-reply-row="">
++      {actions.map(({ mode, Icon, label }) => (
++        <Button key={mode} variant="outline" size="sm" className="gap-1.5" onClick={() => onReply(mode)}>
++          <Icon className="w-4 h-4" />
++          {label}
++        </Button>
++      ))}
++    </div>
++  );
++}
++
+ /** True when a click landed on something inside `container` that acts on its own (a button, a link, a field). */
+ function isInteractiveClick(target: EventTarget | null, container: HTMLElement): boolean {
+   const el = target instanceof Element ? target.closest('button, a, input, textarea, select, [role="button"], [role="menuitem"]') : null;
+@@ -793,15 +893,15 @@ export function MvExpandedConversationCard({
+   onReply,
+   onDownloadAttachment,
+   blobSource,
+-  compact,
++  look,
+ }: {
+   email: Email;
+   timeFormat: '12h' | '24h';
+-  compact?: boolean;
++  look: ConversationLook;
+   onCollapse: (email: Email) => void;
+   onLoadBody?: (email: Email) => void;
+   onMarkRead?: (email: Email) => void;
+-  onReply?: (email: Email) => void;
++  onReply?: (email: Email, mode: ConversationReplyMode) => void;
+   onDownloadAttachment?: ConversationAttachmentHandler;
+   blobSource?: EmailBlobContext;
+ }) {
+@@ -809,6 +909,7 @@ export function MvExpandedConversationCard({
+   const externalContent = useConversationExternalContent();
+   const sender = email.from?.[0];
+   const hasBody = !!email.bodyValues;
++  const lookStyle = CONVERSATION_LOOKS[look];
+   const [showDetails, setShowDetails] = useState(false);
+   const loadRequested = useRef(false);
+   useEffect(() => {
+@@ -820,7 +921,7 @@ export function MvExpandedConversationCard({
+   useMarkReadWhenShown(email, true, onMarkRead ? () => onMarkRead(email) : undefined);
+ 
+   return (
+-    <div className="border-t border-border" data-mv-conversation-expanded="" data-email-id={email.id}>
++    <div className={cn("border-t border-border", lookStyle.card)} data-mv-conversation-expanded="" data-email-id={email.id}>
+       <div
+         role="button"
+         tabIndex={0}
+@@ -838,17 +939,17 @@ export function MvExpandedConversationCard({
+           }
+         }}
+         data-mv-conversation-header=""
+-        className={cn("flex items-start pt-3 pb-2 cursor-pointer", compact ? "gap-3 px-4" : "gap-4 px-6")}
++        className={cn("flex items-start pt-3 pb-2 cursor-pointer", lookStyle.row, lookStyle.header)}
+       >
+         <Avatar name={sender?.name} email={sender?.email} size="md" className="w-10 h-10 flex-shrink-0" />
+         <span className="flex-1 min-w-0">
+           <span className="flex items-baseline gap-2">
+             <span className="text-sm font-semibold truncate">{sender?.name || sender?.email || ''}</span>
+-            {!compact && sender?.name && sender.email && (
++            {look !== 'mountain-view-phone' && sender?.name && sender.email && (
+               <span className="text-xs text-muted-foreground truncate">&lt;{sender.email}&gt;</span>
+             )}
+             <span className="ms-auto ps-2 text-xs text-muted-foreground whitespace-nowrap">
+-              {compact ? formatDate(emailDisplayDate(email)) : mvSenderDate(emailDisplayDate(email), timeFormat)}
++              {lookStyle.date(emailDisplayDate(email), timeFormat)}
+             </span>
+           </span>
+           <button
+@@ -866,10 +967,10 @@ export function MvExpandedConversationCard({
+             {showDetails ? <ChevronUp className="w-3 h-3 flex-shrink-0" /> : <ChevronDown className="w-3 h-3 flex-shrink-0" />}
+           </button>
+         </span>
+-        {onReply && (
++        {onReply && lookStyle.replyOnSenderLine && (
+           <button
+             type="button"
+-            onClick={() => onReply(email)}
++            onClick={() => onReply(email, 'reply')}
+             className="grid place-items-center w-10 h-10 -my-2 -me-2 rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex-shrink-0"
+             title={t('tooltips.reply')}
+             aria-label={t('tooltips.reply')}
+@@ -878,7 +979,7 @@ export function MvExpandedConversationCard({
+           </button>
+         )}
+       </div>
+-      {showDetails && <MvConversationDetails email={email} timeFormat={timeFormat} className={compact ? "px-4" : "ps-[80px] pe-6"} />}
++      {showDetails && <MvConversationDetails email={email} timeFormat={timeFormat} className={lookStyle.content} />}
+       {hasBody ? (
+         <ConversationEmailBody
+           email={email}
+@@ -887,16 +988,17 @@ export function MvExpandedConversationCard({
+           onTrustSender={externalContent.trustSender(email)}
+           onDownloadAttachment={onDownloadAttachment}
+           blobSource={blobSource}
+-          className={cn("pb-4", compact ? "px-4" : "ps-[80px] pe-6")}
+-          bodyStyle={{ paddingBlock: '0.25rem 0.5rem' }}
++          className={cn("pb-4", lookStyle.content)}
++          bodyStyle={lookStyle.body}
+         />
+       ) : (
+-        <div className={cn("pb-4 pt-1 space-y-2 animate-pulse", compact ? "px-4" : "ps-[80px] pe-6")} data-mv-conversation-loading="">
++        <div className={cn("pb-4 pt-1 space-y-2 animate-pulse", lookStyle.content)} data-mv-conversation-loading="">
+           <div className="h-2 bg-muted rounded w-full" />
+           <div className="h-2 bg-muted rounded w-5/6" />
+           <div className="h-2 bg-muted rounded w-4/6" />
+         </div>
+       )}
++      {onReply && !lookStyle.replyOnSenderLine && <ConversationReplyRow onReply={(mode) => onReply(email, mode)} />}
+     </div>
+   );
+ }
+@@ -906,9 +1008,9 @@ export function MvExpandedConversationCard({
+  * run of folded messages before it shows only its first and last message
+  * around a count, as Gmail does, and the count unfolds the rest.
+  */
+-export function MvConversationRun({ emails, onOpen, timeFormat, collapseLongRun, expandedIds, renderExpanded, compact }: {
++export function MvConversationRun({ emails, onOpen, timeFormat, collapseLongRun, expandedIds, renderExpanded, look = 'mountain-view' }: {
+   emails: Email[];
+-  compact?: boolean;
++  look?: ConversationLook;
+   /** A folded message was clicked. */
+   onOpen?: (email: Email) => void;
+   timeFormat: '12h' | '24h';
+@@ -921,7 +1023,7 @@ export function MvConversationRun({ emails, onOpen, timeFormat, collapseLongRun,
+   const isExpanded = (e: Email) => !!renderExpanded && !!expandedIds?.has(e.id);
+   const renderOne = (e: Email) => isExpanded(e)
+     ? <Fragment key={e.id}>{renderExpanded!(e)}</Fragment>
+-    : <MvConversationCard key={e.id} email={e} onOpen={onOpen} timeFormat={timeFormat} compact={compact} />;
++    : <FoldedConversationCard key={e.id} email={e} onOpen={onOpen} timeFormat={timeFormat} look={look} />;
+   const middle = emails.slice(1, -1);
+   if (!collapseLongRun || showAll || emails.length <= 3 || middle.some(isExpanded)) {
+     return <>{emails.map(renderOne)}</>;
+@@ -1162,11 +1264,18 @@ export function EmailViewer({
+   // and has no bar fixed at the bottom; previous / next move to the top bar.
+   const mvMobileViewer = interfaceLayout === 'mountain-view' && isMobile;
+   const mvReplyRow = mvViewer || mvMobileViewer;
+-  // The open conversation around the open message, split at it.
+-  const mvOpenIndex = (mvViewer || mvMobileViewer) && mvConversation && email ? mvConversation.findIndex((e) => e.id === email.id) : -1;
++  // The open conversation around the open message, split at it. The app
++  // passes one only where a thread reads as a conversation: Mountain View, and
++  // the default interface's reading pane beside or below the list.
++  const mvOpenIndex = mvConversation && email ? mvConversation.findIndex((e) => e.id === email.id) : -1;
+   const mvBefore = mvOpenIndex > 0 ? mvConversation!.slice(0, mvOpenIndex) : [];
+   const mvAfter = mvOpenIndex >= 0 ? mvConversation!.slice(mvOpenIndex + 1) : [];
+   const mvConversationIds = mvOpenIndex >= 0 ? mvConversation!.map((e) => e.id).join(',') : '';
++  const conversationLook: ConversationLook = mvMobileViewer ? 'mountain-view-phone' : mvViewer ? 'mountain-view' : 'reader';
++  const readerConversation = conversationLook === 'reader' && mvOpenIndex >= 0;
++  // Each message of the conversation carries its date and star on its sender
++  // line, and the subject line none.
++  const datesOnSenderLine = mvViewer || readerConversation;
+   const threadSummaryProps = useMemo(
+     () => ({ threadId: email?.threadId ?? null, emailIds: mvConversationIds ? mvConversationIds.split(',') : [] }),
+     [email?.threadId, mvConversationIds],
+@@ -1210,7 +1319,14 @@ export function EmailViewer({
+   // The conversation is not here yet (the one on hand is another thread's, or
+   // none). Hold the message back instead of drawing it alone and then pushing
+   // it down under the earlier messages.
+-  const mvAwaitingConversation = !!mvConversationPending && (mvViewer || mvMobileViewer) && mvOpenIndex < 0;
++  const mvAwaitingConversation = !!mvConversationPending && mvOpenIndex < 0;
++  const replyToOpen = (mode: ConversationReplyMode) => {
++    switch (mode) {
++      case 'reply': return onReply?.();
++      case 'replyAll': return onReplyAll?.();
++      case 'forward': return onForward?.();
++    }
++  };
+   const renderMvExpanded = (target: Email) => (
+     <MvExpandedConversationCard
+       email={target}
+@@ -1223,7 +1339,7 @@ export function EmailViewer({
+         ? resolveEmailBlobContext(target, client)
+         : blobSource ?? resolveEmailBlobContext(target, client)}
+       onDownloadAttachment={(blobId, name, type, source) => onDownloadAttachment?.(blobId, name, type, false, source)}
+-      compact={mvMobileViewer}
++      look={conversationLook}
+     />
+   );
+   // Mountain View's toolbars are icon-only, on the phone as on the desktop.
+@@ -4634,8 +4750,8 @@ export function EmailViewer({
+                   </span>
+                 )}
+                 {/* Star inline with subject (top toolbar mode). Mountain View
+-                    has it on the sender's line instead. */}
+-                {toolbarPosition === 'top' && !mvViewer && (
++                    and a conversation have it on the sender's line instead. */}
++                {toolbarPosition === 'top' && !datesOnSenderLine && (
+                   <button
+                     onClick={onToggleStar}
+                     className="flex-shrink-0 p-1 rounded hover:bg-muted transition-colors"
+@@ -4697,8 +4813,8 @@ export function EmailViewer({
+               </div>
+             )}
+             {/* Date/time on the right of subject row - hidden on mobile, shown next to sender.
+-                Mountain View puts it on the sender's row instead, and shows no size. */}
+-            <div className={cn("hidden flex-shrink-0 text-end", !mvViewer && "sm:block")}>
++                Mountain View and a conversation put it on the sender's row instead, and show no size. */}
++            <div className={cn("hidden flex-shrink-0 text-end", !datesOnSenderLine && "sm:block")}>
+               <span className="text-xs lg:text-sm text-muted-foreground whitespace-nowrap">
+                 {formatDateTime(emailDisplayDate(email), timeFormat, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+               </span>
+@@ -4708,6 +4824,11 @@ export function EmailViewer({
+                 </div>
+               )}
+             </div>
++            {readerConversation && (
++              <span className="grid place-items-center flex-shrink-0 min-w-6 h-6 px-1.5 mt-0.5 rounded-full bg-muted text-[10px] font-semibold text-muted-foreground" data-conversation-count="">
++                {mvConversation!.length}
++              </span>
++            )}
+           </div>
+         </div>
+       </div>
+@@ -4737,14 +4858,14 @@ export function EmailViewer({
+       {/* Mountain View: the conversation's earlier messages, folded. */}
+       {mvBefore.length > 0 && (
+         <div data-mv-conversation-before="">
+-          <MvConversationRun emails={mvBefore} onOpen={toggleMvExpanded} expandedIds={mvExpandedIds} renderExpanded={renderMvExpanded} timeFormat={timeFormat} compact={mvMobileViewer} collapseLongRun />
++          <MvConversationRun emails={mvBefore} onOpen={toggleMvExpanded} expandedIds={mvExpandedIds} renderExpanded={renderMvExpanded} timeFormat={timeFormat} look={conversationLook} collapseLongRun={conversationLook !== 'reader'} />
+         </div>
+       )}
+ 
+       {/* Mountain View: the open message folded like the rest of the conversation. */}
+       {mvOpenFolded && email ? (
+         <div data-mv-open-folded="">
+-          <MvConversationCard email={email} onOpen={() => setMvOpenFolded(false)} timeFormat={timeFormat} compact={mvMobileViewer} />
++          <FoldedConversationCard email={email} onOpen={() => setMvOpenFolded(false)} timeFormat={timeFormat} look={conversationLook} />
+         </div>
+       ) : mvAwaitingConversation ? (
+         <div className={cn("flex items-start py-3 animate-pulse", mvMobileViewer ? "gap-3 px-4" : "gap-4 px-6")} data-mv-conversation-pending="">
+@@ -4758,7 +4879,7 @@ export function EmailViewer({
+       ) : (<>
+       {/* === SENDER INFO (Desktop) === */}
+       <div
+-        className={cn("hidden lg:block bg-background px-6", !mvViewer && "border-b border-border", mvViewer && mvBefore.length > 0 && "border-t border-border", mvOpenIndex >= 0 && "cursor-pointer")}
++        className={cn("hidden lg:block bg-background px-6", !mvViewer && "border-b border-border", (mvViewer || readerConversation) && mvBefore.length > 0 && "border-t border-border", mvOpenIndex >= 0 && "cursor-pointer")}
+         style={mvViewer ? { paddingBlock: '0.75rem 0.5rem' } : { paddingBlock: 'var(--density-header-py)' }}
+         data-mv-open-header={mvOpenIndex >= 0 ? "" : undefined}
+         onClick={mvOpenIndex >= 0 ? (e) => {
+@@ -4816,10 +4937,10 @@ export function EmailViewer({
+                         }}
+                       />
+                     )}
+-                    {mvViewer && (
++                    {datesOnSenderLine && (
+                       <span className="ms-auto ps-2 flex items-center gap-1 -my-2 -me-2" data-mv-sender-actions="">
+                         <span className="text-xs text-muted-foreground whitespace-nowrap me-1" data-mv-sender-date="">
+-                          {mvSenderDate(emailDisplayDate(email), timeFormat)}
++                          {CONVERSATION_LOOKS[conversationLook].date(emailDisplayDate(email), timeFormat)}
+                         </span>
+                         <button
+                           type="button"
+@@ -4831,7 +4952,7 @@ export function EmailViewer({
+                         >
+                           <Star className={cn("w-5 h-5", isStarred && "fill-amber-400 text-amber-400")} />
+                         </button>
+-                        {!isDraft && !isScheduled && (
++                        {mvViewer && !isDraft && !isScheduled && (
+                           <button
+                             type="button"
+                             onClick={() => onReply?.()}
+@@ -6099,10 +6220,14 @@ export function EmailViewer({
+ 
+           <PluginSlot name="email-footer" extraProps={pluginFooterProps} />
+ 
++          {readerConversation && !mvOpenFolded && !isDraft && !isScheduled && !isBodyLoading && (
++            <ConversationReplyRow onReply={replyToOpen} className={cn(mvAfter.length === 0 && "border-b")} />
++          )}
++
+           {/* Mountain View: the conversation's later messages, folded. */}
+           {mvAfter.length > 0 && (
+-            <div className="mt-4 border-b border-border" data-mv-conversation-after="">
+-              <MvConversationRun emails={mvAfter} onOpen={toggleMvExpanded} expandedIds={mvExpandedIds} renderExpanded={renderMvExpanded} timeFormat={timeFormat} compact={mvMobileViewer} />
++            <div className={cn("border-b border-border", !readerConversation && "mt-4")} data-mv-conversation-after="">
++              <MvConversationRun emails={mvAfter} onOpen={toggleMvExpanded} expandedIds={mvExpandedIds} renderExpanded={renderMvExpanded} timeFormat={timeFormat} look={conversationLook} />
+             </div>
+           )}
+ 
+diff --git a/components/email/thread-list-item.tsx b/components/email/thread-list-item.tsx
+index 2ccafb6b..c779637c 100644
+--- a/components/email/thread-list-item.tsx
++++ b/components/email/thread-list-item.tsx
+@@ -16,6 +16,7 @@ import type { AppIcon } from "@/components/icons";
+ import { useSettingsStore, KEYWORD_PALETTE } from "@/stores/settings-store";
+ import { useShallow } from "zustand/react/shallow";
+ import { useListRowShape, LIST_COLUMN_CLASS } from "@/hooks/use-list-row-shape";
++import { useConversationInReader } from "@/hooks/use-conversation-in-reader";
+ import { SizeCell } from "./list-columns";
+ import { accountTintKey, generateAvatarColor } from "@/lib/account-utils";
+ import { useUIStore } from "@/stores/ui-store";
+@@ -936,6 +937,9 @@ export const ThreadListItem = React.forwardRef<HTMLDivElement, ThreadListItemPro
+     // together.
+     const mvRow = interfaceLayout === 'mountain-view' && oneLineRow;
+     const mvMobileRow = interfaceLayout === 'mountain-view' && isMobile;
++    // The reading pane holds the whole thread, so the row neither unfolds nor
++    // offers to.
++    const conversationInReader = useConversationInReader();
+     const trimmedPreview = cleanPreview(latestEmail.preview);
+     const inlinePreview = showPreview && trimmedPreview ? ` ${trimmedPreview}` : '';
+     // In a search the matched mail need not be the thread's latest one: show
+@@ -1096,7 +1100,7 @@ export const ThreadListItem = React.forwardRef<HTMLDivElement, ThreadListItemPro
+         return;
+       }
+ 
+-      if (mvRow || mvMobileRow) {
++      if (mvRow || mvMobileRow || conversationInReader) {
+         // Desktop keeps the ticked rows while the conversation is read (#1231).
+         onEmailSelect(latestEmail);
+         return;
+@@ -1215,7 +1219,7 @@ export const ThreadListItem = React.forwardRef<HTMLDivElement, ThreadListItemPro
+                   selectLabel={tBatch('select')}
+                 />
+                 {hasUnread && <UnreadDot besideAvatar />}
+-                {!isMobile && !columns && (
++                {!isMobile && !columns && !conversationInReader && (
+                   <button
+                     data-expand-toggle
+                     onClick={(e) => {
+@@ -1268,24 +1272,28 @@ export const ThreadListItem = React.forwardRef<HTMLDivElement, ThreadListItemPro
+                       // count follows the names, so a folded conversation is
+                       // one line like any message. (#262)
+                       <span data-list-from="" className={cn(LIST_COLUMN_CLASS.from, 'flex items-center gap-2 text-sm')}>
+-                        <button
+-                          data-expand-toggle
+-                          onClick={(e) => {
+-                            e.stopPropagation();
+-                            onToggleExpand();
+-                          }}
+-                          className="-m-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+-                          aria-expanded={isExpanded}
+-                          aria-label={t('toggle_thread')}
+-                        >
+-                          {isLoading ? (
+-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+-                          ) : isExpanded ? (
+-                            <ChevronDown className="w-3.5 h-3.5" />
+-                          ) : (
+-                            <ChevronRight className="w-3.5 h-3.5" />
+-                          )}
+-                        </button>
++                        {conversationInReader ? (
++                          <span aria-hidden="true" className="w-3.5 shrink-0" />
++                        ) : (
++                          <button
++                            data-expand-toggle
++                            onClick={(e) => {
++                              e.stopPropagation();
++                              onToggleExpand();
++                            }}
++                            className="-m-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
++                            aria-expanded={isExpanded}
++                            aria-label={t('toggle_thread')}
++                          >
++                            {isLoading ? (
++                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
++                            ) : isExpanded ? (
++                              <ChevronDown className="w-3.5 h-3.5" />
++                            ) : (
++                              <ChevronRight className="w-3.5 h-3.5" />
++                            )}
++                          </button>
++                        )}
+                         {isUnifiedView && latestEmail.accountId && threadAccountColor && showAccountDot && (
+                           <span
+                             className="w-2 h-2 rounded-full flex-shrink-0"
+diff --git a/components/mail/__tests__/conversation-in-reader.test.tsx b/components/mail/__tests__/conversation-in-reader.test.tsx
+new file mode 100644
+index 00000000..53f0ccb7
+--- /dev/null
++++ b/components/mail/__tests__/conversation-in-reader.test.tsx
+@@ -0,0 +1,124 @@
++import React from 'react';
++import { act, fireEvent, render, waitFor } from '@testing-library/react';
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++import type { Email, Mailbox } from '@/lib/jmap/types';
++import { useAuthStore } from '@/stores/auth-store';
++import { useEmailStore } from '@/stores/email-store';
++import { useSettingsStore } from '@/stores/settings-store';
++import { usePluginStore } from '@/stores/plugin-store';
++import { useThemeStore } from '@/stores/theme-store';
++import { DEFAULT_SEARCH_FILTERS } from '@/lib/jmap/search-utils';
++
++// The default interface's reading pane holds a thread of more than one
++// message as its conversation, and previous / next step over the list's rows.
++
++vi.mock('@/components/layout/sidebar', () => ({ Sidebar: () => null }));
++vi.mock('@/components/layout/navigation-rail', () => ({ NavigationRail: () => null }));
++vi.mock('@/components/layout/calendar-event-notification-toaster', () => ({ CalendarEventNotificationToaster: () => null }));
++vi.mock('@/components/layout/share-notification-toaster', () => ({ ShareNotificationToaster: () => null }));
++vi.mock('@/components/layout/mobile-header', () => ({ MobileHeader: () => null }));
++vi.mock('@/components/email/message-list-tabs', () => ({ MessageListTabs: () => null }));
++vi.mock('@/components/search/search-box', () => ({ SearchBox: () => null }));
++vi.mock('@/components/tour/tour-provider', () => ({ useTour: () => ({ activeTour: null, registerStep: vi.fn() }) }));
++vi.mock('@/components/plugins/plugin-slot', () => ({ PluginSlot: () => null }));
++vi.mock('@/hooks/use-plugin-slot-offers', () => ({ usePluginSlotOffers: () => [] }));
++vi.mock('@/hooks/use-config', () => ({ useConfig: () => ({ appName: 'Mail' }) }));
++vi.mock('@/hooks/use-identity-sync', () => ({ useIdentitySync: () => {} }));
++vi.mock('@/hooks/use-pro-multi-account-identities', () => ({ useProMultiAccountIdentities: () => [] }));
++vi.mock('@/hooks/use-pro-multi-account-mailboxes', () => ({ useProMultiAccountMailboxes: () => {} }));
++vi.mock('@/hooks/use-wopi-status', () => ({ useWopiStatus: () => null, canWopiOpen: () => false }));
++vi.mock('@/hooks/use-browser-navigation', () => ({ useBrowserNavigation: () => {} }));
++vi.mock('@/hooks/use-media-query', () => ({
++  useDeviceDetection: () => ({ isMobile: false, isTablet: false, isDesktop: true }),
++  useMediaQuery: () => false,
++  useIsDesktop: () => true,
++  useIsMobile: () => false,
++}));
++vi.mock('@/lib/push-bindings', () => ({ reconcilePushBindings: () => {}, releasePushBindings: () => {} }));
++vi.mock('@/components/email/email-list', () => ({ EmailList: () => null }));
++vi.mock('@/components/email/email-viewer', () => ({ EmailViewer: () => null }));
++
++const { MailApp } = await import('../mail-app');
++
++const inbox = { id: 'inbox', name: 'Inbox', role: 'inbox' } as Mailbox;
++const mail = (id: string, threadId: string, day: number): Email => ({
++  id, threadId, blobId: `blob-${id}`, subject: id, mailboxIds: { inbox: true }, keywords: { $seen: true },
++  size: 10, receivedAt: `2026-01-${String(day).padStart(2, '0')}T00:00:00Z`, from: [{ email: `${id}@example.com` }],
++  to: [], preview: '', hasAttachment: false,
++}) as Email;
++// Newest first, as the server lists them: thread `a` has a row of two.
++const a2 = mail('a2', 'a', 4);
++const b = mail('b', 'b', 3);
++const a1 = mail('a1', 'a', 2);
++const c = mail('c', 'c', 1);
++
++let client: Record<string, ReturnType<typeof vi.fn> | (() => unknown)>;
++beforeEach(() => {
++  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected network request')));
++  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
++  usePluginStore.setState({ initializePlugins: vi.fn().mockResolvedValue(undefined) });
++  useThemeStore.setState({ syncServerThemes: vi.fn().mockResolvedValue(undefined) });
++  client = {
++    getAccountId: () => 'acc', getUsername: () => 'me@example.com',
++    getSieveAccountId: () => null, hasDelayedSend: () => false, getSession: () => null,
++    getEmail: vi.fn(async (id: string) => [a2, b, a1, c].find((e) => e.id === id) ?? null),
++    getThread: vi.fn(async (threadId: string) => ({ id: threadId, emailIds: [a1, a2].filter((e) => e.threadId === threadId).map((e) => e.id) })),
++    getSomeEmails: vi.fn(async (ids: string[]) => [a1, a2].filter((e) => ids.includes(e.id))),
++    markAsRead: vi.fn().mockResolvedValue(undefined),
++  };
++  useAuthStore.setState({
++    isAuthenticated: true, isLoading: false, client: client as never, activeAccountId: 'login', identities: [],
++    getClientForAccount: () => client as never,
++    getAllConnectedClients: () => new Map([['login', client]]) as never,
++  });
++  useSettingsStore.setState({ enableUnifiedMailbox: false, mailLayout: 'split', interfaceLayout: 'default', disableThreading: false, markAsReadDelay: -1 } as never);
++  useEmailStore.setState({
++    emails: [a2, b, a1, c], selectedEmail: a2, selectedMailbox: inbox.id, mailboxes: [inbox],
++    threadEmailCounts: new Map(), viewingAccountId: null, accountMailboxes: {}, isUnifiedView: false, unifiedRole: null,
++    isScheduledView: false, isLoadingEmail: false, isLoading: false, searchQuery: '',
++    searchFilters: { ...DEFAULT_SEARCH_FILTERS }, searchMailboxId: '', selectedKeyword: null,
++    selectedEmailKeys: new Set(),
++    fetchMailboxes: vi.fn().mockResolvedValue(undefined), fetchEmails: vi.fn().mockResolvedValue(undefined),
++    fetchQuota: vi.fn().mockResolvedValue(undefined), fetchTagCounts: vi.fn().mockResolvedValue(undefined),
++    refreshScheduledMetadata: vi.fn().mockResolvedValue(undefined),
++  } as never);
++});
++afterEach(() => {
++  vi.restoreAllMocks();
++  vi.unstubAllGlobals();
++});
++
++const press = async (key: string) => {
++  await act(async () => { fireEvent.keyDown(window, { key, code: `Key${key.toUpperCase()}` }); });
++  await waitFor(() => expect(useEmailStore.getState().isLoadingEmail).toBe(false));
++};
++const openId = () => useEmailStore.getState().selectedEmail?.id;
++
++describe('the default interface reading a thread in its reading pane', () => {
++  it('loads the conversation of a thread row, and not of a lone message', async () => {
++    render(<MailApp />);
++    await waitFor(() => expect(client.getThread).toHaveBeenCalledWith('a', undefined));
++    vi.mocked(client.getThread as ReturnType<typeof vi.fn>).mockClear();
++    await press('j');
++    expect(openId()).toBe('b');
++    expect(client.getThread).not.toHaveBeenCalled();
++  });
++
++  it('steps over rows, opening a thread at its latest message', async () => {
++    render(<MailApp />);
++    const opened: (string | undefined)[] = [];
++    for (const key of ['j', 'j', 'k', 'k']) {
++      await press(key);
++      opened.push(openId());
++    }
++    expect(opened).toEqual(['b', 'c', 'b', 'a2']);
++  });
++
++  it('steps over messages in the focus layout, which has no reading pane', async () => {
++    useSettingsStore.setState({ mailLayout: 'focus' });
++    render(<MailApp />);
++    await press('j');
++    await press('j');
++    expect(openId()).toBe('a1');
++  });
++});
+diff --git a/components/mail/__tests__/mail-app-thread-expand-mark-read.test.tsx b/components/mail/__tests__/mail-app-thread-expand-mark-read.test.tsx
+index 8f636c66..6db73756 100644
+--- a/components/mail/__tests__/mail-app-thread-expand-mark-read.test.tsx
++++ b/components/mail/__tests__/mail-app-thread-expand-mark-read.test.tsx
+@@ -78,7 +78,8 @@ beforeEach(() => {
+     getClientForAccount: () => client as never,
+     getAllConnectedClients: () => new Map([['login', client]]) as never,
+   });
+-  useSettingsStore.setState({ enableUnifiedMailbox: false, mailLayout: 'split', interfaceLayout: 'default' } as never);
++  // Beside a reading pane `x` unfolds nothing: the pane holds the thread.
++  useSettingsStore.setState({ enableUnifiedMailbox: false, mailLayout: 'focus', interfaceLayout: 'default' } as never);
+   useEmailStore.setState({
+     // The conversation's newest message is open (selected with `j`).
+     emails: [...conversation, single], selectedEmail: conversation[0], selectedMailbox: inbox.id, mailboxes: [inbox],
+diff --git a/components/mail/mail-app.tsx b/components/mail/mail-app.tsx
+index d7210505..f4f652c7 100644
+--- a/components/mail/mail-app.tsx
++++ b/components/mail/mail-app.tsx
+@@ -99,6 +99,7 @@ import { getDraftTextBody } from '@/lib/email-body-selection';
+ import { useSidebarApps } from "@/hooks/use-sidebar-apps";
+ import { useIdentitySync } from "@/hooks/use-identity-sync";
+ import { useIsEmbedded } from "@/hooks/use-is-embedded";
++import { useConversationInReader } from "@/hooks/use-conversation-in-reader";
+ import { useProTabStore } from "@/stores/pro-tab-store";
+ import { useProMultiAccountMailboxes } from "@/hooks/use-pro-multi-account-mailboxes";
+ import { Input } from "@/components/ui/input";
+@@ -356,9 +357,13 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+   // one-pane flow, with Mountain View's own app chrome.
+   const mvShell = interfaceLayout === 'mountain-view' && !isMobile && !isTablet && !isEmbedded;
+   const mvMobile = interfaceLayout === 'mountain-view' && isMobile && !isEmbedded;
+-  // Mountain View reads a thread as one conversation in the viewer, on the
+-  // phone as on the desktop, so both show the same order and details. (#1224)
+-  const mvConversationView = mvShell || mvMobile;
++  const conversationInReader = useConversationInReader();
++  const threadEmailCounts = useEmailStore((state) => state.threadEmailCounts);
++  // A thread is one row beside a reader that holds it, so none is left
++  // unfolded into the list.
++  useEffect(() => {
++    if (conversationInReader) useEmailStore.getState().collapseAllThreads();
++  }, [conversationInReader]);
+   // Pane hosting (Pro shell). When this app renders inside a Pro pane, the
+   // pane publishes its width and id; `isMobile` above is then pane-based,
+   // and layout that would use viewport-fixed positioning must scope itself
+@@ -638,6 +643,16 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+     [scheduledEmails, scheduledAccountScope],
+   );
+   const activeEmails = isScheduledView ? scopedScheduledEmails : emails;
++  // Beside a reader that holds the whole thread, previous / next step over the
++  // list's rows, each opening its thread's latest message as a click does.
++  const disableThreading = useSettingsStore((s) => s.disableThreading);
++  const rowsAreThreads = conversationInReader && !disableThreading && !isScheduledView;
++  const navigationEmails = useMemo(
++    () => rowsAreThreads ? groupEmailsByThread(activeEmails).map((row) => row.latestEmail) : activeEmails,
++    [rowsAreThreads, activeEmails],
++  );
++  const navigationKey: (email: Email) => string = rowsAreThreads ? threadKeyFor : emailKeyFor;
++  const navigationIndex = selectedEmail ? navigationEmails.findIndex((e) => navigationKey(e) === navigationKey(selectedEmail)) : -1;
+   // In an account-scoped scheduled view the visible rows are a filtered subset
+   // of the loaded page, so "has more" must reflect that account's own total
+   // rather than the combined one — otherwise the list looks complete while
+@@ -847,20 +862,19 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+   // Keyboard shortcuts handlers
+   const keyboardHandlers = useMemo(() => ({
+     onNextEmail: () => {
+-      if (activeEmails.length === 0) return;
+-      const currentIndex = selectedEmail ? activeEmails.findIndex(e => emailKeyFor(e) === emailKeyFor(selectedEmail)) : -1;
+-      const nextIndex = currentIndex < activeEmails.length - 1 ? currentIndex + 1 : currentIndex;
+-      if (nextIndex >= 0 && nextIndex < activeEmails.length) {
+-        void handleEmailSelect(activeEmails[nextIndex]);
++      if (navigationEmails.length === 0) return;
++      const nextIndex = navigationIndex < navigationEmails.length - 1 ? navigationIndex + 1 : navigationIndex;
++      if (nextIndex >= 0 && nextIndex < navigationEmails.length) {
++        void handleEmailSelect(navigationEmails[nextIndex]);
+         if (mvShell) setCursorOnly(true);
+       }
+     },
+     onPreviousEmail: () => {
+-      if (activeEmails.length === 0) return;
+-      const currentIndex = selectedEmail ? activeEmails.findIndex(e => emailKeyFor(e) === emailKeyFor(selectedEmail)) : activeEmails.length;
++      if (navigationEmails.length === 0) return;
++      const currentIndex = selectedEmail ? navigationIndex : navigationEmails.length;
+       const prevIndex = currentIndex > 0 ? currentIndex - 1 : 0;
+-      if (prevIndex >= 0 && prevIndex < activeEmails.length) {
+-        void handleEmailSelect(activeEmails[prevIndex]);
++      if (prevIndex >= 0 && prevIndex < navigationEmails.length) {
++        void handleEmailSelect(navigationEmails[prevIndex]);
+         if (mvShell) setCursorOnly(true);
+       }
+     },
+@@ -1076,7 +1090,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+     // thread's messages and marks them read (following markAsReadDelay),
+     // collapsing only toggles. (#683)
+     onToggleThreadExpansion: () => {
+-      if (isScheduledView || !client) return;
++      if (isScheduledView || !client || conversationInReader) return;
+       if (!selectedEmail?.threadId) return;
+       const threadKey = threadKeyFor(selectedEmail);
+       const store = useEmailStore.getState();
+@@ -1094,7 +1108,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+       }
+     },
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }), [activeEmails, selectedEmail, client, selectedMailbox, isMobile, isTablet, selectedEmailKeys, mailboxes, isScheduledView, mvShell, showCrossStarred, archiveActionEnabled]);
++  }), [activeEmails, navigationEmails, navigationIndex, selectedEmail, client, selectedMailbox, isMobile, isTablet, selectedEmailKeys, mailboxes, isScheduledView, mvShell, showCrossStarred, archiveActionEnabled, conversationInReader]);
+ 
+   // Initialize keyboard shortcuts
+   // Mountain View keeps the ticked rows while a message is read (#1231). The
+@@ -3906,6 +3920,18 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+     }
+   };
+ 
++  // Mountain View reads a thread as one conversation in the viewer, on the
++  // phone as on the desktop, so both show the same order and details. (#1224)
++  // The default interface's reading pane does too, for a list row of more than
++  // one message; a lone message still opens header first.
++  const readsAsConversation = (email: Partial<Email> | null | undefined) => {
++    if (mvShell || mvMobile) return true;
++    if (!rowsAreThreads || !email?.threadId) return false;
++    const threadKey = threadKeyFor(email as Email);
++    return (threadEmailCounts.get(threadKey) ?? activeEmails.filter((e) => threadKeyFor(e) === threadKey).length) > 1;
++  };
++  const mvConversationView = readsAsConversation(selectedEmail);
++
+   // Mountain View reads a message inside its conversation, as Gmail does: load
+   // the rest of the thread (list properties only) whenever another opens.
+   const mvConversationThreadId = mvConversationView && !cursorOnly ? (selectedEmail?.threadId ?? null) : null;
+@@ -4154,7 +4180,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+     // hand) and let the body follow; the viewer shows a row without body
+     // values as loading. Mountain View shows the message inside its
+     // conversation, which is fetched alongside, so it waits for both.
+-    const rowEmail = !mvConversationView && listEmail && 'receivedAt' in listEmail ? listEmail as Email : null;
++    const rowEmail = !readsAsConversation(listEmail) && listEmail && 'receivedAt' in listEmail ? listEmail as Email : null;
+     if (rowEmail) {
+       beginOpenEmail(rowEmail);
+     } else {
+@@ -4183,7 +4209,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+ 
+       // Mountain View shows the message inside its conversation: fetch that
+       // alongside the message, so the two appear together. (#1223)
+-      const conversationPrefetch = mvConversationView && listEmail?.id && listEmail.threadId
++      const conversationPrefetch = readsAsConversation(listEmail) && listEmail?.id && listEmail.threadId
+         ? loadMvConversation(listEmail as Email, client)
+         : null;
+       // The request a mouse press on the row already started, if any.
+@@ -4255,12 +4281,12 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+   // Navigate to next/previous email in the list
+   const selectedEmailIndex = selectedEmail ? activeEmails.findIndex(e => emailKeyFor(e) === emailKeyFor(selectedEmail)) : -1;
+ 
+-  const handleNavigateNext = selectedEmailIndex >= 0 && selectedEmailIndex < activeEmails.length - 1
+-    ? () => handleEmailSelect(activeEmails[selectedEmailIndex + 1])
++  const handleNavigateNext = navigationIndex >= 0 && navigationIndex < navigationEmails.length - 1
++    ? () => handleEmailSelect(navigationEmails[navigationIndex + 1])
+     : undefined;
+ 
+-  const handleNavigatePrev = selectedEmailIndex > 0
+-    ? () => handleEmailSelect(activeEmails[selectedEmailIndex - 1])
++  const handleNavigatePrev = navigationIndex > 0
++    ? () => handleEmailSelect(navigationEmails[navigationIndex - 1])
+     : undefined;
+ 
+   // Handle opening conversation view on mobile
+@@ -5309,10 +5335,11 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+                     mvConversationPending={mvConversationView && !!selectedEmail && mvConversationLoading === selectedEmail.threadId}
+                     onLoadConversationEmail={mvConversationView ? (e) => void handleLoadConversationEmail(e) : undefined}
+                     onMarkConversationEmailRead={mvConversationView ? (e) => void handleMarkConversationEmailRead(e) : undefined}
+-                    onReplyConversationEmail={mvConversationView ? async (e) => {
++                    onReplyConversationEmail={mvConversationView ? async (e, mode) => {
+                       // The reply quotes the message, so it needs the body.
+                       const full = e.bodyValues ? e : await handleLoadConversationEmail(e);
+-                      await handleConversationReply(full ?? e);
++                      const respond = { reply: handleConversationReply, replyAll: handleConversationReplyAll, forward: handleConversationForward }[mode];
++                      await respond(full ?? e);
+                     } : undefined}
+                     mvInlineComposer={mvInlineReply ? <MvComposeInline onPopOut={handleMvPopOut}>{composerNode}</MvComposeInline> : undefined}
+                     onToggleFullscreen={!isEmbedded && !isMobile ? () => setFullscreenReading((v) => !v) : undefined}
+diff --git a/hooks/use-conversation-in-reader.ts b/hooks/use-conversation-in-reader.ts
+new file mode 100644
+index 00000000..6450766f
+--- /dev/null
++++ b/hooks/use-conversation-in-reader.ts
+@@ -0,0 +1,25 @@
++"use client";
++
++import { useEffectiveMailLayout } from "@/hooks/use-effective-mail-layout";
++import { useIsEmbedded } from "@/hooks/use-is-embedded";
++import { useSettingsStore } from "@/stores/settings-store";
++import { useUIStore } from "@/stores/ui-store";
++
++/**
++ * Whether the default interface's reading pane shows a thread as one
++ * conversation: on the desktop, in the layouts that keep the list beside or
++ * above the reader. A thread is then one row in the list, and the reader holds
++ * every message of it, oldest first, the way Mountain View reads one. Focus
++ * keeps its own flow, and phones, tablets and Pro panes keep theirs.
++ *
++ * Reads the device type from the UI store, which useDeviceDetection keeps in
++ * step with the viewport outside Pro panes, so list rows can call it cheaply.
++ */
++export function useConversationInReader(): boolean {
++  const interfaceLayout = useSettingsStore((state) => state.interfaceLayout);
++  const mailLayout = useEffectiveMailLayout();
++  const isMobile = useUIStore((state) => state.isMobile);
++  const isTablet = useUIStore((state) => state.isTablet);
++  const isEmbedded = useIsEmbedded();
++  return interfaceLayout !== 'mountain-view' && mailLayout !== 'focus' && !isMobile && !isTablet && !isEmbedded;
++}
