@@ -59,6 +59,9 @@ let
     }
   ];
 
+  hasAfterApply = cfg.plan.afterApply != "";
+  afterApplyFile = pkgs.writeText "stalwart-after-apply" cfg.plan.afterApply;
+
   needsRecoveryMode =
     let
       cmp = lib.getExe' pkgs.diffutils "cmp";
@@ -66,11 +69,15 @@ let
     lib.concatStringsSep " " [
       (lib.optionalString cfg.plan.enableDefaultPlan "! ${cmp} -s ${writePlan defaultPlan} $STATE_DIRECTORY/.default-plan.ndjson ||")
       "! ${cmp} -s ${writePlan cfg.plan.sequence} $STATE_DIRECTORY/.plan.ndjson ||"
+      (lib.optionalString hasAfterApply "! ${cmp} -s ${afterApplyFile} $STATE_DIRECTORY/.after-apply ||")
       "[ -n '${lib.optionalString cfg.recoveryMode.forceEnable "FORCE_RECOVERY"}' ]"
     ];
   in
 {
-  imports = [ ./backup.nix ];
+  imports = [
+    ./app-passwords.nix
+    ./backup.nix
+  ];
 
   options.services.stalwart = {
     enable = lib.mkEnableOption "the all-in-one collaboration and mail server, Stalwart";
@@ -184,7 +191,7 @@ let
           mode, with `STALWART_URL`, `STALWART_USER` and `STALWART_PASSWORD`
           set to reach it as the recovery admin. Their failure is logged and
           ignored: it neither fails the plan step nor keeps Stalwart in
-          recovery mode.
+          recovery mode. A change to them applies the plan again.
         '';
         default = "";
       };
@@ -321,7 +328,7 @@ let
               '')
             ]
             # "-": the plan's own outcome decides the step, and Stalwart leaves recovery mode either way
-            ++ lib.optional (cfg.plan.afterApply != "") (
+            ++ lib.optional hasAfterApply (
               "-"
               + pkgs.writeShellScript "stalwart-apply-plan-after" ''
                 if ${needsRecoveryMode}; then
@@ -340,6 +347,7 @@ let
                       ln -sf ${writePlan defaultPlan} $STATE_DIRECTORY/.default-plan.ndjson
                     ''}
                     ln -sf ${writePlan cfg.plan.sequence} $STATE_DIRECTORY/.plan.ndjson
+                    ${lib.optionalString hasAfterApply "ln -sf ${afterApplyFile} $STATE_DIRECTORY/.after-apply"}
                     systemctl restart stalwart.service
                   fi
                 ''

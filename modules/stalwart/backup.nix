@@ -14,8 +14,7 @@ in
       account, named by account id with `accounts.json` mapping ids to
       addresses, and writes all of them to stdout as a tar stream. An account
       whose archive fails keeps its previous one in the stream, and the command
-      then exits non-zero. It also makes Stalwart's own OAuth refuse clients
-      that aren't registered, and registration without its permission
+      then exits non-zero
     '';
 
     package = lib.mkOption {
@@ -48,11 +47,8 @@ in
       type = lib.types.path;
       default = "/var/lib/stalwart/backup-app-password";
       description = ''
-        File holding an app password of {option}`services.stalwart.backup.account`.
-        When it is missing, applying the plan revokes the account's app
-        passwords and creates one there, allowed from loopback only. To replace
-        it, delete it and `.plan.ndjson` beside it, then restart Stalwart: the
-        missing link makes it apply the plan again.
+        File holding an app password of {option}`services.stalwart.backup.account`,
+        allowed from loopback only; see {option}`services.stalwart.appPasswords.<name>.file`.
       '';
     };
 
@@ -99,84 +95,14 @@ in
       ]
     ) (lib.attrValues config.services.stalwart.package.permissions);
 
-    services.stalwart.plan.afterApply = lib.getExe (
-      pkgs.writeShellApplication {
-        name = "stalwart-backup-app-password";
-        runtimeInputs = [
-          pkgs.curl
-          pkgs.jq
-        ];
-        # jq programs, whose $variables are jq's own, pass through pick()
-        excludeShellChecks = [ "SC2016" ];
-        text = ''
-          password_file=${lib.escapeShellArg (toString cfg.appPasswordFile)}
-
-          # base64 on a pipe: the password reaches neither argv nor curl's config quoting
-          auth=$(printf '%s:%s' "$STALWART_USER" "$STALWART_PASSWORD" | base64 --wrap=0)
-          admin() {
-            # under the plan step's start timeout, which would leave Stalwart in recovery mode
-            curl --fail --silent --show-error --max-time 30 \
-              --config <(printf 'header = "Authorization: Basic %s"\n' "$auth") "$@"
-          }
-          jmap() {
-            admin --header 'Content-Type: application/json' --data-binary @- "$STALWART_URL/jmap/" \
-              < <(jq --null-input --compact-output \
-                '{using: ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"], methodCalls: $ARGS.positional}' \
-                --jsonargs "$@")
-          }
-
-          # a step that gets an unexpected response logs it, secrets removed, before failing
-          pick() {
-            local response
-            response=$(cat)
-            jq --exit-status "$@" <<<"$response" && return
-            echo "unexpected response: $(jq --compact-output 'walk(if type == "object" then del(.secret) else . end)' <<<"$response")" >&2
-            return 1
-          }
-
-          admin_id=$(admin "$STALWART_URL/jmap/session" | pick --raw-output '.primaryAccounts["urn:stalwart:jmap"]')
-
-          # An unregistered OAuth client could trade the app password for tokens that ignore
-          # its allowedIps. Updates must resend the provider's secrets, so they rotate too.
-          jmap "$(
-            OAUTH_KEY=$(head -c 48 /dev/urandom | base64 --wrap=0) \
-            SIGNING_KEY=$(head -c 48 /dev/urandom | base64 --wrap=0) \
-            jq --null-input --arg a "$admin_id" '["x:OidcProvider/set", {accountId: $a, update: {singleton: {
-              requireClientRegistration: true,
-              anonymousClientRegistration: false,
-              encryptionKey: {"@type": "Value", secret: $ENV.OAUTH_KEY},
-              signatureAlgorithm: "hs256",
-              signatureKey: {"@type": "Text", secret: $ENV.SIGNING_KEY}
-            }}}, "o"]'
-          )" | pick '.methodResponses[0][1].updated | has("singleton")' >/dev/null
-
-          [ -s "$password_file" ] && exit 0
-
-          account_id=$(
-            jmap \
-              "$(jq --null-input --arg a "$admin_id" '["x:Account/query", {accountId: $a}, "q"]')" \
-              "$(jq --null-input --arg a "$admin_id" \
-                '["x:Account/get", {accountId: $a, "#ids": {resultOf: "q", name: "x:Account/query", path: "/ids"}, properties: ["emailAddress"]}, "g"]')" \
-              | pick --raw-output --arg address ${lib.escapeShellArg cfg.account} \
-                '.methodResponses[1][1].list[] | select(.emailAddress == $address) | .id'
-          )
-          old=$(
-            jmap "$(jq --null-input --arg a "$account_id" '["x:AppPassword/get", {accountId: $a, ids: null, properties: ["id"]}, "g"]')" \
-              | pick --compact-output '[.methodResponses[0][1].list[].id]'
-          )
-          secret=$(
-            jmap "$(jq --null-input --arg a "$account_id" --argjson old "$old" '["x:AppPassword/set", {accountId: $a, destroy: $old, create: {p: {
-              description: "backup dump",
-              allowedIps: {"127.0.0.1/32": true, "::1/128": true},
-              permissions: {"@type": "Inherit"}
-            }}}, "s"]')" \
-              | pick --raw-output '.methodResponses[0][1] | select((.notDestroyed // {}) == {}) | .created.p.secret'
-          )
-          (umask 077 && printf '%s\n' "$secret" > "$password_file.new")
-          mv "$password_file.new" "$password_file"
-        '';
-      }
-    );
+    services.stalwart.appPasswords.${cfg.account} = {
+      file = cfg.appPasswordFile;
+      allowedIps = [
+        "127.0.0.1/32"
+        "::1/128"
+      ];
+      description = "backup dump";
+    };
 
     services.stalwart.backup.dumpCommand =
       pkgs.writers.writePython3 "stalwart-backup-dump"
