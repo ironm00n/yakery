@@ -547,6 +547,32 @@ impl Mail {
         }
     }
 
+    /// Stores a raw message in `mailbox` with `keywords`, as it is; the new email's id.
+    pub async fn import(
+        &self,
+        message: Vec<u8>,
+        mailbox: &str,
+        keywords: &[&str],
+    ) -> Result<String> {
+        let blob = self
+            .with(async |s| {
+                s.client
+                    .upload(None, message.clone(), Some("message/rfc822"))
+                    .await
+            })
+            .await?;
+        let mut responses = self
+            .call(|r| {
+                r.import_email()
+                    .email(blob.blob_id())
+                    .mailbox_ids([mailbox])
+                    .keywords(keywords.iter().copied());
+            })
+            .await?;
+        let imported = responses.next()?.unwrap_import_email()?.created("i0")?;
+        Ok(imported.id().unwrap_or_default().to_owned())
+    }
+
     /// Destroys an email agent-mail created itself and failed to send, so it is neither left as a draft nor
     /// mistaken for a sent answer.
     pub async fn discard_unsent(&self, id: &str) -> Result<()> {

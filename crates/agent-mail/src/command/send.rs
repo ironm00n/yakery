@@ -4,19 +4,23 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
+use chrono::DateTime;
 use clap::ArgGroup;
 use jmap_client::email::{self, Email, EmailBodyPart, Header, HeaderValue};
 use serde_json::json;
 
 use crate::{
     address::{Address, MessageId, Topic},
-    auth::Auth,
+    auth::{Auth, store::now},
     body::Body,
     config::Config,
+    entity::Entity,
     identity::Login,
-    mail::{AGENT_MAIL, ANSWERED, Mail},
-    outbox::{Delivery, Outbox, Submitted, describe, not_processed, require_all},
+    mail::{AGENT_MAIL, ANSWERED, Mail, SEEN},
+    mime,
+    outbox::{Delivery, Outbox, Outcome, describe, require_all},
     policy::Recipients,
+    random::{ALPHANUMERIC, Draws},
     show::{addresses, emails, id, out, plain, preview, received, utc, warn},
     signature::{ClaudeSession, Signature, host, subject_prefix},
 };
@@ -44,6 +48,10 @@ pub struct Args {
     subject: Option<String>,
     #[arg(long, value_name = "FILE")]
     attach: Vec<PathBuf>,
+    /// Send this MIME entity, built elsewhere, instead of rendering Markdown from stdin. It may carry only
+    /// Content-* fields and MIME-Version; agent-mail writes every other field and adds no signature.
+    #[arg(long, value_name = "FILE", conflicts_with = "attach")]
+    mime: Option<PathBuf>,
 }
 
 struct Attachment {
@@ -189,51 +197,146 @@ impl Reply {
     }
 }
 
+/// What a mail says: Markdown rendered here, with its attachments, or an entity rendered elsewhere.
+enum Content {
+    Markdown {
+        body: Body,
+        attachments: Vec<Attachment>,
+    },
+    Mime(Entity),
+}
+
+const DRAFT: [&str; 3] = ["$draft", SEEN, AGENT_MAIL];
+
+/// The mail's own header fields, decided once for either content.
+struct Heading {
+    from: Address,
+    to: Vec<Address>,
+    cc: Vec<Address>,
+    subject: String,
+    in_reply_to: Vec<MessageId>,
+    references: Vec<MessageId>,
+}
+
+impl Heading {
+    fn decide(login: &Login, args: &Args, reply: Option<&Reply>, prefix: &str) -> Result<Heading> {
+        let recipients = match (reply, args.all) {
+            (Some(reply), true) => {
+                let (to, cc) = reply_all(login, &args.to, &args.cc, &reply.from, &reply.rest)?;
+                Recipients::check(login, to, cc)?
+            }
+            _ => Recipients::check(login, args.to.clone(), args.cc.clone())?,
+        };
+        let subject = match (&args.subject, reply) {
+            (Some(subject), _) => plain(&format!("{prefix} {subject}")),
+            (None, Some(reply)) => reply.subject.clone(),
+            (None, None) => bail!("send needs --subject or --reply"),
+        };
+        let from = match &args.topic {
+            Some(topic) => login.topic_address(topic),
+            None => reply
+                .and_then(|r| r.topic.clone())
+                .unwrap_or_else(|| login.to_string()),
+        };
+        Ok(Heading {
+            from: from.parse()?,
+            to: recipients.to,
+            cc: recipients.cc,
+            subject,
+            in_reply_to: reply.map(|r| r.message_id.clone()).unwrap_or_default(),
+            references: reply.map(|r| r.references.clone()).unwrap_or_default(),
+        })
+    }
+
+    fn everyone(&self) -> Vec<Address> {
+        self.to.iter().chain(&self.cc).cloned().collect()
+    }
+
+    /// The fields of a raw message, each ending in CRLF: those the Markdown path sets through JMAP, and the Date
+    /// and Message-ID Stalwart adds to those.
+    fn fields(&self, date_secs: i64, message_id: &MessageId) -> String {
+        let join = |items: Vec<String>, by: &str| items.join(by);
+        let addresses =
+            |list: &[Address]| join(list.iter().map(Address::to_string).collect(), ", ");
+        let ids = |list: &[MessageId]| join(list.iter().map(MessageId::to_string).collect(), " ");
+        let date = DateTime::from_timestamp(date_secs, 0)
+            .unwrap_or_default()
+            .to_rfc2822();
+        let mut fields = vec![
+            format!("Date: {date}"),
+            format!("From: {}", self.from),
+            format!("To: {}", addresses(&self.to)),
+        ];
+        if !self.cc.is_empty() {
+            fields.push(format!("Cc: {}", addresses(&self.cc)));
+        }
+        fields.push(format!("Subject: {}", mime::text(&self.subject)));
+        fields.push(format!("Message-ID: {message_id}"));
+        if !self.in_reply_to.is_empty() {
+            fields.push(format!("In-Reply-To: {}", ids(&self.in_reply_to)));
+        }
+        if !self.references.is_empty() {
+            fields.push(format!("References: {}", ids(&self.references)));
+        }
+        fields.push(format!("Disposition-Notification-To: {}", self.from));
+        fields.iter().map(|f| format!("{f}\r\n")).collect()
+    }
+}
+
 pub async fn run(args: Args) -> Result<()> {
     let config = Config::load()?;
     Recipients::check(&config.login, args.to.clone(), args.cc.clone())?;
-    let markdown = io::read_to_string(io::stdin())?;
-    ensure!(
-        !markdown.trim().is_empty(),
-        "send reads the body from stdin, and it was empty"
-    );
-    let attachments = args
-        .attach
-        .iter()
-        .map(|path| Attachment::read(path))
-        .collect::<Result<Vec<_>>>()?;
     let (host, me) = (host(), ClaudeSession::own());
-    let body = Body::new(&markdown, &Signature::new(&host, me.as_ref()))?;
+    let content = match &args.mime {
+        Some(path) => {
+            let bytes = fs::read(path).with_context(|| path.display().to_string())?;
+            let entity =
+                Entity::parse(&bytes).with_context(|| format!("--mime {}", path.display()))?;
+            Content::Mime(entity)
+        }
+        None => {
+            let markdown = io::read_to_string(io::stdin())?;
+            ensure!(
+                !markdown.trim().is_empty(),
+                "send reads the body from stdin, and it was empty"
+            );
+            let attachments = args
+                .attach
+                .iter()
+                .map(|path| Attachment::read(path))
+                .collect::<Result<Vec<_>>>()?;
+            let body = Body::new(&markdown, &Signature::new(&host, me.as_ref()))?;
+            Content::Markdown { body, attachments }
+        }
+    };
 
     let mail = Mail::connect(Auth::new(config)?).await?;
-    let login = &mail.auth.login;
     let outbox = Outbox::open(&mail).await?;
     let reply = match &args.reply {
         Some(parent) => Some(Reply::to(&mail, parent, args.past).await?),
         None => None,
     };
-    let recipients = match (&reply, args.all) {
-        (Some(reply), true) => {
-            let (to, cc) = reply_all(login, &args.to, &args.cc, &reply.from, &reply.rest)?;
-            Recipients::check(login, to, cc)?
+    let prefix = subject_prefix(&host, me.as_ref());
+    let heading = Heading::decide(&mail.auth.login, &args, reply.as_ref(), &prefix)?;
+    let draft = match &content {
+        Content::Markdown { body, attachments } => {
+            draft_markdown(&mail, &outbox, &heading, body, attachments).await?
         }
-        _ => Recipients::check(login, args.to, args.cc)?,
+        Content::Mime(entity) => draft_mime(&mail, &outbox, &heading, entity).await?,
     };
-    let subject = match (&args.subject, &reply) {
-        (Some(subject), _) => plain(&format!("{} {subject}", subject_prefix(&host, me.as_ref()))),
-        (None, Some(reply)) => reply.subject.clone(),
-        (None, None) => bail!("send needs --subject or --reply"),
-    };
-    let from = match &args.topic {
-        Some(topic) => login.topic_address(topic),
-        None => reply
-            .as_ref()
-            .and_then(|r| r.topic.clone())
-            .unwrap_or_else(|| login.to_string()),
-    };
+    deliver(&mail, &outbox, &draft, &heading, reply.as_ref()).await
+}
 
+/// The draft of a mail rendered here, through JMAP's body parts, its attachments uploaded first.
+async fn draft_markdown(
+    mail: &Mail,
+    outbox: &Outbox,
+    heading: &Heading,
+    body: &Body,
+    attachments: &[Attachment],
+) -> Result<String> {
     let mut parts = Vec::with_capacity(attachments.len());
-    for a in &attachments {
+    for a in attachments {
         let blob = mail
             .with(async |s| {
                 s.client
@@ -247,22 +350,16 @@ pub async fn run(args: Args) -> Result<()> {
         }))?;
         parts.push(part);
     }
-
-    let everyone: Vec<Address> = recipients
-        .to
-        .iter()
-        .chain(&recipients.cc)
-        .cloned()
-        .collect();
+    let from = heading.from.to_string();
     let mut created = mail
         .call(|r| {
             let draft = r.set_email().create_with_id("draft");
             draft
                 .mailbox_ids([outbox.drafts.as_str()])
-                .keywords(["$draft", "$seen", AGENT_MAIL])
+                .keywords(DRAFT)
                 .from([from.as_str()])
-                .to(recipients.to.iter().map(Address::to_string))
-                .subject(&subject)
+                .to(heading.to.iter().map(Address::to_string))
+                .subject(&heading.subject)
                 .body_value("text".into(), body.text.as_str())
                 .body_value("html".into(), body.html.as_str())
                 .text_body(
@@ -275,13 +372,14 @@ pub async fn run(args: Args) -> Result<()> {
                         .part_id("html")
                         .content_type("text/html"),
                 );
-            if !recipients.cc.is_empty() {
-                draft.cc(recipients.cc.iter().map(Address::to_string));
+            if !heading.cc.is_empty() {
+                draft.cc(heading.cc.iter().map(Address::to_string));
             }
-            if let Some(reply) = &reply {
-                draft
-                    .in_reply_to(reply.message_id.iter().map(MessageId::bare))
-                    .references(reply.references.iter().map(MessageId::bare));
+            if !heading.in_reply_to.is_empty() {
+                draft.in_reply_to(heading.in_reply_to.iter().map(MessageId::bare));
+            }
+            if !heading.references.is_empty() {
+                draft.references(heading.references.iter().map(MessageId::bare));
             }
             draft.header(
                 Header::as_text("Disposition-Notification-To", false),
@@ -294,40 +392,55 @@ pub async fn run(args: Args) -> Result<()> {
         .await
         .context("nothing was sent; the draft may or may not exist")?;
     let draft = created.next()?.unwrap_set_email()?.created("draft")?;
-    let draft = id(&draft).to_owned();
-    let submitted = mail
-        .call(|r| outbox.submit(r, &draft, &everyone))
+    Ok(id(&draft).to_owned())
+}
+
+/// The draft of a mail rendered elsewhere: agent-mail's fields, then the entity, stored as it is.
+async fn draft_mime(
+    mail: &Mail,
+    outbox: &Outbox,
+    heading: &Heading,
+    entity: &Entity,
+) -> Result<String> {
+    let token = Draws::default().string(ALPHANUMERIC, 24)?;
+    let domain = mail.auth.login.address().domain();
+    let message_id: MessageId = format!("{token}@{domain}").parse()?;
+    let message = entity.message(&heading.fields(now(), &message_id));
+    mail.import(message, &outbox.drafts, &DRAFT)
         .await
-        .and_then(Outbox::read);
-    let (submission, delivery) = match submitted {
-        Ok(Submitted::Created { id, delivery }) => (id, delivery),
-        Ok(Submitted::NotCreated(e)) => return Err(discard(&mail, &draft, e).await),
-        Err(e) if not_processed(&e) => return Err(discard(&mail, &draft, e).await),
-        Err(e) => {
-            match outbox.find(&mail, &draft).await {
-                Ok(Some(found)) => found,
-                Ok(None) => {
-                    return Err(e.context(format!(
-                        "not known to be sent; the copy is still in Drafts as {draft}"
-                    )));
-                }
-                Err(f) => {
-                    return Err(e.context(format!("unknown whether it was sent ({f:#}); the copy is still in Drafts as {draft}")));
-                }
-            }
+        .context("nothing was sent; the draft may or may not exist")
+}
+
+/// Submits the draft to everyone on `heading` and files it; a draft that reached nobody is removed, and the mail
+/// replied to is marked answered only when every recipient took the reply.
+async fn deliver(
+    mail: &Mail,
+    outbox: &Outbox,
+    draft: &str,
+    heading: &Heading,
+    reply: Option<&Reply>,
+) -> Result<()> {
+    let everyone = heading.everyone();
+    let (submission, delivery) = match outbox.send(mail, draft, &everyone).await {
+        Outcome::Submitted { id, delivery } => (id, delivery),
+        Outcome::Unsent(e) => return Err(discard(mail, draft, e).await),
+        Outcome::Unknown(e) => {
+            return Err(e.context(format!(
+                "not known to be sent; the copy is still in Drafts as {draft}"
+            )));
         }
     };
     if let Err(e) = require_all(&submission, &delivery) {
-        return Err(discard(&mail, &draft, e).await);
+        return Err(discard(mail, draft, e).await);
     }
-    if let Err(e) = outbox.file(&mail, &draft).await {
+    if let Err(e) = outbox.file(mail, draft).await {
         warn(&format!(
             "sent (submission {submission}), but filing {draft} into Sent failed: {e:#}"
         ));
     }
     match &delivery {
         Delivery::Accepted { refused } if refused.is_empty() => {
-            if let Some(reply) = &reply
+            if let Some(reply) = reply
                 && let Err(e) = mail.mark(&[(reply.parent.as_str(), vec![ANSWERED])]).await
             {
                 warn(&format!(
@@ -348,7 +461,9 @@ pub async fn run(args: Args) -> Result<()> {
     }
     let everyone: Vec<String> = everyone.iter().map(Address::to_string).collect();
     out(&format!(
-        "sent {draft} \"{subject}\" from {from} to {} (submission {submission})",
+        "sent {draft} \"{}\" from {} to {} (submission {submission})",
+        heading.subject,
+        heading.from,
         everyone.join(", ")
     ))
 }
@@ -420,6 +535,82 @@ mod tests {
 
     fn strings(list: &[&str]) -> Vec<String> {
         list.iter().map(|a| a.to_string()).collect()
+    }
+
+    fn heading(reply: bool) -> Heading {
+        let ids = |list: &[&str]| list.iter().map(|i| i.parse().unwrap()).collect();
+        Heading {
+            from: "agent+tooling@ironmoon.dev".parse().unwrap(),
+            to: addresses_of(&["ironmoon@ironmoon.dev"]),
+            cc: match reply {
+                true => addresses_of(&["owenduckham11@gmail.com", "bob@agent.ironmoon.dev"]),
+                false => vec![],
+            },
+            subject: match reply {
+                true => "Re: [desktop · mail] the pick · now".into(),
+                false => "[desktop · mail] pick one".into(),
+            },
+            in_reply_to: match reply {
+                true => ids(&["p@ironmoon.dev"]),
+                false => vec![],
+            },
+            references: match reply {
+                true => ids(&["root@ironmoon.dev", "p@ironmoon.dev"]),
+                false => vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn a_new_mail_carries_agent_mails_fields_only() {
+        let id: MessageId = "T@ironmoon.dev".parse().unwrap();
+        assert_eq!(
+            heading(false).fields(1_760_000_000, &id),
+            "Date: Thu, 9 Oct 2025 08:53:20 +0000\r\n\
+             From: agent+tooling@ironmoon.dev\r\n\
+             To: ironmoon@ironmoon.dev\r\n\
+             Subject: =?UTF-8?B?W2Rlc2t0b3AgwrcgbWFpbF0gcGljayBvbmU=?=\r\n\
+             Message-ID: <T@ironmoon.dev>\r\n\
+             Disposition-Notification-To: agent+tooling@ironmoon.dev\r\n"
+        );
+    }
+
+    #[test]
+    fn a_reply_threads_under_its_parent_and_keeps_its_cc() {
+        let id: MessageId = "T@ironmoon.dev".parse().unwrap();
+        let fields = heading(true).fields(1_760_000_000, &id);
+        let lines: Vec<&str> = fields.split("\r\n").collect();
+        assert_eq!(
+            lines[3..],
+            [
+                "Cc: owenduckham11@gmail.com, bob@agent.ironmoon.dev",
+                "Subject: =?UTF-8?B?UmU6IFtkZXNrdG9wIMK3IG1haWxdIHRoZSBwaWNrIMK3IG5vdw==?=",
+                "Message-ID: <T@ironmoon.dev>",
+                "In-Reply-To: <p@ironmoon.dev>",
+                "References: <root@ironmoon.dev> <p@ironmoon.dev>",
+                "Disposition-Notification-To: agent+tooling@ironmoon.dev",
+                "",
+            ]
+        );
+    }
+
+    #[test]
+    fn mime_takes_no_attachments_of_its_own() {
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: Args,
+        }
+        let parse = |extra: &[&str]| {
+            let base = ["send", "--to", "ironmoon@ironmoon.dev", "--subject", "s"];
+            <Cli as clap::Parser>::try_parse_from(base.iter().chain(extra))
+        };
+        let conflict = parse(&["--mime", "m.eml", "--attach", "a.png"])
+            .err()
+            .unwrap();
+        assert_eq!(conflict.kind(), clap::error::ErrorKind::ArgumentConflict);
+        assert!(parse(&["--mime", "m.eml"]).is_ok());
+        assert!(parse(&["--attach", "a.png"]).is_ok());
     }
 
     #[test]

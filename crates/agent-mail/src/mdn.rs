@@ -10,7 +10,7 @@ use crate::{
     identity::Login,
     mail::{AGENT_MAIL, MDN_SENT, Mail, SEEN, has_keyword},
     mime,
-    outbox::{Outbox, Submitted, not_processed, require_all},
+    outbox::{Outbox, Outcome, require_all},
     policy::Recipients,
     random::{ALPHANUMERIC, Draws},
     show::{addresses, plain},
@@ -210,45 +210,24 @@ impl Receipt {
     /// recipient refused. When the outcome is unknown it is left, and said so.
     pub async fn send(&self, mail: &Mail, outbox: &Outbox, now: i64) -> Result<()> {
         let token = Draws::default().string(ALPHANUMERIC, 24)?;
-        let bytes = self.message(now, &token).into_bytes();
-        let blob = mail
-            .with(async |s| {
-                s.client
-                    .upload(None, bytes.clone(), Some("message/rfc822"))
-                    .await
-            })
+        let message = self.message(now, &token).into_bytes();
+        let copy = &mail
+            .import(message, &outbox.sent, &[SEEN, MDN_SENT, AGENT_MAIL])
             .await?;
-        let mut responses = mail
-            .call(|r| {
-                r.import_email()
-                    .email(blob.blob_id())
-                    .mailbox_ids([outbox.sent.as_str()])
-                    .keywords([SEEN, MDN_SENT, AGENT_MAIL]);
-            })
-            .await?;
-        let imported = responses.next()?.unwrap_import_email()?.created("i0")?;
-        let copy = imported.id().unwrap_or_default();
-        let call = mail
-            .call(|r| outbox.submit(r, copy, std::slice::from_ref(&self.to)))
-            .await;
-        let unsent = match call.and_then(Outbox::read) {
-            Ok(Submitted::Created { id, delivery }) => match require_all(&id, &delivery) {
+        let unsent = match outbox
+            .send(mail, copy, std::slice::from_ref(&self.to))
+            .await
+        {
+            Outcome::Submitted { id, delivery } => match require_all(&id, &delivery) {
                 Ok(()) => return Ok(()),
-                Err(e) => e,
+                Err(refused) => refused,
             },
-            Ok(Submitted::NotCreated(e)) => e,
-            Err(e) if not_processed(&e) => e,
-            Err(e) => match outbox.find(mail, copy).await {
-                Ok(Some((id, delivery))) => match require_all(&id, &delivery) {
-                    Ok(()) => return Ok(()),
-                    Err(refused) => refused,
-                },
-                _ => {
-                    return Err(e.context(format!(
-                        "not known to be sent; its copy {copy} stays in Sent"
-                    )));
-                }
-            },
+            Outcome::Unsent(e) => e,
+            Outcome::Unknown(e) => {
+                return Err(e.context(format!(
+                    "not known to be sent; its copy {copy} stays in Sent"
+                )));
+            }
         };
         Err(match mail.discard_unsent(copy).await {
             Ok(()) => unsent.context("the receipt was not sent"),

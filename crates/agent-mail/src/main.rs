@@ -5,6 +5,7 @@ mod auth;
 mod body;
 mod command;
 mod config;
+mod entity;
 mod folder;
 mod home;
 mod identity;
