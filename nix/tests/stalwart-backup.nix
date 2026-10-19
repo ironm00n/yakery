@@ -200,6 +200,20 @@ pkgs.testers.runNixOSTest {
           archives = run_job()
           assert len(archives) >= 2, archives
 
+      with subtest("applying the plan again puts back the allowed IPs on the password it keeps"):
+          backup = account_ids["backup"]
+          kept = call(admin, backup, "x:AppPassword/get", {"ids": None, "properties": ["id"]})["list"]
+          widened = call(admin, backup, "x:AppPassword/set", {"update": {
+              p["id"]: {"allowedIps": {"192.168.0.0/16": True, "2001:db8::/32": True}} for p in kept
+          }})
+          assert not widened.get("notUpdated"), widened
+          assert session(box, as_backup)[0] == 200
+          server.succeed("rm /var/lib/stalwart/.plan.ndjson && systemctl restart stalwart.service")
+          wait_for_stalwart()
+          assert server.succeed(f"cat {password_file}").strip() == backup_secret
+          assert session(server, as_backup)[0] == 200
+          assert session(box, as_backup)[0] == 403
+
       with subtest("the documented repair makes a new password and revokes the old one"):
           server.succeed(f"rm {password_file} /var/lib/stalwart/.plan.ndjson && systemctl restart stalwart.service")
           wait_for_stalwart()
