@@ -33,6 +33,7 @@ buildNpmPackage (finalAttrs: {
     ./02-mobile-handoff-signed-in.patch
     ./03-mail-frames-match-the-page.patch
     ./04-mail-keeps-its-vector-images.patch
+    ./05-expanded-threads-stay-whole.patch
   ];
 
   configurePhase = ''
