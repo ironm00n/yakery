@@ -32,6 +32,7 @@ buildNpmPackage (finalAttrs: {
     ./01-localfont.patch
     ./02-mobile-handoff-signed-in.patch
     ./03-mail-frames-match-the-page.patch
+    ./04-mail-keeps-its-vector-images.patch
   ];
 
   configurePhase = ''

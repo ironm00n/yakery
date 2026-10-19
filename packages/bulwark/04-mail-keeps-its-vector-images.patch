@@ -1,0 +1,274 @@
+diff --git a/components/email/thread-conversation-view.tsx b/components/email/thread-conversation-view.tsx
+index 4830b48..d521c7f 100644
+--- a/components/email/thread-conversation-view.tsx
++++ b/components/email/thread-conversation-view.tsx
+@@ -1,16 +1,15 @@
+ "use client";
+ 
+ import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from "react";
+-import DOMPurify from "dompurify";
+ import { Email, ThreadGroup } from "@/lib/jmap/types";
+-import { EMAIL_SANITIZE_CONFIG, blockExternalResourcesOnNode, collapseBlockedImageContainers, emailIframeCsp, plainTextToSafeHtml, restrictDataUriResourcesOnNode, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
++import { emailIframeCsp, plainTextToSafeHtml, sanitizeEmailBodyForIframe, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
+ import { getRenderableHtmlBody } from "@/lib/email-body-selection";
+ import { findVerificationCode, verificationCodeBodyText } from "@/lib/verification-code";
+ import { VerificationCodeChip } from "./verification-code-chip";
+ import { collectReferencedCids, isEmbeddedInBody } from "@/lib/attachment-visibility";
+ import { collapsePlainTextQuotes, setupQuoteCollapse } from "@/lib/quote-collapse";
+ import { fitEmailBodyWidth } from "@/lib/email-fit-width";
+-import { DARK_PENDING_CLASS, applyEmailDarkMode, emailDarkModeCss } from "@/lib/email-dark-mode";
++import { DARK_PENDING_CLASS, applyEmailDarkMode, emailColorScheme, emailDarkModeCss, emailHasNativeDarkMode, resolveColorSchemeMedia } from "@/lib/email-dark-mode";
+ import { EMAIL_FRAME_FONT_FAMILY, adoptFrameLook } from "@/lib/email-frame-look";
+ import { useThemeStore } from "@/stores/theme-store";
+ import { useShallow } from "zustand/react/shallow";
+@@ -594,38 +593,13 @@ export function ConversationEmailBody({
+           );
+         }
+ 
+-        let blockedExternalContent = false;
++        // The desktop viewer's sanitizer, blocker and data:-URI guard: the body
++        // renders in an iframe here too, so it keeps its <style> and <svg>.
++        // Every link gets a new tab once the frame loads (handleIframeLoad).
++        const { html, blockedExternalContent } = sanitizeEmailBodyForIframe(htmlContent, !allowExternal);
++        if (blockedExternalContent && !hasBlockedContent) setHasBlockedContent(true);
+ 
+-        // Use shared sanitization config as base (more secure)
+-        const sanitizeConfig = { ...EMAIL_SANITIZE_CONFIG };
+-
+-        DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+-          // Re-apply the data:-URI allowlist DOMPurify skips on media tags.
+-          restrictDataUriResourcesOnNode(node);
+-
+-          // The desktop viewer's blocker: srcset, <source>, poster,
+-          // background attributes and escaped url()s as well as img src.
+-          if (!allowExternal && blockExternalResourcesOnNode(node)) {
+-            blockedExternalContent = true;
+-          }
+-
+-          if (node.tagName === 'A' || node.tagName === 'AREA') {
+-            node.setAttribute('target', '_blank');
+-            node.setAttribute('rel', 'noopener noreferrer');
+-          }
+-
+-        });
+-
+-        const sanitized = DOMPurify.sanitize(htmlContent, sanitizeConfig);
+-        DOMPurify.removeHook('afterSanitizeAttributes');
+-
+-        let finalHtml = sanitized;
+-        if (blockedExternalContent) {
+-          if (!hasBlockedContent) setHasBlockedContent(true);
+-          finalHtml = collapseBlockedImageContainers(sanitized);
+-        }
+-
+-        return { html: finalHtml, isHtml: true };
++        return { html, isHtml: true };
+       }
+ 
+       // Plain text fallback
+@@ -672,13 +646,20 @@ export function ConversationEmailBody({
+   // the host page. CSP <meta> is defense-in-depth in case the sanitizer ever
+   // emits a <script> tag through a parser quirk.
+   const iframeRef = useRef<HTMLIFrameElement>(null);
++  // A mail with its own dark styles gets them pinned to the app theme rather
++  // than the OS, as in the desktop viewer.
++  const nativeDarkMode = useMemo(
++    () => emailContent.isHtml && emailHasNativeDarkMode(emailContent.html),
++    [emailContent.isHtml, emailContent.html],
++  );
++  const colorScheme = emailColorScheme(isDark, nativeDarkMode);
+   const emailIframeSrcDoc = useMemo(() => {
+     if (!emailContent.isHtml || !emailContent.html) return '';
+     // Strict while external content is blocked: the network-level backstop
+     // for whatever the DOM walk above cannot see.
+     const csp = emailIframeCsp(!allowExternal);
+     // Colours are rewritten after load (applyEmailDarkMode in handleIframeLoad).
+-    return `<!DOCTYPE html><html class="${isDark ? DARK_PENDING_CLASS : ''}"><head>
++    return `<!DOCTYPE html><html class="${isDark ? DARK_PENDING_CLASS : ''}" style="color-scheme: ${colorScheme};"><head>
+ <meta charset="utf-8">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+ <meta http-equiv="Content-Security-Policy" content="${csp}">
+@@ -709,8 +690,8 @@ export function ConversationEmailBody({
+   td, th { word-break: break-word; padding: 0.5rem; }
+   pre { white-space: pre-wrap; word-wrap: break-word; }
+   ${isDark ? emailDarkModeCss() : ''}
+-</style></head><body dir="auto">${emailContent.html}</body></html>`;
+-  }, [emailContent.isHtml, emailContent.html, allowExternal, isDark]);
++</style></head><body dir="auto">${resolveColorSchemeMedia(emailContent.html, isDark)}</body></html>`;
++  }, [emailContent.isHtml, emailContent.html, allowExternal, isDark, colorScheme]);
+   useLayoutEffect(() => { setHtmlBodyEl(null); }, [emailIframeSrcDoc]);
+   // One object per body: React writes innerHTML again whenever this object
+   // changes, dropping whatever was mounted in the body.
+@@ -804,7 +785,7 @@ export function ConversationEmailBody({
+             title="Email content"
+             className="w-full border-0 block"
+             scrolling="no"
+-            style={{ minHeight: '60px' }}
++            style={{ minHeight: '60px', colorScheme }}
+             onLoad={handleIframeLoad}
+           />
+         ) : (
+diff --git a/lib/__tests__/email-sanitization.test.ts b/lib/__tests__/email-sanitization.test.ts
+index b08e3de..48e913f 100644
+--- a/lib/__tests__/email-sanitization.test.ts
++++ b/lib/__tests__/email-sanitization.test.ts
+@@ -1021,6 +1021,60 @@ describe('email-sanitization', () => {
+       expect(sanitizeEmailHtml('<img src="https://cdn.example/a.png">'))
+         .toContain('https://cdn.example/a.png');
+     });
++
++    const DIAGRAM = '<style>.box { fill: none; stroke: currentColor; }</style>'
++      + '<svg viewBox="0 0 200 60" role="img" aria-label="a to b">'
++      + '<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto">'
++      + '<path d="M0,0 L8,4 L0,8 z" fill="currentColor"/></marker></defs>'
++      + '<rect class="box" x="4" y="10" width="60" height="40" rx="3"/>'
++      + '<path d="M64,30 L130,30" stroke="currentColor" marker-end="url(#arrow)"/>'
++      + '<text x="34" y="34" text-anchor="middle">a</text></svg>';
++
++    it('keeps a static diagram svg and its <style> block', () => {
++      const { html } = sanitizeEmailBodyForIframe(DIAGRAM, true);
++      const doc = parseHtmlSafely(html);
++      expect(doc.querySelector('style')!.textContent).toContain('.box');
++      expect(doc.querySelector('svg rect.box')).not.toBeNull();
++      expect(doc.querySelector('svg marker#arrow path')).not.toBeNull();
++      expect(doc.querySelector('svg path[marker-end]')!.getAttribute('marker-end')).toBe('url(#arrow)');
++      expect(doc.querySelector('svg text')!.textContent).toBe('a');
++    });
++
++    it('drops foreignObject and svg animation from a kept svg', () => {
++      const { html } = sanitizeEmailBodyForIframe(
++        '<svg viewBox="0 0 10 10"><rect width="10" height="10">'
++          + '<animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="1s"/></rect>'
++          + '<foreignObject width="10" height="10"><p>html</p></foreignObject></svg>',
++        false,
++      );
++      const doc = parseHtmlSafely(html);
++      expect(doc.querySelector('svg rect')).not.toBeNull();
++      expect(html.toLowerCase()).not.toContain('animatetransform');
++      expect(html.toLowerCase()).not.toContain('foreignobject');
++    });
++
++    it('blocks remote svg images and url() references when blocking is on', () => {
++      const html = '<svg viewBox="0 0 10 10">'
++        + '<image href="https://example.org/x.png" width="10" height="10"/>'
++        + '<rect width="10" height="10" fill="url(https://example.org/x.png)"/>'
++        + '<style>rect { fill: url(https://example.org/x.png); }</style></svg>';
++      const result = sanitizeEmailBodyForIframe(html, true);
++      expect(result.blockedExternalContent).toBe(true);
++      const doc = parseHtmlSafely(result.html);
++      expect(doc.querySelector('svg image')!.hasAttribute('href')).toBe(false);
++      expect(doc.querySelector('svg rect')!.getAttribute('fill')).not.toContain('example.org');
++      expect(doc.querySelector('svg style')!.textContent).not.toContain('example.org');
++      // With remote content allowed the same references stay.
++      expect(sanitizeEmailBodyForIframe(html, false).html).toContain('href="https://example.org/x.png"');
++    });
++
++    it('leaves the shared main-document config dropping svg and <style>', () => {
++      const clean = sanitizeEmailHtml(DIAGRAM);
++      expect(clean).not.toContain('<svg');
++      expect(clean).not.toContain('<style');
++      expect(EMAIL_SANITIZE_CONFIG.FORBID_TAGS).toEqual(expect.arrayContaining(['svg', 'style']));
++      expect(EMAIL_IFRAME_SANITIZE_CONFIG.FORBID_TAGS).not.toContain('svg');
++    });
+   });
+ });
+ 
+diff --git a/lib/email-sanitization.ts b/lib/email-sanitization.ts
+index 278cacf..efddc14 100644
+--- a/lib/email-sanitization.ts
++++ b/lib/email-sanitization.ts
+@@ -60,13 +60,20 @@ export function sanitizeEmailHtml(html: string): string {
+ /**
+  * Sanitize config for emails rendered inside a sandboxed iframe.
+  * Allows <style> tags because CSS is scoped to the iframe document and
+- * cannot leak into the host app. Scripts are still blocked by the sandbox
+- * attribute (no allow-scripts). Use ONLY for iframe-rendered content –
+- * never for content rendered into the main DOM.
++ * cannot leak into the host app, and static inline <svg> (diagrams, charts)
++ * under DOMPurify's own SVG allowlist. <foreignObject> stays out, since it
++ * would embed HTML inside the drawing, and so does every SVG animation
++ * element: a mail's vector images are pictures, not movies. Scripts are still
++ * blocked by the sandbox attribute (no allow-scripts). Use ONLY for
++ * iframe-rendered content – never for content rendered into the main DOM.
+  */
+ export const EMAIL_IFRAME_SANITIZE_CONFIG = {
+   ...EMAIL_SANITIZE_CONFIG,
+-  FORBID_TAGS: EMAIL_SANITIZE_CONFIG.FORBID_TAGS.filter((t) => t !== 'style'),
++  FORBID_TAGS: [
++    ...EMAIL_SANITIZE_CONFIG.FORBID_TAGS.filter((t) => t !== 'style' && t !== 'svg'),
++    'foreignobject',
++    'animate', 'animatecolor', 'animatemotion', 'animatetransform', 'set', 'discard',
++  ],
+ };
+ 
+ /**
+@@ -353,10 +360,10 @@ export const TRANSPARENT_BLOCKED_PIXEL =
+  * check short-circuits on `DATA_URI_TAGS` *before* ALLOWED_URI_REGEXP is
+  * consulted, and the set can only be extended via config (ADD_DATA_URI_TAGS),
+  * never trimmed - so the regexp's careful SVG exclusion is unreachable for
+- * these tags and has to be re-applied by hand. `<image>` is absent on purpose:
+- * the HTML parser rewrites it to `<img>`.
++ * these tags and has to be re-applied by hand. Outside <svg> the HTML parser
++ * rewrites `<image>` to `<img>`; inside an inline <svg> it stays SVG's `image`.
+  */
+-const DATA_URI_BYPASS_TAGS = new Set(['IMG', 'VIDEO', 'AUDIO', 'SOURCE', 'TRACK']);
++const DATA_URI_BYPASS_TAGS = new Set(['IMG', 'VIDEO', 'AUDIO', 'SOURCE', 'TRACK', 'IMAGE']);
+ 
+ /** Raster image types that stay allowed as a data: URI (mirrors ALLOWED_URI_REGEXP). */
+ const RASTER_IMAGE_DATA_URI =
+@@ -391,7 +398,7 @@ function srcsetHasDisallowedDataUri(srcset: string): boolean {
+  * a live script vector.
+  */
+ export function restrictDataUriResourcesOnNode(node: Element): void {
+-  if (!DATA_URI_BYPASS_TAGS.has(node.tagName)) return;
++  if (!DATA_URI_BYPASS_TAGS.has(node.tagName.toUpperCase())) return;
+   for (const attr of ['src', 'href', 'xlink:href']) {
+     const value = node.getAttribute(attr);
+     if (!value) continue;
+@@ -599,6 +606,8 @@ export function stripExternalStyleSheetCss(css: string): string {
+   return changed ? result : css;
+ }
+ 
++const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
++
+ /** True if a srcset attribute lists at least one external candidate URL. */
+ function srcsetHasExternalUrl(srcset: string): boolean {
+   return srcset
+@@ -612,7 +621,9 @@ function srcsetHasExternalUrl(srcset: string): boolean {
+  * restore. Covers the vectors Email Privacy Tester exercises beyond a bare
+  * `<img src>`: whitespace/newline in src, `<picture><source srcset>`,
+  * `<video poster>`/media src, the legacy `background` attribute, and inline
+- * `style` url() (including CSS-escaped URLs).
++ * `style` url() (including CSS-escaped URLs). Inline <svg> adds its own:
++ * `href`/`xlink:href` on any SVG element but a link, and url() in its
++ * presentation attributes (fill, filter, mask, ...).
+  *
+  * This is the first line of defence (it drives the "external content blocked"
+  * banner and placeholder swap); the iframe's strict img-src/media-src/font-src
+@@ -623,7 +634,25 @@ function srcsetHasExternalUrl(srcset: string): boolean {
+  */
+ export function blockExternalResourcesOnNode(node: Element): boolean {
+   let blocked = false;
+-  const tag = node.tagName;
++  // SVG elements keep their lower-case names (`image`, `style`).
++  const tag = node.tagName.toUpperCase();
++
++  if (node.namespaceURI === SVG_NAMESPACE && tag !== 'A') {
++    for (const attr of ['href', 'xlink:href']) {
++      const value = node.getAttribute(attr);
++      if (isExternalResourceUrl(value)) {
++        node.setAttribute(`data-blocked-${attr.replace(':', '-')}`, value!.trim());
++        node.removeAttribute(attr);
++        blocked = true;
++      }
++    }
++    for (const { name, value } of Array.from(node.attributes)) {
++      if (name === 'style' || name.startsWith('data-') || !styleHasExternalUrl(value)) continue;
++      node.setAttribute(`data-blocked-${name}`, value);
++      node.setAttribute(name, stripExternalCssUrls(value));
++      blocked = true;
++    }
++  }
+ 
+   if (tag === 'IMG') {
+     const src = node.getAttribute('src');
