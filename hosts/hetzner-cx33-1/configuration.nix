@@ -28,6 +28,12 @@
       "pool"
     ];
     catchAll = "catchall";
+    # the seat pool's signups, read by the pool on oracle-a1-flex-3
+    serviceMailboxes.join = {
+      senderDomain = "northeastern.edu";
+      mayMail = [ "ironmoon@ironmoon.dev" ];
+      allowedIps = [ "${inputs.secrets.data.ips.oracle-a1-flex-3.ipv4.address}/32" ];
+    };
     inherit (inputs.secrets.data.mail) agentCorrespondents;
   };
   bundles.bulwark.enable = true;
