@@ -1,0 +1,276 @@
+diff --git a/stores/__tests__/email-store-delta-sync.test.ts b/stores/__tests__/email-store-delta-sync.test.ts
+index ac1fa1a..b1890f8 100644
+--- a/stores/__tests__/email-store-delta-sync.test.ts
++++ b/stores/__tests__/email-store-delta-sync.test.ts
+@@ -100,6 +100,7 @@ describe('Email/changes delta sync', () => {
+       emailListSync: { state: 's1', accountId: 'acc', mailboxId: 'inbox' },
+       mailboxSyncStates: { acc: 'm1' },
+       threadEmailsCache: new Map([['t-b', [makeEmail('b')]]]),
++      expandedThreadIds: new Set(),
+       isUnifiedView: false,
+       isScheduledView: false,
+       selectedKeyword: null,
+@@ -247,6 +248,54 @@ describe('Email/changes delta sync', () => {
+     await useEmailStore.getState().fetchEmails(client, 'inbox');
+     expect(useEmailStore.getState().emailListSync).toBeNull();
+   });
++
++  describe('an expanded thread', () => {
++    // The user's reply to b sits in Sent: the Inbox list never holds it, only
++    // the expanded thread's cross-folder fetch does.
++    const reply = (id: string) => makeEmail(id, { threadId: 't-b', mailboxIds: { sent: true } });
++    const answered = makeEmail('b', { keywords: { $answered: true } });
++    const replyDelta = () =>
++      vi.fn(async () => delta({ created: ['o2'], updated: ['b'] }));
++    const someEmails = () =>
++      vi.fn(async (ids: string[]) => ids.map((id) => (id === 'o2' ? reply('o2') : answered)));
++
++    beforeEach(() => {
++      useEmailStore.setState({
++        expandedThreadIds: new Set(['t-b']),
++        threadEmailsCache: new Map([['t-b', [makeEmail('b'), reply('o1')]]]),
++      });
++    });
++
++    it('stays whole while the delta for a reply is applied, then picks the reply up', async () => {
++      const client = makeClient({ getEmailChanges: replyDelta(), getSomeEmails: someEmails() });
++      let land!: (emails: Email[]) => void;
++      vi.mocked(client.getThreadEmails).mockReturnValue(new Promise((resolve) => { land = resolve; }));
++
++      await useEmailStore.getState().handleStateChange(push({ acc: { Email: 's2' } }), client);
++
++      const kept = useEmailStore.getState().threadEmailsCache.get('t-b');
++      expect(kept?.map((e) => e.id)).toEqual(['b', 'o1']);
++      expect(kept?.[0].keywords).toEqual({ $answered: true });
++      expect(vi.mocked(client.getThreadEmails).mock.calls[0][0]).toBe('t-b');
++      land([answered, reply('o1'), reply('o2')]);
++      await vi.waitFor(() =>
++        expect(useEmailStore.getState().threadEmailsCache.get('t-b')?.map((e) => e.id)).toEqual(['b', 'o1', 'o2']),
++      );
++      expect(client.getEmails).not.toHaveBeenCalled();
++    });
++
++    it('keeps what it had when the re-fetch fails', async () => {
++      const client = makeClient({ getEmailChanges: replyDelta(), getSomeEmails: someEmails() });
++      vi.mocked(client.getThreadEmails).mockRejectedValue(new Error('offline'));
++      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
++
++      await useEmailStore.getState().handleStateChange(push({ acc: { Email: 's2' } }), client);
++      await vi.waitFor(() => expect(error).toHaveBeenCalled());
++
++      expect(useEmailStore.getState().threadEmailsCache.get('t-b')?.map((e) => e.id)).toEqual(['b', 'o1']);
++      error.mockRestore();
++    });
++  });
+ });
+ 
+ describe('Mailbox/changes delta sync', () => {
+diff --git a/stores/email-store.ts b/stores/email-store.ts
+index aecbea4..f2f7d2d 100644
+--- a/stores/email-store.ts
++++ b/stores/email-store.ts
+@@ -666,6 +666,66 @@ function refillAfterKeywordChange(get: StoreGet, client: IJMAPClient, changed: I
+   void s.refreshCurrentMailbox(client);
+ }
+ 
++/**
++ * Every message of a thread, whatever folder it is in, fetched through the
++ * thread's own account: what an expanded thread shows. Throws on failure.
++ */
++async function loadThreadEmails(client: IJMAPClient, threadKey: string, get: StoreGet): Promise<Email[]> {
++  // Route to the thread's own account. In aggregate views `selectedMailbox`
++  // is virtual, so derive the client + accountId from a list email of this
++  // thread (handles shared/group accounts); otherwise fall back to the
++  // selected-mailbox shared-folder logic. (#281) The key is account-scoped,
++  // so this can't pick up another account's thread with the same id.
++  const threadEmail = get().emails.find(e => threadKeyFor(e) === threadKey);
++  const threadId = threadEmail?.threadId ?? threadIdFromKey(threadKey);
++  const route = resolveThreadRoute({
++    isUnifiedView: isAggregateListView(),
++    ref: threadEmail,
++    mailboxes: resolveActionMailboxes(),
++    selectedMailbox: get().selectedMailbox,
++  });
++  let actionClient = resolveActionClient(client);
++  if (route.clientAccountId) {
++    actionClient = useAuthStore.getState().getClientForAccount(route.clientAccountId) ?? actionClient;
++  }
++
++  // Fetch all emails in the thread
++  const emails = await actionClient.getThreadEmails(threadId, route.accountId);
++
++  // Re-stamp the source reference so actions on thread emails resolve to the
++  // right account (the fetched objects don't carry it).
++  if (isAggregateListView() && threadEmail) {
++    for (const e of emails) {
++      e.accountId = threadEmail.accountId;
++      e.accountLabel = threadEmail.accountLabel;
++      e.sourceClientAccountId = threadEmail.sourceClientAccountId;
++      e.sourceAccountId = threadEmail.sourceAccountId;
++    }
++  }
++  return emails;
++}
++
++/**
++ * Re-fetch the expanded threads among `threadKeys`, swapping each in as it
++ * arrives. An expanded thread keeps its cached messages until then, and keeps
++ * them when the fetch fails or comes back empty: without a cache entry the row
++ * falls back to the folder's own messages, which leaves out the thread's mail
++ * in other folders, such as the user's own replies in Sent.
++ */
++function refetchExpandedThreads(client: IJMAPClient, threadKeys: Iterable<string>, get: StoreGet, set: StoreSet): void {
++  const expanded = get().expandedThreadIds;
++  for (const threadKey of new Set(threadKeys)) {
++    if (!expanded.has(threadKey)) continue;
++    void loadThreadEmails(client, threadKey, get).then(
++      (emails) => {
++        if (emails.length === 0) return;
++        set((state) => ({ threadEmailsCache: new Map(state.threadEmailsCache).set(threadKey, emails) }));
++      },
++      (error) => console.error('Failed to re-fetch an expanded thread:', error),
++    );
++  }
++}
++
+ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null, get: StoreGet, set: StoreSet): Promise<boolean> {
+   const s = get();
+   const sync = s.emailListSync;
+@@ -707,10 +767,12 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
+   // notification fires as before.
+   const candidates = [...delta.created, ...delta.updated.filter((id) => !listIds.has(id))];
+   if (candidates.length > EMAIL_DELTA_MAX_CANDIDATES) return false;
+-  if (candidates.length > 0) {
+-    const arrived = await effectiveClient.getSomeEmails(candidates, accountArg);
+-    if (arrived.some((e) => e.mailboxIds?.[sync.mailboxId])) return false;
+-  }
++  const arrived = candidates.length > 0 ? await effectiveClient.getSomeEmails(candidates, accountArg) : [];
++  if (arrived.some((e) => e.mailboxIds?.[sync.mailboxId])) return false;
++  // Mail outside the folder still belongs to its thread: a reply the user
++  // sends lands in Sent, and an expanded thread should show it.
++  const arrivedThreadIds = new Set(arrived.map((e) => e.threadId));
++  const arrivedThreadKeys = [...get().expandedThreadIds].filter((key) => arrivedThreadIds.has(threadIdFromKey(key)));
+ 
+   const removed = new Set(destroyedInList);
+   const updatedEmails = updatedInList.length > 0 ? await effectiveClient.getSomeEmails(updatedInList, accountArg) : [];
+@@ -745,6 +807,7 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
+     set((state) => ({
+       emailListSync: state.emailListSync?.mailboxId === sync.mailboxId ? { ...sync, state: delta.newState } : state.emailListSync,
+     }));
++    refetchExpandedThreads(client, arrivedThreadKeys, get, set);
+     return true;
+   }
+ 
+@@ -761,7 +824,20 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
+ 
+   set((state) => {
+     const threadEmailsCache = new Map(state.threadEmailsCache);
+-    for (const tid of changedThreadIds) threadEmailsCache.delete(tid);
++    for (const tid of changedThreadIds) {
++      const cached = threadEmailsCache.get(tid);
++      if (!cached) continue;
++      if (!state.expandedThreadIds.has(tid)) {
++        threadEmailsCache.delete(tid);
++        continue;
++      }
++      // An expanded thread stays whole; its re-fetch below replaces it, and
++      // until then it carries the delta's new flags.
++      threadEmailsCache.set(tid, cached.map((e) => {
++        const fresh = replacementById.get(e.id);
++        return fresh ? { ...e, keywords: fresh.keywords } : e;
++      }));
++    }
+     const totalEmails = Math.max(state.totalEmails - (current.length - next.length), next.length);
+     return {
+       emails: next,
+@@ -771,6 +847,7 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
+       emailListSync: state.emailListSync?.mailboxId === sync.mailboxId ? { ...sync, state: delta.newState } : state.emailListSync,
+     };
+   });
++  refetchExpandedThreads(client, [...changedThreadIds, ...arrivedThreadKeys], get, set);
+   return true;
+ }
+ 
+@@ -5380,7 +5457,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+         set((state) => {
+           const newCache = new Map(state.threadEmailsCache);
+           for (const tid of changedThreadIds) {
+-            newCache.delete(tid);
++            // An expanded thread stays whole until its re-fetch below lands.
++            if (!state.expandedThreadIds.has(tid)) newCache.delete(tid);
+           }
+           return {
+             emails: merged,
+@@ -5394,22 +5472,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+ 
+         // Re-fetch cross-folder thread data for any currently expanded threads
+         // so they show the complete conversation (not just current-folder emails).
+-        const expandedNow = get().expandedThreadIds;
+-        if (expandedNow.size > 0) {
+-          const effectiveClient2 = resolveActionClient(client);
+-          const accountId = effectiveClient2.getAccountId();
+-          for (const tid of expandedNow) {
+-            void effectiveClient2.getThreadEmails(tid, accountId).then((fullEmails) => {
+-              if (fullEmails.length > 0) {
+-                set((state) => {
+-                  const c = new Map(state.threadEmailsCache);
+-                  c.set(tid, fullEmails);
+-                  return { threadEmailsCache: c };
+-                });
+-              }
+-            });
+-          }
+-        }
++        refetchExpandedThreads(client, get().expandedThreadIds, get, set);
+ 
+         // Fetch full thread counts in the background (non-blocking)
+         void get().fetchThreadEmailCounts(client);
+@@ -5449,8 +5512,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+   },
+ 
+   fetchThreadEmails: async (client, threadKey) => {
+-    const { threadEmailsCache, selectedMailbox } = get();
+-    const mailboxes = resolveActionMailboxes();
++    const { threadEmailsCache } = get();
+ 
+     // Check if we already have this thread cached
+     const cachedEmails = threadEmailsCache.get(threadKey);
+@@ -5462,37 +5524,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+     set({ isLoadingThread: threadKey });
+ 
+     try {
+-      // Route to the thread's own account. In aggregate views `selectedMailbox`
+-      // is virtual, so derive the client + accountId from a list email of this
+-      // thread (handles shared/group accounts); otherwise fall back to the
+-      // selected-mailbox shared-folder logic. (#281) The key is account-scoped,
+-      // so this can't pick up another account's thread with the same id.
+-      const threadEmail = get().emails.find(e => threadKeyFor(e) === threadKey);
+-      const threadId = threadEmail?.threadId ?? threadIdFromKey(threadKey);
+-      const route = resolveThreadRoute({
+-        isUnifiedView: isAggregateListView(),
+-        ref: threadEmail,
+-        mailboxes,
+-        selectedMailbox,
+-      });
+-      let actionClient = resolveActionClient(client);
+-      if (route.clientAccountId) {
+-        actionClient = useAuthStore.getState().getClientForAccount(route.clientAccountId) ?? actionClient;
+-      }
+-
+-      // Fetch all emails in the thread
+-      const emails = await actionClient.getThreadEmails(threadId, route.accountId);
+-
+-      // Re-stamp the source reference so actions on thread emails resolve to the
+-      // right account (the fetched objects don't carry it).
+-      if (isAggregateListView() && threadEmail) {
+-        for (const e of emails) {
+-          e.accountId = threadEmail.accountId;
+-          e.accountLabel = threadEmail.accountLabel;
+-          e.sourceClientAccountId = threadEmail.sourceClientAccountId;
+-          e.sourceAccountId = threadEmail.sourceAccountId;
+-        }
+-      }
++      const emails = await loadThreadEmails(client, threadKey, get);
+ 
+       // Update cache
+       const newCache = new Map(get().threadEmailsCache);
