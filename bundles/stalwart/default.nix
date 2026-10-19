@@ -94,28 +94,121 @@ let
       }
     '';
 
-  # sieve-rs joins the DATA-stage recipients into one string, hence :matches with * on both sides.
+  sieveList = strings: "[${lib.concatMapStringsSep ", " builtins.toJSON strings}]";
+
+  # sieve-rs joins the DATA-stage recipients into one string, CRLF between them: the agents'
+  # patterns match anywhere in it, a service mailbox's start and end between recipients.
   # A DMARC pass vouches for the From domain; Gmail and the like vouch for its local part.
-  agentInbound =
-    let
-      senders =
-        lib.optional (cfg.agentCorrespondents != [ ])
-          ''address :all :is "from" [${
-            lib.concatMapStringsSep ", " builtins.toJSON cfg.agentCorrespondents
-          }]''
-        ++ [
-          ''address :domain :is "from" "${domain}"''
-          ''address :domain :matches "from" "*.${domain}"''
-        ];
-    in
+  inboundGate =
+    {
+      recipients,
+      senders,
+      refusal,
+    }:
     ''
-      require ["envelope", "reject", "variables", "relational", "comparator-i;ascii-numeric"];
-      if envelope :all :matches "to" ["*@${agentDomain}*", "*${agentLocalPart}@${domain}*", "*${agentLocalPart}+*@${domain}*"] {
+      if envelope :all :matches "to" ${sieveList recipients} {
         if not allof (string :is "''${env.dmarc.result}" "pass", address :count "eq" :comparator "i;ascii-numeric" "from" "1", anyof (${lib.concatStringsSep ", " senders})) {
-          reject "550 5.7.1 agents take mail only from their correspondents";
+          reject ${builtins.toJSON refusal};
         }
       }
     '';
+  anyRecipient = address: [
+    address
+    "${address}\r\n*"
+    "*\r\n${address}"
+    "*\r\n${address}\r\n*"
+  ];
+  serviceAddresses = name: [
+    "${name}@${domain}"
+    "${name}+*@${domain}"
+  ];
+  inbound = lib.concatStrings (
+    [
+      ''
+        require ["envelope", "reject", "variables", "relational", "comparator-i;ascii-numeric"];
+      ''
+      (inboundGate {
+        recipients = [
+          "*@${agentDomain}*"
+          "*${agentLocalPart}@${domain}*"
+          "*${agentLocalPart}+*@${domain}*"
+        ];
+        senders =
+          lib.optional (
+            cfg.agentCorrespondents != [ ]
+          ) ''address :all :is "from" ${sieveList cfg.agentCorrespondents}''
+          ++ [
+            ''address :domain :is "from" "${domain}"''
+            ''address :domain :matches "from" "*.${domain}"''
+          ];
+        refusal = "550 5.7.1 agents take mail only from their correspondents";
+      })
+    ]
+    ++ lib.mapAttrsToList (
+      name: mailbox:
+      inboundGate {
+        recipients = lib.concatMap anyRecipient (serviceAddresses name);
+        senders = [ ''address :domain :is "from" ${builtins.toJSON mailbox.senderDomain}'' ];
+        refusal = "550 5.7.1 ${name}@${domain} takes mail only from ${mailbox.senderDomain}";
+      }
+    ) cfg.serviceMailboxes
+  );
+
+  # mail an account here submits carries whatever From it writes
+  submitted = lib.concatStrings (
+    [
+      ''
+        require ["envelope", "reject", "variables"];
+      ''
+    ]
+    ++ lib.mapAttrsToList (
+      name: mailbox:
+      let
+        address = "${name}@${domain}";
+      in
+      ''
+        if string :is "''${env.authenticated_as}" ${builtins.toJSON address} {
+          if not envelope :all :is "to" ${sieveList mailbox.mayMail} {
+            reject ${builtins.toJSON "550 5.7.1 ${address} may mail only ${lib.concatStringsSep ", " mailbox.mayMail}"};
+          }
+        }
+        if envelope :all :matches "to" ${sieveList (serviceAddresses name)} {
+          reject ${builtins.toJSON "550 5.7.1 ${address} takes mail only from other servers"};
+        }
+      ''
+    ) cfg.serviceMailboxes
+  );
+
+  serviceMailboxPermissions = with package.permissions; [
+    authenticate
+    emailReceive
+    emailSend
+    jmapMailboxGet
+    jmapMailboxQuery
+    jmapEmailGet
+    jmapEmailQuery
+    jmapEmailChanges
+    jmapEmailCreate
+    jmapEmailUpdate
+    jmapEmailDestroy
+    jmapIdentityGet
+    jmapEmailSubmissionCreate
+    jmapEmailSubmissionGet
+  ];
+
+  # signed in to by a program, with no role, so it holds only these permissions
+  programAccount = name: permissions: {
+    "@type" = "User";
+    inherit name;
+    domainId = ref "ironmoon";
+    permissions = {
+      "@type" = "Merge";
+      enabledPermissions = toSet permissions;
+    };
+    roles."@type" = "Custom";
+    roles.roleIds = [ ];
+    encryptionAtRest."@type" = "Disabled";
+  };
 
   localOnly = {
     match = [ ];
@@ -161,6 +254,38 @@ in
       example = "catchall";
       description = "Shared mailbox that gets mail for addresses at ${domain} no account or alias holds.";
     };
+    serviceMailboxes = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            senderDomain = lib.mkOption {
+              type = lib.types.strMatching "[a-z0-9.-]+";
+              example = "example.edu";
+              description = ''
+                Mail to the account over port 25 is refused unless it passes DMARC with exactly one
+                From address, at this domain and not its subdomains. Accounts here can't send to it.
+              '';
+            };
+            mayMail = lib.mkOption {
+              type = lib.types.nonEmptyListOf (lib.types.strMatching "[a-z0-9._+-]+@[a-z0-9.-]+");
+              description = "The only addresses the account may send to.";
+            };
+            allowedIps = lib.mkOption {
+              type = lib.types.nonEmptyListOf lib.types.str;
+              example = [ "192.0.2.1/32" ];
+              description = "Networks its app password may be used from.";
+            };
+          };
+        }
+      );
+      default = { };
+      description = ''
+        Accounts at ${domain}, by local part, each for one program: it signs in with the app password
+        applying the plan leaves in {option}`services.stalwart.appPasswords.<name>.file`, then reads,
+        sends and deletes its own mail over JMAP, and nothing else. Removing one leaves its account
+        and app password in Stalwart, without these limits.
+      '';
+    };
     agentCorrespondents = lib.mkOption {
       type = lib.types.listOf (lib.types.strMatching "[a-z0-9._+-]+@[a-z0-9.-]+");
       default = [ ];
@@ -191,6 +316,24 @@ in
       {
         assertion = cfg.catchAll == null || lib.elem cfg.catchAll cfg.sharedMailboxes;
         message = "bundles.stalwart.catchAll must be one of bundles.stalwart.sharedMailboxes";
+      }
+      {
+        assertion = lib.all (
+          name:
+          builtins.match "[a-z0-9._-]+" name != null
+          && !lib.elem name (
+            [
+              "postmaster"
+              "root"
+              "backup"
+              agentLocalPart
+            ]
+            # the plan's ids for accounts are their local parts, and a domain's id would clash
+            ++ lib.attrNames domains
+            ++ cfg.sharedMailboxes
+          )
+        ) (lib.attrNames cfg.serviceMailboxes);
+        message = "bundles.stalwart.serviceMailboxes must be local parts no other account at ${domain} has";
       }
     ];
 
@@ -226,6 +369,14 @@ in
         account = "backup@${domain}";
         url = "http://127.0.0.1:${toString httpPort}";
       };
+
+      appPasswords = lib.mapAttrs' (
+        name: mailbox:
+        lib.nameValuePair "${name}@${domain}" {
+          inherit (mailbox) allowedIps;
+          description = "service mailbox";
+        }
+      ) cfg.serviceMailboxes;
 
       plan = {
         enableDefaultPlan = true;
@@ -379,18 +530,14 @@ in
               })
               (lib.genAttrs ([ "postmaster" ] ++ cfg.sharedMailboxes) lib.id)
           ))
-          (upsertOn1 "Account" "backup" [ "name" "domainId" ] {
-            "@type" = "User";
-            name = "backup";
-            domainId = ref "ironmoon";
-            permissions = {
-              "@type" = "Merge";
-              enabledPermissions = toSet config.services.stalwart.backup.permissions;
-            };
-            roles."@type" = "Custom";
-            roles.roleIds = [ ];
-            encryptionAtRest."@type" = "Disabled";
-          })
+          (upsertOn "Account" [ "name" "domainId" ] (
+            lib.mapAttrs programAccount (
+              {
+                backup = config.services.stalwart.backup.permissions;
+              }
+              // lib.mapAttrs (_: _: serviceMailboxPermissions) cfg.serviceMailboxes
+            )
+          ))
 
           (update "MtaOutboundStrategy" {
             route = if cfg.sending.enable then localThenMx else localOnly;
@@ -420,7 +567,7 @@ in
               "else" = "true";
             };
           })
-          # a forged local sender would get the bounce of an undeliverable message, past agent-inbound
+          # a forged local sender would get the bounce of an undeliverable message, past the inbound script
           (update "MtaStageMail" {
             isSenderAllowed = {
               match = [ ];
@@ -428,28 +575,43 @@ in
                 "!is_empty(authenticated_as) || (!key_exists('spam-block', sender_domain) && !is_local_domain(sender_domain))";
             };
           })
-          (reconcile "SieveSystemScript" [ "name" ] {
-            agent-inbound = {
-              name = "agent-inbound";
-              description = "Refuses mail to ${agentDomain} from anyone but its correspondents";
-              isActive = true;
-              contents = agentInbound;
-            };
-            unreceivable = {
-              name = "unreceivable";
-              description = "Refuses accounts that can't receive, so their bounces can't go to forged senders";
-              isActive = true;
-              contents = unreceivable;
-            };
-          })
+          (reconcile "SieveSystemScript" [ "name" ] (
+            {
+              inbound = {
+                name = "inbound";
+                description = "Refuses mail to the agents and the service mailboxes from anyone but their senders";
+                isActive = true;
+                contents = inbound;
+              };
+              unreceivable = {
+                name = "unreceivable";
+                description = "Refuses accounts that can't receive, so their bounces can't go to forged senders";
+                isActive = true;
+                contents = unreceivable;
+              };
+            }
+            // lib.optionalAttrs (cfg.serviceMailboxes != { }) {
+              submitted = {
+                name = "submitted";
+                description = "Keeps each service mailbox to its recipients, and every other account away from it";
+                isActive = true;
+                contents = submitted;
+              };
+            }
+          ))
           (update "MtaStageRcpt" {
             script = {
-              match = [
-                {
-                  "if" = "local_port == 25";
-                  "then" = "'unreceivable'";
+              match =
+                lib.optional (cfg.serviceMailboxes != { }) {
+                  "if" = "!is_empty(authenticated_as)";
+                  "then" = "'submitted'";
                 }
-              ];
+                ++ [
+                  {
+                    "if" = "local_port == 25";
+                    "then" = "'unreceivable'";
+                  }
+                ];
               "else" = "false";
             };
           })
@@ -465,7 +627,7 @@ in
               match = [
                 {
                   "if" = "local_port == 25";
-                  "then" = "'agent-inbound'";
+                  "then" = "'inbound'";
                 }
               ];
               "else" = "false";
