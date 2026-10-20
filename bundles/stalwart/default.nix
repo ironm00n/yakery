@@ -10,6 +10,7 @@ let
   inherit (my-lib.stalwart)
     reconcile
     update
+    destroyWhere
     upsertOn
     upsertOn1
     ref
@@ -23,6 +24,10 @@ let
   httpPort = 8080;
   ips = inputs.secrets.data.ips.${config.networking.hostName};
   address = "${ips.ipv6.prefix}::2";
+  hostnameAddresses = [
+    ips.ipv4.address
+    address
+  ];
   webuiClientId = "373369290327392257";
 
   package = pkgs.callPackage ../../packages/stalwart { webuiOauthClientId = webuiClientId; };
@@ -546,10 +551,7 @@ in
           (reconcile "MtaConnectionStrategy" [ "name" ] {
             default = {
               name = "default";
-              sourceIps = map (sourceIp: { inherit sourceIp; }) [
-                ips.ipv4.address
-                address
-              ];
+              sourceIps = map (sourceIp: { inherit sourceIp; }) hostnameAddresses;
             };
           })
           (update "MtaStageRcpt" {
@@ -687,7 +689,21 @@ in
               }) cfg.deliveryWebhooks
             )
           ))
-        ];
+
+          (reconcile "AllowedIp" [ "address" ] (
+            lib.listToAttrs (
+              lib.imap0 (i: ip: {
+                name = "host-${toString i}";
+                value = {
+                  address = ip;
+                  reason = "Bulwark on this host signs in as every user";
+                };
+              }) hostnameAddresses
+            )
+          ))
+        ]
+        # bans from before an address was allowed stay listed
+        ++ map (ip: destroyWhere "BlockedIp" { address = ip; }) hostnameAddresses;
       };
     };
 
@@ -707,11 +723,7 @@ in
       enable = true;
       keyFiles = [ "/run/credentials/knot.service/tsig.conf" ];
       settings = {
-        server.listen = [
-          "${ips.ipv4.address}@53"
-          "${address}@53"
-          "127.0.0.1@53"
-        ];
+        server.listen = map (ip: "${ip}@53") hostnameAddresses ++ [ "127.0.0.1@53" ];
         acl = [
           {
             id = "stalwart";
@@ -787,10 +799,7 @@ in
       hosts.${hostname} = {
         port = httpPort;
         forwardedFor = "overwrite";
-        listenAddresses = [
-          ips.ipv4.address
-          address
-        ];
+        listenAddresses = hostnameAddresses;
         listenOnOverlay = true;
         locations = {
           "/admin".netbirdOnly = true;
