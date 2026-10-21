@@ -8,6 +8,7 @@
   # all bundles are behind an `enable` option
   imports = [
     ../../../bundles/default.nix
+    ./initrd-network.nix
   ];
 
   # Set your time zone.
