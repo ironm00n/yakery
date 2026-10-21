@@ -11,7 +11,7 @@ use crate::{
     mail::{AGENT_MAIL, MDN_SENT, Mail, SEEN, has_keyword},
     mime,
     outbox::{Outbox, Outcome, require_all},
-    policy::Recipients,
+    policy::{Recipients, bare_sender},
     random::{ALPHANUMERIC, Draws},
     show::{addresses, plain},
 };
@@ -116,9 +116,13 @@ impl Asked {
             .and_then(|v| v.split_once(';'))
             .and_then(|(_, address)| address.trim().parse().ok())
             .or_else(|| reached.clone());
+        let final_recipient = match reached.map(Ok).unwrap_or_else(|| bare_sender(login)) {
+            Ok(address) => address,
+            Err(e) => return decline(e.to_string()),
+        };
         Asked::Send(Receipt {
             to: requester,
-            final_recipient: reached.unwrap_or_else(|| login.address().clone()),
+            final_recipient,
             original_recipient,
             subject: m.subject().unwrap_or_default().to_owned(),
             original_message_id: m
@@ -296,19 +300,35 @@ mod tests {
 
     #[test]
     fn without_a_topic_address_the_receipt_comes_from_the_login() {
-        let bare = receipt(&mail(json!({ "to": [{ "email": "agent@ironmoon.dev" }] })));
+        let ada: Login = "ada@agent.ironmoon.dev".parse().unwrap();
+        let to_ada = |extra: Value| {
+            let mut m = json!({ "to": [{ "email": "ada@agent.ironmoon.dev" }] });
+            m.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            match Asked::of(&ada, &mail(m)) {
+                Asked::Send(receipt) => receipt,
+                _ => panic!("no receipt"),
+            }
+        };
+        let bare = to_ada(json!({}));
         assert_eq!(
             (bare.final_recipient, bare.original_recipient),
-            (address("agent@ironmoon.dev"), None)
+            (address("ada@agent.ironmoon.dev"), None)
         );
-        let header = receipt(&mail(json!({
-            "to": [{ "email": "agent@ironmoon.dev" }],
-            "header:Original-Recipient:asText": " rfc822; agent+old@ironmoon.dev",
-        })));
+        let header = to_ada(json!({
+            "header:Original-Recipient:asText": " rfc822; ada+old@agent.ironmoon.dev",
+        }));
         assert_eq!(
             header.original_recipient,
-            Some(address("agent+old@ironmoon.dev"))
+            Some(address("ada+old@agent.ironmoon.dev"))
         );
+    }
+
+    #[test]
+    fn the_shared_login_sends_no_receipt_from_its_bare_address() {
+        let why = declined(&mail(json!({ "to": [{ "email": "agent@ironmoon.dev" }] })));
+        assert!(why.contains("sends only from a topic subaddress"), "{why}");
     }
 
     #[test]

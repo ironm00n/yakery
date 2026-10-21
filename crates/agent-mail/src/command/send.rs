@@ -19,7 +19,7 @@ use crate::{
     mail::{AGENT_MAIL, ANSWERED, Mail, SEEN},
     mime,
     outbox::{Delivery, Outbox, Outcome, describe, require_all},
-    policy::Recipients,
+    policy::{Recipients, bare_sender},
     random::{ALPHANUMERIC, Draws},
     show::{addresses, emails, id, out, plain, preview, received, utc, warn},
     signature::{ClaudeSession, Signature, host, subject_prefix},
@@ -32,7 +32,8 @@ pub struct Args {
     to: Vec<Address>,
     #[arg(long)]
     cc: Vec<Address>,
-    /// Send from the subaddress <login>+<topic>.
+    /// Send from the subaddress <login>+<topic>. A login every session shares sends only from one: this, or a --reply
+    /// to mail sent to one.
     #[arg(long)]
     topic: Option<Topic>,
     /// Thread under this email and take its subject.
@@ -232,14 +233,15 @@ impl Heading {
             (None, Some(reply)) => reply.subject.clone(),
             (None, None) => bail!("send needs --subject or --reply"),
         };
-        let from = match &args.topic {
-            Some(topic) => login.topic_address(topic),
-            None => reply
-                .and_then(|r| r.topic.clone())
-                .unwrap_or_else(|| login.to_string()),
+        let from = match (&args.topic, reply.and_then(|r| r.topic.as_deref())) {
+            (Some(topic), _) => login.topic_address(topic).parse()?,
+            (None, Some(address)) => address.parse()?,
+            (None, None) => bare_sender(login).context(
+                "send needs --topic, or --reply to mail sent to one of the login's topic addresses",
+            )?,
         };
         Ok(Heading {
-            from: from.parse()?,
+            from,
             to: recipients.to,
             cc: recipients.cc,
             subject,
@@ -535,6 +537,64 @@ mod tests {
 
     fn strings(list: &[&str]) -> Vec<String> {
         list.iter().map(|a| a.to_string()).collect()
+    }
+
+    fn args(topic: Option<&str>) -> Args {
+        Args {
+            to: addresses_of(&["ironmoon@ironmoon.dev"]),
+            cc: vec![],
+            topic: topic.map(|t| t.parse().unwrap()),
+            reply: None,
+            past: false,
+            all: false,
+            subject: Some("pick one".into()),
+            attach: vec![],
+            mime: None,
+        }
+    }
+
+    fn from(login: &str, args: &Args, reply: Option<&Reply>) -> Result<String> {
+        let login: Login = login.parse().unwrap();
+        Heading::decide(&login, args, reply, "[desktop · mail]").map(|h| h.from.to_string())
+    }
+
+    #[test]
+    fn the_shared_login_sends_only_from_a_topic() {
+        let refused = from("agent@ironmoon.dev", &args(None), None).unwrap_err();
+        assert!(
+            format!("{refused:#}").contains("sends only from a topic subaddress"),
+            "{refused:#}"
+        );
+        assert_eq!(
+            from("agent@ironmoon.dev", &args(Some("tooling")), None).unwrap(),
+            "agent+tooling@ironmoon.dev"
+        );
+        let reply = Reply {
+            parent: "p".into(),
+            message_id: vec![],
+            references: vec![],
+            subject: "Re: [desktop · pool] x".into(),
+            topic: Some("agent+pool@ironmoon.dev".into()),
+            from: vec![],
+            rest: vec![],
+        };
+        let answer = Args {
+            subject: None,
+            ..args(None)
+        };
+        assert_eq!(
+            from("agent@ironmoon.dev", &answer, Some(&reply)).unwrap(),
+            "agent+pool@ironmoon.dev"
+        );
+        let untopical = Reply {
+            topic: None,
+            ..reply
+        };
+        assert!(from("agent@ironmoon.dev", &answer, Some(&untopical)).is_err());
+        assert_eq!(
+            from("ada@agent.ironmoon.dev", &args(None), None).unwrap(),
+            "ada@agent.ironmoon.dev"
+        );
     }
 
     fn heading(reply: bool) -> Heading {

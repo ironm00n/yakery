@@ -17,6 +17,19 @@ const RESTRICTED: &[(&str, &[&str])] = &[(
     &["ironmoon.dev", "agent.ironmoon.dev"],
 )];
 
+/// Logins every Claude session shares. Their mail goes out only from a topic subaddress, so a reply reaches the
+/// session waiting on that topic.
+const SHARED: &[&str] = &["agent@ironmoon.dev"];
+
+/// The login's own address as a sender; a shared login has none.
+pub fn bare_sender(login: &Login) -> Result<Address> {
+    let text = login.to_string();
+    if SHARED.iter().any(|l| l.eq_ignore_ascii_case(&text)) {
+        bail!("{login} is shared by every session, so it sends only from a topic subaddress");
+    }
+    Ok(login.address().clone())
+}
+
 /// Comma-separated addresses outside those domains that a restricted login may still mail. package.nix sets it
 /// from the secrets flake's `data.mail.agentCorrespondents`, the list Stalwart lets the agents reach.
 const CORRESPONDENTS: &str = match option_env!("AGENT_MAIL_CORRESPONDENTS") {
