@@ -207,6 +207,7 @@ enum Content {
 }
 
 const DRAFT: [&str; 3] = ["$draft", SEEN, AGENT_MAIL];
+const DRAFT_MAY_EXIST: &str = "nothing was sent; the draft may or may not exist";
 
 /// The mail's own header fields, decided once for either content.
 struct Heading {
@@ -389,7 +390,7 @@ async fn draft_markdown(
             }
         })
         .await
-        .context("nothing was sent; the draft may or may not exist")?;
+        .context(DRAFT_MAY_EXIST)?;
     let draft = created.next()?.unwrap_set_email()?.created("draft")?;
     Ok(id(&draft).to_owned())
 }
@@ -406,7 +407,7 @@ async fn draft_mime(
     let message = entity.message(&heading.fields(now(), &message_id));
     mail.import(message, &outbox.drafts, &DRAFT)
         .await
-        .context("nothing was sent; the draft may or may not exist")
+        .context(DRAFT_MAY_EXIST)
 }
 
 /// Submits the draft to everyone on `heading` and files it; a draft that reached nobody is removed, and the mail

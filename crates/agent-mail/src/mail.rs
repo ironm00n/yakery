@@ -12,6 +12,7 @@ use jmap_client::{
         query::Filter,
         request::Request,
         response::{MailboxGetResponse, TaggedMethodResponse, ThreadGetResponse},
+        session::CoreCapabilities,
     },
     email::{self, Email, query},
     event_source::PushNotification,
@@ -63,18 +64,18 @@ impl Session {
 
     /// RFC 8620 lets a server refuse an Email/get for more ids than this.
     pub fn max_objects_in_get(&self) -> usize {
-        self.client
-            .session()
-            .core_capabilities()
-            .map_or(100, |core| core.max_objects_in_get())
-            .max(1)
+        self.core_limit(CoreCapabilities::max_objects_in_get)
     }
 
     pub fn max_objects_in_set(&self) -> usize {
+        self.core_limit(CoreCapabilities::max_objects_in_set)
+    }
+
+    fn core_limit(&self, limit: fn(&CoreCapabilities) -> usize) -> usize {
         self.client
             .session()
             .core_capabilities()
-            .map_or(100, |core| core.max_objects_in_set())
+            .map_or(100, limit)
             .max(1)
     }
 
