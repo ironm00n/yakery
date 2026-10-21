@@ -1,19 +1,20 @@
 diff --git a/components/email/thread-conversation-view.tsx b/components/email/thread-conversation-view.tsx
-index 4830b48..d521c7f 100644
+index 8c94a1cb..59ec7ac8 100644
 --- a/components/email/thread-conversation-view.tsx
 +++ b/components/email/thread-conversation-view.tsx
-@@ -1,16 +1,15 @@
+@@ -1,9 +1,8 @@
  "use client";
  
  import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from "react";
 -import DOMPurify from "dompurify";
  import { Email, ThreadGroup } from "@/lib/jmap/types";
--import { EMAIL_SANITIZE_CONFIG, blockExternalResourcesOnNode, collapseBlockedImageContainers, emailIframeCsp, plainTextToSafeHtml, restrictDataUriResourcesOnNode, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
-+import { emailIframeCsp, plainTextToSafeHtml, sanitizeEmailBodyForIframe, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
+-import { EMAIL_SANITIZE_CONFIG, blockExternalResourcesOnNode, collapseBlockedImageContainers, emailIframeCsp, plainTextToSafeHtml, restrictDataUriResourcesOnNode, sanitizeEmailBodyForIframe, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
++import { collapseBlockedImageContainers, emailIframeCsp, plainTextToSafeHtml, sanitizeEmailBodyForIframe, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
+ import { emailDisplayDate } from "@/lib/email-date";
  import { getRenderableHtmlBody } from "@/lib/email-body-selection";
  import { findVerificationCode, verificationCodeBodyText } from "@/lib/verification-code";
- import { VerificationCodeChip } from "./verification-code-chip";
- import { collectReferencedCids, isEmbeddedInBody } from "@/lib/attachment-visibility";
+@@ -11,7 +10,7 @@ import { VerificationCodeChip } from "./verification-code-chip";
+ import { collectReferencedCids, isEmbeddedInBody, normalizeCid } from "@/lib/attachment-visibility";
  import { collapsePlainTextQuotes, setupQuoteCollapse } from "@/lib/quote-collapse";
  import { fitEmailBodyWidth } from "@/lib/email-fit-width";
 -import { DARK_PENDING_CLASS, applyEmailDarkMode, emailDarkModeCss } from "@/lib/email-dark-mode";
@@ -21,7 +22,7 @@ index 4830b48..d521c7f 100644
  import { EMAIL_FRAME_FONT_FAMILY, adoptFrameLook } from "@/lib/email-frame-look";
  import { useThemeStore } from "@/stores/theme-store";
  import { useShallow } from "zustand/react/shallow";
-@@ -594,38 +593,13 @@ export function ConversationEmailBody({
+@@ -648,38 +647,13 @@ export function ConversationEmailBody({
            );
          }
  
@@ -66,7 +67,7 @@ index 4830b48..d521c7f 100644
        }
  
        // Plain text fallback
-@@ -672,13 +646,20 @@ export function ConversationEmailBody({
+@@ -726,13 +700,20 @@ export function ConversationEmailBody({
    // the host page. CSP <meta> is defense-in-depth in case the sanitizer ever
    // emits a <script> tag through a parser quirk.
    const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -88,7 +89,7 @@ index 4830b48..d521c7f 100644
  <meta charset="utf-8">
  <meta name="viewport" content="width=device-width, initial-scale=1">
  <meta http-equiv="Content-Security-Policy" content="${csp}">
-@@ -709,8 +690,8 @@ export function ConversationEmailBody({
+@@ -763,8 +744,8 @@ export function ConversationEmailBody({
    td, th { word-break: break-word; padding: 0.5rem; }
    pre { white-space: pre-wrap; word-wrap: break-word; }
    ${isDark ? emailDarkModeCss() : ''}
@@ -99,7 +100,7 @@ index 4830b48..d521c7f 100644
    useLayoutEffect(() => { setHtmlBodyEl(null); }, [emailIframeSrcDoc]);
    // One object per body: React writes innerHTML again whenever this object
    // changes, dropping whatever was mounted in the body.
-@@ -804,7 +785,7 @@ export function ConversationEmailBody({
+@@ -858,7 +839,7 @@ export function ConversationEmailBody({
              title="Email content"
              className="w-full border-0 block"
              scrolling="no"
@@ -109,10 +110,10 @@ index 4830b48..d521c7f 100644
            />
          ) : (
 diff --git a/lib/__tests__/email-sanitization.test.ts b/lib/__tests__/email-sanitization.test.ts
-index b08e3de..48e913f 100644
+index 7ba25b9d..7b660b16 100644
 --- a/lib/__tests__/email-sanitization.test.ts
 +++ b/lib/__tests__/email-sanitization.test.ts
-@@ -1021,6 +1021,60 @@ describe('email-sanitization', () => {
+@@ -1032,6 +1032,60 @@ describe('email-sanitization', () => {
        expect(sanitizeEmailHtml('<img src="https://cdn.example/a.png">'))
          .toContain('https://cdn.example/a.png');
      });
@@ -174,7 +175,7 @@ index b08e3de..48e913f 100644
  });
  
 diff --git a/lib/email-sanitization.ts b/lib/email-sanitization.ts
-index 278cacf..efddc14 100644
+index 3600ef6c..d8ed4e1b 100644
 --- a/lib/email-sanitization.ts
 +++ b/lib/email-sanitization.ts
 @@ -60,13 +60,20 @@ export function sanitizeEmailHtml(html: string): string {
@@ -202,7 +203,7 @@ index 278cacf..efddc14 100644
  };
  
  /**
-@@ -353,10 +360,10 @@ export const TRANSPARENT_BLOCKED_PIXEL =
+@@ -369,10 +376,10 @@ export const TRANSPARENT_BLOCKED_PIXEL =
   * check short-circuits on `DATA_URI_TAGS` *before* ALLOWED_URI_REGEXP is
   * consulted, and the set can only be extended via config (ADD_DATA_URI_TAGS),
   * never trimmed - so the regexp's careful SVG exclusion is unreachable for
@@ -216,7 +217,7 @@ index 278cacf..efddc14 100644
  
  /** Raster image types that stay allowed as a data: URI (mirrors ALLOWED_URI_REGEXP). */
  const RASTER_IMAGE_DATA_URI =
-@@ -391,7 +398,7 @@ function srcsetHasDisallowedDataUri(srcset: string): boolean {
+@@ -407,7 +414,7 @@ function srcsetHasDisallowedDataUri(srcset: string): boolean {
   * a live script vector.
   */
  export function restrictDataUriResourcesOnNode(node: Element): void {
@@ -225,7 +226,7 @@ index 278cacf..efddc14 100644
    for (const attr of ['src', 'href', 'xlink:href']) {
      const value = node.getAttribute(attr);
      if (!value) continue;
-@@ -599,6 +606,8 @@ export function stripExternalStyleSheetCss(css: string): string {
+@@ -615,6 +622,8 @@ export function stripExternalStyleSheetCss(css: string): string {
    return changed ? result : css;
  }
  
@@ -234,7 +235,7 @@ index 278cacf..efddc14 100644
  /** True if a srcset attribute lists at least one external candidate URL. */
  function srcsetHasExternalUrl(srcset: string): boolean {
    return srcset
-@@ -612,7 +621,9 @@ function srcsetHasExternalUrl(srcset: string): boolean {
+@@ -628,7 +637,9 @@ function srcsetHasExternalUrl(srcset: string): boolean {
   * restore. Covers the vectors Email Privacy Tester exercises beyond a bare
   * `<img src>`: whitespace/newline in src, `<picture><source srcset>`,
   * `<video poster>`/media src, the legacy `background` attribute, and inline
@@ -245,7 +246,7 @@ index 278cacf..efddc14 100644
   *
   * This is the first line of defence (it drives the "external content blocked"
   * banner and placeholder swap); the iframe's strict img-src/media-src/font-src
-@@ -623,7 +634,25 @@ function srcsetHasExternalUrl(srcset: string): boolean {
+@@ -639,7 +650,25 @@ function srcsetHasExternalUrl(srcset: string): boolean {
   */
  export function blockExternalResourcesOnNode(node: Element): boolean {
    let blocked = false;

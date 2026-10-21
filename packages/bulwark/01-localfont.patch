@@ -1,5 +1,5 @@
 diff --git a/app/(main)/layout.tsx b/app/(main)/layout.tsx
-index 445e20cb..c05cc89e 100644
+index e42a2509..72d7e2f8 100644
 --- a/app/(main)/layout.tsx
 +++ b/app/(main)/layout.tsx
 @@ -1,6 +1,6 @@
@@ -10,7 +10,7 @@ index 445e20cb..c05cc89e 100644
  import { headers } from "next/headers";
  import { getLocale, getTranslations } from "next-intl/server";
  import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
-@@ -30,22 +30,22 @@ async function resolveRequestLocale(): Promise<string> {
+@@ -31,22 +31,22 @@ async function resolveRequestLocale(): Promise<string> {
    return seg ?? (await getLocale());
  }
  
