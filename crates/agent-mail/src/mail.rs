@@ -255,6 +255,12 @@ pub fn busy(e: &anyhow::Error) -> bool {
         .is_some_and(throttled)
 }
 
+/// Whether Stalwart refused the access token, which is what an expired one looks like.
+pub fn refused_token(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<jmap_client::Error>()
+        .is_some_and(unauthorized)
+}
+
 fn unauthorized(e: &jmap_client::Error) -> bool {
     match e {
         jmap_client::Error::Problem(problem) => problem.status() == Some(401),
@@ -541,6 +547,32 @@ impl Mail {
         }
     }
 
+    /// Stores a raw message in `mailbox` with `keywords`, as it is; the new email's id.
+    pub async fn import(
+        &self,
+        message: Vec<u8>,
+        mailbox: &str,
+        keywords: &[&str],
+    ) -> Result<String> {
+        let blob = self
+            .with(async |s| {
+                s.client
+                    .upload(None, message.clone(), Some("message/rfc822"))
+                    .await
+            })
+            .await?;
+        let mut responses = self
+            .call(|r| {
+                r.import_email()
+                    .email(blob.blob_id())
+                    .mailbox_ids([mailbox])
+                    .keywords(keywords.iter().copied());
+            })
+            .await?;
+        let imported = responses.next()?.unwrap_import_email()?.created("i0")?;
+        Ok(imported.id().unwrap_or_default().to_owned())
+    }
+
     /// Destroys an email agent-mail created itself and failed to send, so it is neither left as a draft nor
     /// mistaken for a sent answer.
     pub async fn discard_unsent(&self, id: &str) -> Result<()> {
@@ -595,10 +627,18 @@ mod tests {
     use crate::auth::is_permanent;
 
     #[test]
+    fn a_refused_token_is_recognised_through_context() {
+        let refused = anyhow::Error::from(jmap_client::Error::Server("401 Unauthorized".into()));
+        assert!(refused_token(&refused.context("stalwart")));
+        let other = anyhow::Error::from(jmap_client::Error::Server("500 Internal".into()));
+        assert!(!refused_token(&other.context("stalwart")));
+    }
+
+    #[test]
     fn the_session_must_belong_to_the_configured_login() {
-        let login: Login = "agent@ironmoon.dev".parse().unwrap();
-        assert!(check_account("Agent@IronMoon.dev", &login).is_ok());
-        let other = check_account("ada@agent.ironmoon.dev", &login)
+        let login: Login = "agent@example.org".parse().unwrap();
+        assert!(check_account("Agent@Example.org", &login).is_ok());
+        let other = check_account("ada@agent.example.org", &login)
             .err()
             .unwrap();
         assert!(is_permanent(&other), "{other:#}");
@@ -607,10 +647,10 @@ mod tests {
     #[test]
     fn downloads_stay_on_the_mail_origin() {
         let template =
-            "https://mail.ironmoon.dev/jmap/download/{accountId}/{blobId}/{name}?accept={type}";
+            "https://mail.example.org/jmap/download/{accountId}/{blobId}/{name}?accept={type}";
         assert_eq!(
             download_url(template, "b", "Ab_9-z").unwrap().as_str(),
-            "https://mail.ironmoon.dev/jmap/download/b/Ab_9-z/attachment?accept=application%2Foctet-stream"
+            "https://mail.example.org/jmap/download/b/Ab_9-z/attachment?accept=application%2Foctet-stream"
         );
         for blob in ["", "../x", "a/b", "a?b", "a%2Fb", "@evil.com"] {
             assert!(download_url(template, "b", blob).is_err(), "{blob}");

@@ -1,7 +1,15 @@
-{ lib, pkgs, ... }:
+{
+  lib,
+  pkgs,
+  my-lib,
+  ...
+}:
 let
   agents = import ./agents.nix { inherit lib; };
-  agent-mail = pkgs.callPackage ../../../crates/agent-mail/package.nix { };
+  agent-mail = pkgs.callPackage ../../../crates/agent-mail/package.nix {
+    deployment = my-lib.ironmoon;
+    correspondents = [ ];
+  };
 
   # the retired Python mailtool kept "user:" and "password:" lines here; it read the last line
   # whose key starts with "pass"
@@ -21,7 +29,7 @@ let
       staged = "${password}.migrating";
       config = pkgs.writeText "agent-mail-${name}.json" (
         builtins.toJSON {
-          login = "${name}@agent.ironmoon.dev";
+          login = "${name}@${my-lib.ironmoon.mail.agents.domain}";
           password-file = password;
         }
       );

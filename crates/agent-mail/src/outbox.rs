@@ -42,7 +42,7 @@ pub enum Delivery {
 }
 
 #[derive(Debug)]
-pub enum Submitted {
+enum Submitted {
     Created {
         id: String,
         delivery: Delivery,
@@ -51,9 +51,22 @@ pub enum Submitted {
     NotCreated(anyhow::Error),
 }
 
+/// What submitting an email came to.
+#[derive(Debug)]
+pub enum Outcome {
+    Submitted {
+        id: String,
+        delivery: Delivery,
+    },
+    /// No submission was created, so nothing was sent.
+    Unsent(anyhow::Error),
+    /// The reply was lost and no submission could be found or ruled out.
+    Unknown(anyhow::Error),
+}
+
 /// Whether a failed call is known to have changed nothing: RFC 8620 request-level errors mean no method ran.
 /// Anything else, a lost or timed-out response included, leaves the outcome unknown.
-pub fn not_processed(e: &anyhow::Error) -> bool {
+fn not_processed(e: &anyhow::Error) -> bool {
     matches!(
         e.downcast_ref::<jmap_client::Error>(),
         Some(jmap_client::Error::Problem(_))
@@ -101,9 +114,8 @@ impl Outbox {
         })
     }
 
-    /// Adds the submission and the read-back of its delivery status; `email_id` may reference an email created
-    /// earlier in the same request (`#draft`).
-    pub fn submit(&self, r: &mut Request<'_>, email_id: &str, rcpt_to: &[Address]) {
+    /// Adds the submission and the read-back of its delivery status.
+    fn submit(&self, r: &mut Request<'_>, email_id: &str, rcpt_to: &[Address]) {
         r.set_email_submission()
             .create_with_id("send")
             .email_id(email_id)
@@ -119,7 +131,7 @@ impl Outbox {
     }
 
     /// Reads what `submit` added. An `Err` means the responses were malformed, so the outcome is unknown.
-    pub fn read(mut responses: Responses) -> Result<Submitted> {
+    fn read(mut responses: Responses) -> Result<Submitted> {
         let created = match responses
             .next()?
             .unwrap_set_email_submission()?
@@ -139,8 +151,28 @@ impl Outbox {
         Ok(Submitted::Created { id, delivery })
     }
 
+    /// Submits `email_id` to exactly `rcpt_to`; when the reply is lost, the submission is looked for.
+    pub async fn send(&self, mail: &Mail, email_id: &str, rcpt_to: &[Address]) -> Outcome {
+        let submitted = mail
+            .call(|r| self.submit(r, email_id, rcpt_to))
+            .await
+            .and_then(Outbox::read);
+        match submitted {
+            Ok(Submitted::Created { id, delivery }) => Outcome::Submitted { id, delivery },
+            Ok(Submitted::NotCreated(e)) => Outcome::Unsent(e),
+            Err(e) if not_processed(&e) => Outcome::Unsent(e),
+            Err(e) => match self.find(mail, email_id).await {
+                Ok(Some((id, delivery))) => Outcome::Submitted { id, delivery },
+                Ok(None) => Outcome::Unknown(e),
+                Err(f) => {
+                    Outcome::Unknown(e.context(format!("looking for its submission failed: {f:#}")))
+                }
+            },
+        }
+    }
+
     /// The submission of `email_id`, for when the reply to submitting it was lost.
-    pub async fn find(&self, mail: &Mail, email_id: &str) -> Result<Option<(String, Delivery)>> {
+    async fn find(&self, mail: &Mail, email_id: &str) -> Result<Option<(String, Delivery)>> {
         let mut responses = mail
             .call(|r| {
                 let ids = r
@@ -223,7 +255,7 @@ mod tests {
     #[test]
     fn a_submission_every_recipient_refused_is_refused() {
         let got = read(&created(
-            r#"{"nosuch@ironmoon.dev":{"smtpReply":"550 5.1.2 Mailbox does not exist.","delivered":"no","displayed":"unknown"}}"#,
+            r#"{"nosuch@example.org":{"smtpReply":"550 5.1.2 Mailbox does not exist.","delivered":"no","displayed":"unknown"}}"#,
         ));
         let Submitted::Created { id, delivery } = got else {
             panic!("{got:?}")
@@ -232,7 +264,7 @@ mod tests {
         assert_eq!(
             delivery,
             Delivery::Refused(vec![Refusal {
-                address: "nosuch@ironmoon.dev".into(),
+                address: "nosuch@example.org".into(),
                 reply: "550 5.1.2 Mailbox does not exist.".into()
             }])
         );
@@ -242,8 +274,8 @@ mod tests {
     #[test]
     fn a_partly_refused_submission_lists_the_refused() {
         let got = read(&created(
-            r#"{"a@ironmoon.dev":{"smtpReply":"250 2.1.5 Queued","delivered":"unknown","displayed":"unknown"},
-                "b@ironmoon.dev":{"smtpReply":"550 no","delivered":"no","displayed":"unknown"}}"#,
+            r#"{"a@example.org":{"smtpReply":"250 2.1.5 Queued","delivered":"unknown","displayed":"unknown"},
+                "b@example.org":{"smtpReply":"550 no","delivered":"no","displayed":"unknown"}}"#,
         ));
         let Submitted::Created {
             delivery: Delivery::Accepted { refused },
@@ -257,7 +289,7 @@ mod tests {
                 .iter()
                 .map(|r| r.address.as_str())
                 .collect::<Vec<_>>(),
-            ["b@ironmoon.dev"]
+            ["b@example.org"]
         );
     }
 

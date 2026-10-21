@@ -28,7 +28,10 @@ use crate::{
     auth::{Auth, is_permanent, store::now},
     config::Config,
     identity::Login,
-    mail::{AGENT_MAIL, ANSWERED, HANDLED, MDN_SENT, Mail, NeedsSignIn, SEEN, busy, has_keyword},
+    mail::{
+        AGENT_MAIL, ANSWERED, HANDLED, MDN_SENT, Mail, NeedsSignIn, SEEN, busy, has_keyword,
+        refused_token,
+    },
     mdn::{self, Asked},
     outbox::Outbox,
     random::Draws,
@@ -562,7 +565,15 @@ impl Watch<'_> {
                     Duration::from_secs(30)
                 }
                 Err(Interruption::Failed(e)) => {
-                    warn(&format!("{e:#}; trying again in {}s", backoff.as_secs()));
+                    let why = if refused_token(&e) {
+                        "the access token expired".to_owned()
+                    } else {
+                        format!("{e:#}")
+                    };
+                    warn(&format!(
+                        "{why}; signing in again in {}s",
+                        backoff.as_secs()
+                    ));
                     let pause = backoff;
                     backoff = (backoff * 2).min(BACKOFF_MAX);
                     if !self.pause(pause).await {
@@ -571,7 +582,7 @@ impl Watch<'_> {
                     match self.mail.reconnect().await {
                         Err(e) if is_permanent(&e) => return Err(e),
                         Err(e) => warn(&format!("{e:#}")),
-                        Ok(()) => {}
+                        Ok(()) => warn("signed in again; waiting"),
                     }
                     continue;
                 }
@@ -778,8 +789,8 @@ mod tests {
     use super::*;
 
     const T0: i64 = 1_792_000_000;
-    const HIM: &str = "ironmoon@ironmoon.dev";
-    const POOL: &str = "agent+pool@ironmoon.dev";
+    const HIM: &str = "owner@example.org";
+    const POOL: &str = "agent+pool@example.org";
 
     fn mail_json(
         id: &str,
@@ -795,7 +806,7 @@ mod tests {
             .collect();
         json!({
             "id": id, "threadId": thread, "receivedAt": utc(T0 + secs), "keywords": keywords,
-            "messageId": [format!("{id}@ironmoon.dev")],
+            "messageId": [format!("{id}@example.org")],
             "from": [{ "email": from }], "to": [{ "email": to }], "mailboxIds": { "inbox": true },
             "header:Content-Type": " text/plain",
         })
@@ -809,7 +820,7 @@ mod tests {
     fn sent_json(id: &str, thread: &str, secs: i64, answers: &str) -> Value {
         let mut m = mail_json(id, thread, secs, POOL, HIM, &[SEEN]);
         m["mailboxIds"] = json!({ "sent": true });
-        m["inReplyTo"] = json!([format!("{answers}@ironmoon.dev")]);
+        m["inReplyTo"] = json!([format!("{answers}@example.org")]);
         m
     }
 
@@ -818,7 +829,7 @@ mod tests {
     }
 
     fn login() -> Login {
-        "agent@ironmoon.dev".parse().unwrap()
+        "agent@example.org".parse().unwrap()
     }
 
     fn ids(list: &[Email]) -> Vec<String> {
@@ -880,7 +891,7 @@ mod tests {
     #[test]
     fn a_reused_or_ambiguous_message_id_answers_nothing() {
         let mut twin = mail_json("a2", "A", 20, HIM, POOL, &[]);
-        twin["messageId"] = json!(["a1@ironmoon.dev"]);
+        twin["messageId"] = json!(["a1@example.org"]);
         let candidates = [
             mail("a1", "A", 10, HIM, POOL, &[]),
             serde_json::from_value(twin).unwrap(),
@@ -895,7 +906,7 @@ mod tests {
         assert!(reused.is_empty(), "{reused:?}");
         let candidates = [mail("b1", "B", 10, HIM, POOL, &[])];
         let mut two: Value = sent_json("r", "B", 30, "b1");
-        two["inReplyTo"] = json!(["b1@ironmoon.dev", "x@ironmoon.dev"]);
+        two["inReplyTo"] = json!(["b1@example.org", "x@example.org"]);
         let members = [serde_json::from_value(two).unwrap()];
         assert!(answered_in_sent(&login(), "inbox", "sent", &candidates, &members).is_empty());
     }
@@ -904,7 +915,7 @@ mod tests {
     fn mail_from_any_of_our_subaddresses_is_not_open() {
         assert!(!open(
             &login(),
-            &mail("o1", "O", 10, "agent+other@ironmoon.dev", POOL, &[])
+            &mail("o1", "O", 10, "agent+other@example.org", POOL, &[])
         ));
         assert!(open(&login(), &mail("h1", "H", 10, HIM, POOL, &[])));
         assert!(!open(&login(), &mail("h2", "H", 10, HIM, POOL, &[HANDLED])));
@@ -923,15 +934,15 @@ mod tests {
         let threads = HashSet::from(["T".to_owned()]);
         assert!(watched.covers(
             &threads,
-            &mail("topic", "X", 10, HIM, "Agent+Pool@ironmoon.dev", &[])
+            &mail("topic", "X", 10, HIM, "Agent+Pool@example.org", &[])
         ));
         assert!(watched.covers(
             &threads,
-            &mail("thread", "T", 20, HIM, "agent@ironmoon.dev", &[])
+            &mail("thread", "T", 20, HIM, "agent@example.org", &[])
         ));
         assert!(!watched.covers(
             &threads,
-            &mail("neither", "Y", 30, HIM, "xagent+pool@ironmoon.dev", &[])
+            &mail("neither", "Y", 30, HIM, "xagent+pool@example.org", &[])
         ));
     }
 

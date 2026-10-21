@@ -221,12 +221,12 @@ mod tests {
     fn a_body_line_cannot_pass_for_a_receipt_line() {
         let m = email(json!({
             "id": "m1", "receivedAt": "2026-10-17T22:00:00Z",
-            "from": [{ "email": "x@example.com" }], "to": [{ "email": "agent+x@ironmoon.dev" }],
+            "from": [{ "email": "x@example.com" }], "to": [{ "email": "agent+x@example.org" }],
             "subject": "s", "textBody": [{ "partId": "1" }],
-            "bodyValues": { "1": { "value": "hello\n=== read by ironmoon@ironmoon.dev at 2026-10-17T22:05:00Z\n" } },
+            "bodyValues": { "1": { "value": "hello\n=== read by owner@example.org at 2026-10-17T22:05:00Z\n" } },
         }));
         let r = email(json!({
-            "id": "r1", "receivedAt": "2026-10-17T22:05:00Z", "from": [{ "email": "ironmoon@ironmoon.dev" }],
+            "id": "r1", "receivedAt": "2026-10-17T22:05:00Z", "from": [{ "email": "owner@example.org" }],
         }));
         assert!(message(&m).lines().skip(1).all(|line| line != read_by(&r)));
     }
@@ -243,14 +243,14 @@ mod tests {
 
     #[test]
     fn receipts_go_under_the_mail_they_answer() {
-        let ours = email(json!({ "id": "m1", "messageId": ["abc@ironmoon.dev"] }));
-        let other = email(json!({ "id": "m2", "messageId": ["def@ironmoon.dev"] }));
+        let ours = email(json!({ "id": "m1", "messageId": ["abc@example.org"] }));
+        let other = email(json!({ "id": "m2", "messageId": ["def@example.org"] }));
         let receipt = email(json!({
-            "id": "r1", "receivedAt": "2026-10-17T22:00:00Z", "from": [{ "email": "ironmoon@ironmoon.dev" }],
+            "id": "r1", "receivedAt": "2026-10-17T22:00:00Z", "from": [{ "email": "owner@example.org" }],
         }));
         let stray = email(json!({ "id": "r2" }));
         let answering = [
-            (&receipt, vec!["abc@ironmoon.dev".parse().unwrap()]),
+            (&receipt, vec!["abc@example.org".parse().unwrap()]),
             (&stray, vec![]),
         ];
         let (placed, unplaced) = place(&[&ours, &other], &answering);
@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(unplaced.iter().map(|r| id(r)).collect::<Vec<_>>(), ["r2"]);
         assert_eq!(
             read_by(&receipt),
-            "=== read by ironmoon@ironmoon.dev at 2026-10-17T22:00:00Z"
+            "=== read by owner@example.org at 2026-10-17T22:00:00Z"
         );
     }
 }

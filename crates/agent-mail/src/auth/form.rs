@@ -157,7 +157,7 @@ mod tests {
     fn answers() -> HashMap<&'static str, &'static str> {
         HashMap::from([
             ("user_code", "ABCD-EFGH"),
-            ("loginName", "agent@ironmoon.dev"),
+            ("loginName", "agent@example.org"),
             ("password", "pw"),
         ])
     }
@@ -185,7 +185,7 @@ mod tests {
         let post = form.post(&answers(), &at).unwrap();
         assert_eq!(
             post.url.as_str(),
-            "https://auth.ironmoon.dev/ui/login/loginname"
+            "https://auth.example.org/ui/login/loginname"
         );
         assert!(!post.consents);
         assert_eq!(
@@ -193,7 +193,7 @@ mod tests {
             [
                 ("gorilla.csrf.Token", "tok+/="),
                 ("authRequestID", ""),
-                ("loginName", "agent@ironmoon.dev")
+                ("loginName", "agent@example.org")
             ]
         );
     }
@@ -225,7 +225,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             post.url.as_str(),
-            "https://auth.ironmoon.dev/ui/login/mfa/prompt"
+            "https://auth.example.org/ui/login/mfa/prompt"
         );
         assert_eq!(pairs(&post), [("authRequestID", "9"), ("skip", "true")]);
     }
@@ -262,7 +262,7 @@ mod tests {
         assert!(post.consents);
         assert_eq!(
             post.url.as_str(),
-            "https://auth.ironmoon.dev/ui/login/device/allowed"
+            "https://auth.example.org/ui/login/device/allowed"
         );
         assert_eq!(pairs(&post), [("authRequestID", "7")]);
     }

@@ -28,6 +28,7 @@ in
 {
   imports = [ inputs.microvm.nixosModules.host ];
 
+  microvm.vms.agents.specialArgs = { inherit my-lib; };
   microvm.vms.agents.config = {
     imports = [ ../../nix/vms/agents ];
     nixpkgs.flake.source = config.nixpkgs.flake.source;
@@ -98,7 +99,7 @@ in
         "--agents"
         (import ../../nix/vms/agents/agents-json.nix { inherit lib pkgs; })
         "--domain"
-        "agent.ironmoon.dev"
+        my-lib.ironmoon.mail.agents.domain
         "--cid"
         (toString guest.vsock.cid)
         "--key"

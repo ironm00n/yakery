@@ -70,22 +70,22 @@ mod tests {
     use super::*;
 
     fn agent() -> Login {
-        "agent@ironmoon.dev".parse().unwrap()
+        "agent@example.org".parse().unwrap()
     }
 
     #[test]
     fn login_parsing() {
-        assert!("ada@agent.ironmoon.dev".parse::<Login>().is_ok());
-        assert!("agent+x@ironmoon.dev".parse::<Login>().is_err());
+        assert!("ada@agent.example.org".parse::<Login>().is_ok());
+        assert!("agent+x@example.org".parse::<Login>().is_err());
         assert!("agent".parse::<Login>().is_err());
     }
 
     #[test]
     fn topic_address_uses_the_login_local_part_and_domain() {
-        let ada: Login = "ada@agent.ironmoon.dev".parse().unwrap();
+        let ada: Login = "ada@agent.example.org".parse().unwrap();
         assert_eq!(
             ada.topic_address(&"pin".parse().unwrap()),
-            "ada+pin@agent.ironmoon.dev"
+            "ada+pin@agent.example.org"
         );
     }
 
@@ -93,20 +93,20 @@ mod tests {
     fn ours_is_the_login_or_its_topic_subaddresses() {
         let me = agent();
         for ours in [
-            "agent@ironmoon.dev",
-            "AGENT@IronMoon.dev",
-            "agent+tooling@ironmoon.dev",
-            "Agent+A-1@ironmoon.dev",
+            "agent@example.org",
+            "AGENT@Example.org",
+            "agent+tooling@example.org",
+            "Agent+A-1@example.org",
         ] {
             assert!(me.owns(ours), "{ours}");
         }
         for theirs in [
-            "ironmoon@ironmoon.dev",
-            "agent@agent.ironmoon.dev",
-            "agents@ironmoon.dev",
-            "agent+@ironmoon.dev",
-            "agent+a_b@ironmoon.dev",
-            "ada+agent@ironmoon.dev",
+            "owner@example.org",
+            "agent@agent.example.org",
+            "agents@example.org",
+            "agent+@example.org",
+            "agent+a_b@example.org",
+            "ada+agent@example.org",
             "agent",
         ] {
             assert!(!me.owns(theirs), "{theirs}");
@@ -116,8 +116,8 @@ mod tests {
     #[test]
     fn only_subaddresses_are_topic_addresses() {
         let me = agent();
-        assert!(me.is_topic_address("agent+tooling@ironmoon.dev"));
-        assert!(!me.is_topic_address("agent@ironmoon.dev"));
-        assert!(!me.is_topic_address("ironmoon+tooling@ironmoon.dev"));
+        assert!(me.is_topic_address("agent+tooling@example.org"));
+        assert!(!me.is_topic_address("agent@example.org"));
+        assert!(!me.is_topic_address("owner+tooling@example.org"));
     }
 }

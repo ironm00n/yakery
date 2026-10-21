@@ -10,8 +10,8 @@ use crate::{
     identity::Login,
     mail::{AGENT_MAIL, MDN_SENT, Mail, SEEN, has_keyword},
     mime,
-    outbox::{Outbox, Submitted, not_processed, require_all},
-    policy::Recipients,
+    outbox::{Outbox, Outcome, require_all},
+    policy::{Recipients, bare_sender},
     random::{ALPHANUMERIC, Draws},
     show::{addresses, plain},
 };
@@ -116,9 +116,13 @@ impl Asked {
             .and_then(|v| v.split_once(';'))
             .and_then(|(_, address)| address.trim().parse().ok())
             .or_else(|| reached.clone());
+        let final_recipient = match reached.map(Ok).unwrap_or_else(|| bare_sender(login)) {
+            Ok(address) => address,
+            Err(e) => return decline(e.to_string()),
+        };
         Asked::Send(Receipt {
             to: requester,
-            final_recipient: reached.unwrap_or_else(|| login.address().clone()),
+            final_recipient,
             original_recipient,
             subject: m.subject().unwrap_or_default().to_owned(),
             original_message_id: m
@@ -210,45 +214,24 @@ impl Receipt {
     /// recipient refused. When the outcome is unknown it is left, and said so.
     pub async fn send(&self, mail: &Mail, outbox: &Outbox, now: i64) -> Result<()> {
         let token = Draws::default().string(ALPHANUMERIC, 24)?;
-        let bytes = self.message(now, &token).into_bytes();
-        let blob = mail
-            .with(async |s| {
-                s.client
-                    .upload(None, bytes.clone(), Some("message/rfc822"))
-                    .await
-            })
+        let message = self.message(now, &token).into_bytes();
+        let copy = &mail
+            .import(message, &outbox.sent, &[SEEN, MDN_SENT, AGENT_MAIL])
             .await?;
-        let mut responses = mail
-            .call(|r| {
-                r.import_email()
-                    .email(blob.blob_id())
-                    .mailbox_ids([outbox.sent.as_str()])
-                    .keywords([SEEN, MDN_SENT, AGENT_MAIL]);
-            })
-            .await?;
-        let imported = responses.next()?.unwrap_import_email()?.created("i0")?;
-        let copy = imported.id().unwrap_or_default();
-        let call = mail
-            .call(|r| outbox.submit(r, copy, std::slice::from_ref(&self.to)))
-            .await;
-        let unsent = match call.and_then(Outbox::read) {
-            Ok(Submitted::Created { id, delivery }) => match require_all(&id, &delivery) {
+        let unsent = match outbox
+            .send(mail, copy, std::slice::from_ref(&self.to))
+            .await
+        {
+            Outcome::Submitted { id, delivery } => match require_all(&id, &delivery) {
                 Ok(()) => return Ok(()),
-                Err(e) => e,
+                Err(refused) => refused,
             },
-            Ok(Submitted::NotCreated(e)) => e,
-            Err(e) if not_processed(&e) => e,
-            Err(e) => match outbox.find(mail, copy).await {
-                Ok(Some((id, delivery))) => match require_all(&id, &delivery) {
-                    Ok(()) => return Ok(()),
-                    Err(refused) => refused,
-                },
-                _ => {
-                    return Err(e.context(format!(
-                        "not known to be sent; its copy {copy} stays in Sent"
-                    )));
-                }
-            },
+            Outcome::Unsent(e) => e,
+            Outcome::Unknown(e) => {
+                return Err(e.context(format!(
+                    "not known to be sent; its copy {copy} stays in Sent"
+                )));
+            }
         };
         Err(match mail.discard_unsent(copy).await {
             Ok(()) => unsent.context("the receipt was not sent"),
@@ -266,7 +249,7 @@ mod tests {
     use super::*;
 
     fn login() -> Login {
-        "agent@ironmoon.dev".parse().unwrap()
+        "agent@example.org".parse().unwrap()
     }
 
     fn address(a: &str) -> Address {
@@ -275,10 +258,10 @@ mod tests {
 
     fn mail(extra: Value) -> Email {
         let mut m = json!({
-            "id": "m1", "subject": "Re: [desktop · pool] x", "messageId": ["abc@ironmoon.dev"],
-            "from": [{ "email": "ironmoon@ironmoon.dev" }],
-            "to": [{ "email": "agent+pool@ironmoon.dev" }], "keywords": {},
-            "header:Disposition-Notification-To:asAddresses": [{ "email": "ironmoon@ironmoon.dev" }],
+            "id": "m1", "subject": "Re: [desktop · pool] x", "messageId": ["abc@example.org"],
+            "from": [{ "email": "owner@example.org" }],
+            "to": [{ "email": "agent+pool@example.org" }], "keywords": {},
+            "header:Disposition-Notification-To:asAddresses": [{ "email": "owner@example.org" }],
             "header:Content-Type": " text/plain",
         });
         m.as_object_mut()
@@ -306,30 +289,46 @@ mod tests {
         assert_eq!(
             receipt(&mail(json!({}))),
             Receipt {
-                to: address("ironmoon@ironmoon.dev"),
-                final_recipient: address("agent+pool@ironmoon.dev"),
-                original_recipient: Some(address("agent+pool@ironmoon.dev")),
+                to: address("owner@example.org"),
+                final_recipient: address("agent+pool@example.org"),
+                original_recipient: Some(address("agent+pool@example.org")),
                 subject: "Re: [desktop · pool] x".into(),
-                original_message_id: Some("abc@ironmoon.dev".parse().unwrap()),
+                original_message_id: Some("abc@example.org".parse().unwrap()),
             }
         );
     }
 
     #[test]
     fn without_a_topic_address_the_receipt_comes_from_the_login() {
-        let bare = receipt(&mail(json!({ "to": [{ "email": "agent@ironmoon.dev" }] })));
+        let ada: Login = "ada@agent.example.org".parse().unwrap();
+        let to_ada = |extra: Value| {
+            let mut m = json!({ "to": [{ "email": "ada@agent.example.org" }] });
+            m.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            match Asked::of(&ada, &mail(m)) {
+                Asked::Send(receipt) => receipt,
+                _ => panic!("no receipt"),
+            }
+        };
+        let bare = to_ada(json!({}));
         assert_eq!(
             (bare.final_recipient, bare.original_recipient),
-            (address("agent@ironmoon.dev"), None)
+            (address("ada@agent.example.org"), None)
         );
-        let header = receipt(&mail(json!({
-            "to": [{ "email": "agent@ironmoon.dev" }],
-            "header:Original-Recipient:asText": " rfc822; agent+old@ironmoon.dev",
-        })));
+        let header = to_ada(json!({
+            "header:Original-Recipient:asText": " rfc822; ada+old@agent.example.org",
+        }));
         assert_eq!(
             header.original_recipient,
-            Some(address("agent+old@ironmoon.dev"))
+            Some(address("ada+old@agent.example.org"))
         );
+    }
+
+    #[test]
+    fn the_shared_login_sends_no_receipt_from_its_bare_address() {
+        let why = declined(&mail(json!({ "to": [{ "email": "agent@example.org" }] })));
+        assert!(why.contains("sends only from a topic subaddress"), "{why}");
     }
 
     #[test]
@@ -343,19 +342,19 @@ mod tests {
     #[test]
     fn a_request_for_a_receipt_to_anyone_but_the_sender_is_declined() {
         let other = mail(
-            json!({ "header:Disposition-Notification-To:asAddresses": [{ "email": "me@ironmoon.dev" }] }),
+            json!({ "header:Disposition-Notification-To:asAddresses": [{ "email": "me@example.org" }] }),
         );
         assert!(
-            declined(&other).contains("not to its sender ironmoon@ironmoon.dev"),
+            declined(&other).contains("not to its sender owner@example.org"),
             "{}",
             declined(&other)
         );
         let case = mail(
-            json!({ "header:Disposition-Notification-To:asAddresses": [{ "email": "IronMoon@IronMoon.dev" }] }),
+            json!({ "header:Disposition-Notification-To:asAddresses": [{ "email": "Owner@Example.org" }] }),
         );
         assert!(matches!(Asked::of(&login(), &case), Asked::Send(_)));
         let two_senders = mail(
-            json!({ "from": [{ "email": "ironmoon@ironmoon.dev" }, { "email": "me@ironmoon.dev" }] }),
+            json!({ "from": [{ "email": "owner@example.org" }, { "email": "me@example.org" }] }),
         );
         assert!(declined(&two_senders).contains("not to its sender"));
     }
@@ -363,7 +362,7 @@ mod tests {
     #[test]
     fn receipts_and_requests_to_several_addresses_are_declined() {
         let several = mail(json!({ "header:Disposition-Notification-To:asAddresses": [
-            { "email": "ironmoon@ironmoon.dev" }, { "email": "me@ironmoon.dev" }] }));
+            { "email": "owner@example.org" }, { "email": "me@example.org" }] }));
         assert!(declined(&several).contains("several addresses"));
         let receipt = mail(json!({ "header:Content-Type":
             " multipart/report; report-type=disposition-notification; boundary=x" }));
@@ -377,13 +376,13 @@ mod tests {
             "header:Disposition-Notification-To:asAddresses": [{ "email": "a@example.com" }],
         }));
         assert!(declined(&outside).contains("may mail only"));
-        let vm: Login = "ada@agent.ironmoon.dev".parse().unwrap();
+        let vm: Login = "ada@agent.example.org".parse().unwrap();
         assert!(matches!(Asked::of(&vm, &outside), Asked::Send(_)));
     }
 
     #[test]
     fn an_invalid_original_message_id_is_dropped() {
-        let bad = receipt(&mail(json!({ "messageId": ["abc\r@ironmoon.dev"] })));
+        let bad = receipt(&mail(json!({ "messageId": ["abc\r@example.org"] })));
         assert_eq!(bad.original_message_id, None);
         assert!(!bad.message(1_792_000_827, "T").contains("In-Reply-To"));
     }
@@ -392,11 +391,11 @@ mod tests {
     fn the_receipt_is_an_rfc_8098_report_shaped_like_bulwarks() {
         let expected = [
             "Date: Wed, 14 Oct 2026 18:00:27 +0000",
-            "From: agent+pool@ironmoon.dev",
-            "To: ironmoon@ironmoon.dev",
+            "From: agent+pool@example.org",
+            "To: owner@example.org",
             "Subject: =?UTF-8?B?UmVhZDogUmU6IFtkZXNrdG9wIMK3IHBvb2xdIHg=?=",
-            "Message-ID: <mdn.T@ironmoon.dev>",
-            "In-Reply-To: <abc@ironmoon.dev>",
+            "Message-ID: <mdn.T@example.org>",
+            "In-Reply-To: <abc@example.org>",
             "MIME-Version: 1.0",
             "Content-Type: multipart/report; report-type=disposition-notification;",
             "\tboundary=\"----=_MDN_T\"",
@@ -406,7 +405,7 @@ mod tests {
             "Content-Transfer-Encoding: base64",
             "",
             &mime::base64_body(
-                "This is a return receipt for the message you sent to agent+pool@ironmoon.dev.\r\n\r\n\
+                "This is a return receipt for the message you sent to agent+pool@example.org.\r\n\r\n\
                  Note: This receipt only acknowledges that agent-mail displayed the message\r\n\
                  to an agent. There is no guarantee that it was read or understood.",
             ),
@@ -415,10 +414,10 @@ mod tests {
             "Content-Type: message/disposition-notification",
             "Content-Transfer-Encoding: 7bit",
             "",
-            "Reporting-UA: ironmoon.dev; agent-mail",
-            "Final-Recipient: rfc822;agent+pool@ironmoon.dev",
-            "Original-Recipient: rfc822;agent+pool@ironmoon.dev",
-            "Original-Message-ID: <abc@ironmoon.dev>",
+            "Reporting-UA: example.org; agent-mail",
+            "Final-Recipient: rfc822;agent+pool@example.org",
+            "Original-Recipient: rfc822;agent+pool@example.org",
+            "Original-Message-ID: <abc@example.org>",
             "Disposition: automatic-action/MDN-sent-automatically; displayed",
             "",
             "------=_MDN_T--",

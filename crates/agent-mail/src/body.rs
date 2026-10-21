@@ -8,14 +8,16 @@ use crate::signature::Signature;
 
 /// Mail clients drop `<style>` blocks unevenly, so styles go inline. The grey tints read on light and dark themes.
 /// A later selector replaces an earlier one's style, so `pre > code` drops the inline-code background.
+/// The tints are `background-color`: Bulwark Mobile's dark mode re-inverts anything whose inline style holds
+/// `background:`, which leaves the inherited text dark on its dark page.
 const STYLES: &[(&str, &str)] = &[
     (
         "pre",
-        "padding: 8px 12px; border-radius: 4px; background: rgba(127, 127, 127, 0.12); overflow-x: auto",
+        "padding: 8px 12px; border-radius: 4px; background-color: rgba(127, 127, 127, 0.12); overflow-x: auto",
     ),
     (
         "code",
-        "font-family: ui-monospace, Menlo, Consolas, monospace; padding: 1px 4px; border-radius: 3px; background: rgba(127, 127, 127, 0.15)",
+        "font-family: ui-monospace, Menlo, Consolas, monospace; padding: 1px 4px; border-radius: 3px; background-color: rgba(127, 127, 127, 0.15)",
     ),
     (
         "pre > code",
@@ -99,16 +101,35 @@ mod tests {
 
     #[test]
     fn links_render_and_bare_urls_autolink() {
-        let html =
-            html("see [the page](https://artifacts.ironmoon.dev/x) and https://ironmoon.dev");
+        let html = html("see [the page](https://artifacts.example.org/x) and https://example.org");
         assert!(
-            html.contains(r#"<a href="https://artifacts.ironmoon.dev/x">the page</a>"#),
+            html.contains(r#"<a href="https://artifacts.example.org/x">the page</a>"#),
             "{html}"
         );
         assert!(
-            html.contains(r#"<a href="https://ironmoon.dev">https://ironmoon.dev</a>"#),
+            html.contains(r#"<a href="https://example.org">https://example.org</a>"#),
             "{html}"
         );
+    }
+
+    #[test]
+    fn a_bare_url_stops_before_trailing_punctuation() {
+        let url = "https://artifacts.example.org/claude/v6.pdf";
+        let link = format!(r#"<a href="{url}">{url}</a>"#);
+        for (markdown, after) in [
+            (
+                format!("v6 attached ({url}): the new flow"),
+                "): the new flow",
+            ),
+            (format!("the deck: {url}."), "."),
+            (format!("see {url}, then reply"), ", then reply"),
+        ] {
+            let html = html(&markdown);
+            assert!(
+                html.contains(&format!("{link}{after}")),
+                "{markdown} gave {html}"
+            );
+        }
     }
 
     #[test]
@@ -143,6 +164,13 @@ mod tests {
         );
         assert!(html.contains(r#"<code style="font-family: ui-monospace, Menlo, Consolas, monospace; padding: 1px 4px"#), "{html}");
         assert!(html.contains(r#"<blockquote style="margin: 0"#), "{html}");
+    }
+
+    #[test]
+    fn no_inline_style_uses_the_background_shorthand() {
+        for (selector, style) in STYLES {
+            assert!(!style.contains("background:"), "{selector}: {style}");
+        }
     }
 
     #[test]

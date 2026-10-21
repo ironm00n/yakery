@@ -153,29 +153,29 @@ mod tests {
     fn addresses_are_plain_mailboxes_only() {
         for ok in [
             "a@b.dev",
-            "agent+tooling@ironmoon.dev",
+            "agent+tooling@example.org",
             "o'neil.x@sub.example-1.com",
-            "A@IronMoon.DEV",
+            "A@Example.ORG",
         ] {
             assert!(ok.parse::<Address>().is_ok(), "{ok}");
         }
         for bad in [
-            "evil@example.com>,<x@ironmoon.dev",
-            "\"a@b\"@ironmoon.dev",
-            "a@b@ironmoon.dev",
-            "a b@ironmoon.dev",
-            "a@ironmoon.dev\r\nBcc: x@y.z",
-            "<a@ironmoon.dev>",
-            "a,b@ironmoon.dev",
-            ".a@ironmoon.dev",
-            "a..b@ironmoon.dev",
-            "a@-ironmoon.dev",
-            "a@ironmoon",
-            "a@ironmoon.dev.",
+            "evil@example.com>,<x@example.org",
+            "\"a@b\"@example.org",
+            "a@b@example.org",
+            "a b@example.org",
+            "a@example.org\r\nBcc: x@y.z",
+            "<a@example.org>",
+            "a,b@example.org",
+            ".a@example.org",
+            "a..b@example.org",
+            "a@-example.org",
+            "a@example",
+            "a@example.org.",
             "a@[127.0.0.1]",
-            "ä@ironmoon.dev",
-            "a@ironmoön.dev",
-            "@ironmoon.dev",
+            "ä@example.org",
+            "a@exämple.org",
+            "@example.org",
             "a@",
         ] {
             assert!(bad.parse::<Address>().is_err(), "{bad:?}");
@@ -185,8 +185,8 @@ mod tests {
     #[test]
     fn addresses_compare_without_case() {
         assert_eq!(
-            "Agent@IronMoon.dev".parse::<Address>().unwrap(),
-            "agent@ironmoon.dev".parse().unwrap()
+            "Agent@Example.org".parse::<Address>().unwrap(),
+            "agent@example.org".parse().unwrap()
         );
     }
 
@@ -201,10 +201,10 @@ mod tests {
 
     #[test]
     fn message_ids_follow_msg_id_syntax() {
-        let id: MessageId = "<abc.1@mail.ironmoon.dev>".parse().unwrap();
+        let id: MessageId = "<abc.1@mail.example.org>".parse().unwrap();
         assert_eq!(
             (id.to_string().as_str(), id.bare()),
-            ("<abc.1@mail.ironmoon.dev>", "abc.1@mail.ironmoon.dev")
+            ("<abc.1@mail.example.org>", "abc.1@mail.example.org")
         );
         assert!("x@[1.2.3.4]".parse::<MessageId>().is_ok());
         for bad in [
