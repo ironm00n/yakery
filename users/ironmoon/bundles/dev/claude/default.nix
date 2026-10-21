@@ -3,6 +3,7 @@
   lib,
   pkgs,
   inputs,
+  my-lib,
   my-utils,
   pkgs-master,
   ...
@@ -18,8 +19,10 @@ let
   inherit (my-utils) symlink;
   inherit (pkgs-master) claude-code;
   cfg = config.bundles.dev.claude;
+  inherit (my-lib) ironmoon;
   agent-mail = pkgs.callPackage ../../../../../crates/agent-mail/package.nix {
-    correspondents = inputs.secrets.data.mail.agentCorrespondents or [ ];
+    deployment = ironmoon;
+    correspondents = inputs.secrets.data.mail.agentCorrespondents;
   };
 
   # claude code loads any ~/.claude/skills/<name> holding a .claude-plugin/ as a plugin
@@ -39,7 +42,7 @@ in
     ];
 
     xdg.configFile."agent-mail/config.json".text = builtins.toJSON {
-      login = "agent@ironmoon.dev";
+      login = "${ironmoon.mail.agents.sharedLocalPart}@${ironmoon.domain}";
       password-file = "~/.claude/secrets/agent-ironmoon-dev-password";
     };
 

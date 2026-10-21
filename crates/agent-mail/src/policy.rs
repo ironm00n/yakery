@@ -1,4 +1,5 @@
-//! What is compiled in: where agent-mail signs in, where it reads mail, and whom each login may mail.
+//! What is compiled in: where agent-mail signs in, where it reads mail, and whom each login may mail. The values
+//! come from the build's environment, which package.nix sets from yakery's `lib/ironmoon.nix`.
 
 use anyhow::{Context, Result, bail};
 
@@ -7,36 +8,32 @@ use crate::{address::Address, identity::Login};
 pub const SCOPE: &str = "openid email profile offline_access";
 pub const ZITADEL_API_SCOPE: &str = "urn:zitadel:iam:org:project:id:zitadel:aud";
 
-/// Each value is the deployment's in a build and its fixture in a test build, and neither may be empty.
 macro_rules! deployment {
-    ($($(#[$doc:meta])* $vis:vis $name:ident = $value:expr, test $fixture:literal;)*) => {$(
+    ($($(#[$doc:meta])* $vis:vis $name:ident = $var:literal, test $fixture:literal;)*) => {$(
         $(#[$doc])*
         #[cfg(not(test))]
-        $vis const $name: &str = $value;
+        $vis const $name: &str = env!($var);
         $(#[$doc])*
         #[cfg(test)]
         $vis const $name: &str = $fixture;
-        const _: () = assert!(!$name.is_empty(), concat!(stringify!($name), " is empty"));
+        const _: () = assert!(!$name.is_empty(), concat!($var, " is empty"));
     )*};
 }
 
 deployment! {
-    pub AUTH_HOST = "auth.ironmoon.dev", test "auth.example.org";
-    pub CLIENT_ID = "395450175197396579", test "agent-mail-test";
+    pub AUTH_HOST = "AGENT_MAIL_AUTH_HOST", test "auth.example.org";
+    pub CLIENT_ID = "AGENT_MAIL_CLIENT_ID", test "agent-mail-test";
     /// jmap-client discovers the session at `/.well-known/jmap`, which Stalwart redirects to `/jmap/session`.
-    pub JMAP_HOST = "mail.ironmoon.dev", test "mail.example.org";
-    DOMAIN = "ironmoon.dev", test "example.org";
-    AGENT_DOMAIN = "agent.ironmoon.dev", test "agent.example.org";
-    SHARED_LOCAL_PART = "agent", test "agent";
+    pub JMAP_HOST = "AGENT_MAIL_JMAP_HOST", test "mail.example.org";
+    DOMAIN = "AGENT_MAIL_DOMAIN", test "example.org";
+    AGENT_DOMAIN = "AGENT_MAIL_AGENT_DOMAIN", test "agent.example.org";
+    SHARED_LOCAL_PART = "AGENT_MAIL_SHARED_LOCAL_PART", test "agent";
 }
 
-/// Comma-separated addresses outside the deployment's domains that the shared login may still mail. package.nix
-/// sets it from the secrets flake's `data.mail.agentCorrespondents`, the list Stalwart lets the agents reach.
+/// Comma-separated addresses outside the deployment's domains that the shared login may still mail: the secrets
+/// flake's `data.mail.agentCorrespondents`, the list Stalwart lets the agents reach.
 #[cfg(not(test))]
-const CORRESPONDENTS: &str = match option_env!("AGENT_MAIL_CORRESPONDENTS") {
-    Some(list) => list,
-    None => "",
-};
+const CORRESPONDENTS: &str = env!("AGENT_MAIL_CORRESPONDENTS");
 #[cfg(test)]
 const CORRESPONDENTS: &str = "";
 
@@ -47,7 +44,6 @@ fn is_shared(login: &Login) -> bool {
         && address.domain().eq_ignore_ascii_case(DOMAIN)
 }
 
-/// The domains a login may mail besides the correspondents; `None` when it may mail anyone.
 fn restriction(login: &Login) -> Option<[&'static str; 2]> {
     is_shared(login).then_some([DOMAIN, AGENT_DOMAIN])
 }
