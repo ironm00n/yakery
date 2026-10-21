@@ -177,7 +177,7 @@ in
         --provider openidConnect
         --key ${clientId}
         --secret "$CSEC"
-        --auto-discover-url "https://auth.ironmoon.dev/.well-known/openid-configuration"
+        --auto-discover-url "https://${my-lib.ironmoon.auth.host}/.well-known/openid-configuration"
         --scopes "openid profile email"
         --group-claim-name groups
         --required-claim-name groups
