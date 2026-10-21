@@ -1,0 +1,457 @@
+diff --git a/stores/__tests__/auth-store-restore-identity-race.test.ts b/stores/__tests__/auth-store-restore-identity-race.test.ts
+new file mode 100644
+index 00000000..9547a49c
+--- /dev/null
++++ b/stores/__tests__/auth-store-restore-identity-race.test.ts
+@@ -0,0 +1,150 @@
++import { beforeAll, expect, it, vi } from 'vitest';
++import { createConfig } from '@/lib/__tests__/fixtures/config';
++
++// The identity stores hold the active login's identities: the composer offers
++// them as that login's own and sends from them. Identities that arrived for
++// one login while another was active - or were written before the previous
++// login's snapshot was taken - put one login's addresses into another, or
++// left a login with none.
++const IDS: Record<string, Array<{ id: string; email: string; name: string; mayDelete: boolean }>> = {
++  'a@x.test': [{ id: 'a', email: 'a@x.test', name: 'Alice', mayDelete: false }],
++  'b@y.test': [{ id: 'a', email: 'b@y.test', name: 'Bob', mayDelete: false }],
++  'c@z.test': [{ id: 'a', email: 'c@z.test', name: 'Carol', mayDelete: false }],
++  'o@w.test': [{ id: 'a', email: 'o@w.test', name: 'Olga', mayDelete: false }],
++};
++// A login named here has its Identity/get held until released, after letting
++// the given number of calls through.
++const held = vi.hoisted(() => ({ after: new Map<string, number>(), release: new Map<string, () => void>() }));
++
++vi.mock('@/lib/jmap/client', () => {
++  class JMAPClient {
++    sessionName = '';
++    constructor(public serverUrl: string, public username: string, public password: string) {}
++    // An OAuth client is built without a username; the session names it.
++    static withBearer(serverUrl: string) {
++      const client = new JMAPClient(serverUrl, '', '');
++      client.sessionName = 'o@w.test';
++      return client;
++    }
++    async connect() {}
++    getSessionUsername() { return this.getUsername(); }
++    getUsername() { return this.username || this.sessionName; }
++    async getIdentities() {
++      const name = this.getUsername();
++      const after = held.after.get(name);
++      if (after !== undefined) {
++        if (after > 0) held.after.set(name, after - 1);
++        else {
++          held.after.delete(name);
++          await new Promise<void>((r) => { held.release.set(name, r); });
++        }
++      }
++      return IDS[name];
++    }
++    getAuthHeader() { return 'Basic eA=='; }
++    onConnectionChange() {}
++    onRateLimit() {}
++    getRateLimitRemainingMs() { return 0; }
++    supportsContacts() { return false; }
++    supportsPrincipals() { return false; }
++    supportsVacationResponse() { return false; }
++    supportsCalendars() { return false; }
++    supportsSieve() { return false; }
++    disconnect() {}
++    getAccountId() { return 'acct'; }
++  }
++  class RateLimitError extends Error {}
++  return { JMAPClient, RateLimitError };
++});
++vi.mock('@/lib/stalwart/principal', () => ({ fetchPrincipalDisplayName: async () => null }));
++
++import { useAuthStore } from '@/stores/auth-store';
++import { useAccountStore } from '@/stores/account-store';
++import { useIdentityStore } from '@/stores/identity-store';
++import { evictAccount } from '@/lib/account-state-manager';
++
++const acct = (username: string, host: string, slot: number) => ({
++  id: `${username}@${host}`, label: username, serverUrl: `https://${host}`, username, authMode: 'basic' as const,
++  rememberMe: true, cookieSlot: slot, displayName: username, email: username, isConnected: false, hasError: false,
++  lastLoginAt: 1, avatarColor: '#000', isDefault: slot === 0,
++});
++const A = acct('a@x.test', 'mail.x.test', 0);
++const B = acct('b@y.test', 'mail.y.test', 1);
++const C = acct('c@z.test', 'mail.z.test', 2);
++
++beforeAll(() => {
++  vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
++    const url = String(input);
++    const m = url.match(/\/api\/auth\/session\?slot=(\d)/);
++    if (m) {
++      const a = [A, B, C][Number(m[1])];
++      return new Response(JSON.stringify({ serverUrl: a.serverUrl, username: a.username, password: 'pw' }), { status: 200 });
++    }
++    if (url.includes('/api/auth/token')) return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), { status: 200 });
++    if (url.includes('/api/config')) return new Response(JSON.stringify(createConfig()), { status: 200 });
++    return new Response('{}', { status: 200 });
++  }));
++});
++
++const shown = () => ({
++  auth: useAuthStore.getState().identities.map((i) => i.email),
++  identityStore: useIdentityStore.getState().identities.map((i) => i.email),
++});
++const showing = (email: string) => ({ auth: [email], identityStore: [email] });
++const release = async (username: string) => {
++  await vi.waitFor(() => expect(held.release.has(username)).toBe(true));
++  held.release.get(username)!();
++  held.release.delete(username);
++  await new Promise((r) => setTimeout(r, 0));
++};
++const sw = (id: string) => useAuthStore.getState().switchAccount(id);
++
++it("identities restored for A that arrive after a switch to B stay A's", async () => {
++  useAccountStore.setState({ accounts: [A, B] as never, activeAccountId: A.id, defaultAccountId: A.id });
++  held.after.set(A.username, 0);
++  await useAuthStore.getState().checkAuth();
++  expect(useAuthStore.getState().activeAccountId).toBe(A.id);
++  await vi.waitFor(() => expect(useAuthStore.getState().restoringAccounts).toBe(false));
++
++  await sw(B.id);
++  expect(shown()).toEqual(showing('b@y.test'));
++
++  await release(A.username);
++  expect(useAuthStore.getState().activeAccountId).toBe(B.id);
++  expect(shown()).toEqual(showing('b@y.test'));
++
++  await sw(A.id);
++  expect(shown()).toEqual(showing('a@x.test'));
++});
++
++it('a switch overtaken by another keeps its late identities out of the stores', async () => {
++  useAccountStore.setState({ accounts: [A, B, C] as never });
++  await sw(C.id);
++  await sw(A.id);
++  evictAccount(B.id);
++
++  // The first is the switch's session check, the second its identities.
++  held.after.set(B.username, 1);
++  const toB = sw(B.id);
++  await vi.waitFor(() => expect(held.release.has(B.username)).toBe(true));
++  await sw(C.id);
++  expect(shown()).toEqual(showing('c@z.test'));
++
++  await release(B.username);
++  await toB;
++  expect(useAuthStore.getState().activeAccountId).toBe(C.id);
++  expect(shown()).toEqual(showing('c@z.test'));
++});
++
++it("an OAuth sign-in leaves the previous login's identities with it", async () => {
++  await sw(B.id);
++  expect(shown()).toEqual(showing('b@y.test'));
++
++  const signedIn = await useAuthStore.getState().loginWithOAuth('https://mail.w.test', 'code', 'verifier', 'https://app/callback');
++  expect(signedIn).toBe(true);
++  expect(useAuthStore.getState().username).toBe('o@w.test');
++  expect(shown()).toEqual(showing('o@w.test'));
++
++  await sw(B.id);
++  expect(shown()).toEqual(showing('b@y.test'));
++});
+diff --git a/stores/auth-store.ts b/stores/auth-store.ts
+index b111eaaa..f4f04a0e 100644
+--- a/stores/auth-store.ts
++++ b/stores/auth-store.ts
+@@ -745,7 +745,7 @@ function sortIdentities(rawIdentities: Identity[], username: string): Identity[]
+   });
+ }
+ 
+-function loadIdentities(rawIdentities: Identity[], username: string): { identities: Identity[]; primaryIdentity: Identity | null } {
++function orderIdentities(rawIdentities: Identity[], username: string): { identities: Identity[]; primaryIdentity: Identity | null } {
+   // The synced per-account default sender identity (#507) is keyed by
+   // AccountEntry.id and re-applied by applyPreferredIdentity() once
+   // loadFromServer resolves (the accountId isn't known here). At load time we
+@@ -764,9 +764,22 @@ function loadIdentities(rawIdentities: Identity[], username: string): { identiti
+     }
+   }
+ 
+-  const primaryIdentity = identities[0] ?? null;
+-  useIdentityStore.getState().setIdentities(identities);
+-  return { identities, primaryIdentity };
++  return { identities, primaryIdentity: identities[0] ?? null };
++}
++
++/**
++ * Put a login's identities in the stores, unless another login is active by
++ * then: the stores hold the active login's identities, and the composer offers
++ * and sends from them as that login's own.
++ */
++function showIdentities(accountId: string, loaded: { identities: Identity[]; primaryIdentity: Identity | null }): void {
++  if (useAuthStore.getState().activeAccountId !== accountId) return;
++  useIdentityStore.getState().setIdentities(loaded.identities);
++  useAuthStore.setState(loaded);
++}
++
++async function loadActiveIdentities(client: IJMAPClient, account: Pick<AccountEntry, 'id' | 'username'>): Promise<void> {
++  showIdentities(account.id, orderIdentities(await client.getIdentities(), account.username));
+ }
+ 
+ /**
+@@ -1467,7 +1480,7 @@ export const useAuthStore = create<AuthState>()(
+             syncStalwartAuthContext(serverUrl, username, client.getAuthHeader(), cookieSlot),
+           ]);
+ 
+-          const { identities, primaryIdentity } = loadIdentities(rawIdentities, username);
++          const { identities, primaryIdentity } = orderIdentities(rawIdentities, username);
+           initializeFeatureStores(client);
+ 
+           // Store client in multi-account map
+@@ -1516,8 +1529,6 @@ export const useAuthStore = create<AuthState>()(
+             username,
+             client,
+             ...getClientRateLimitState(client),
+-            identities,
+-            primaryIdentity,
+             authMode: effectiveAuthMode,
+             rememberMe: !!rememberMe,
+             accessToken: oauthAccessToken,
+@@ -1526,6 +1537,7 @@ export const useAuthStore = create<AuthState>()(
+             error: null,
+             activeAccountId: accountId,
+           });
++          showIdentities(accountId, { identities, primaryIdentity });
+ 
+           // Kick off mailbox/quota/email fetches now so they overlap with the
+           // soft-nav + home-page hydration that follows login. Dynamic import
+@@ -1609,7 +1621,7 @@ export const useAuthStore = create<AuthState>()(
+             syncStalwartAuthContext(serverUrl, username, client.getAuthHeader(), cookieSlot),
+           ]);
+ 
+-          const { identities, primaryIdentity } = loadIdentities(rawIdentities, username);
++          const { identities, primaryIdentity } = orderIdentities(rawIdentities, username);
+           initializeFeatureStores(client);
+ 
+           clients.set(accountId, client);
+@@ -1647,8 +1659,6 @@ export const useAuthStore = create<AuthState>()(
+             username,
+             client,
+             ...getClientRateLimitState(client),
+-            identities,
+-            primaryIdentity,
+             authMode: 'token',
+             rememberMe: !!rememberMe,
+             accessToken: null,
+@@ -1657,6 +1667,7 @@ export const useAuthStore = create<AuthState>()(
+             error: null,
+             activeAccountId: accountId,
+           });
++          showIdentities(accountId, { identities, primaryIdentity });
+ 
+           import('@/stores/email-store').then(({ useEmailStore }) => {
+             useEmailStore.getState().prefetchInitialData(client).catch((err) => {
+@@ -1697,7 +1708,7 @@ export const useAuthStore = create<AuthState>()(
+           await Promise.all([client.connect(), personal.connect()]);
+ 
+           const username = client.getUsername();
+-          const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), username);
++          const { identities, primaryIdentity } = orderIdentities(await client.getIdentities(), username);
+           initializeFeatureStores(client);
+ 
+           // Register the account entries so the account switcher shows
+@@ -1736,8 +1747,6 @@ export const useAuthStore = create<AuthState>()(
+             username,
+             client,
+             ...getClientRateLimitState(client),
+-            identities,
+-            primaryIdentity,
+             authMode: 'basic',
+             rememberMe: false,
+             accessToken: null,
+@@ -1747,6 +1756,7 @@ export const useAuthStore = create<AuthState>()(
+             activeAccountId: demoAccountId,
+             isDemoMode: true,
+           });
++          showIdentities(demoAccountId, { identities, primaryIdentity });
+           notifySignedIn(get());
+           return true;
+         } catch (error) {
+@@ -1801,7 +1811,7 @@ export const useAuthStore = create<AuthState>()(
+           await client.connect();
+ 
+           const jmapUsername = client.getUsername();
+-          const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), jmapUsername);
++          const { identities, primaryIdentity } = orderIdentities(await client.getIdentities(), jmapUsername);
+           // For OAuth/OIDC, the JMAP session account name may be the
+           // preferred_username claim rather than the real email address.
+           // Prefer the email from the primary identity when available.
+@@ -1857,8 +1867,6 @@ export const useAuthStore = create<AuthState>()(
+             username,
+             client,
+             ...getClientRateLimitState(client),
+-            identities,
+-            primaryIdentity,
+             authMode: 'oauth',
+             accessToken: access_token,
+             tokenExpiresAt: Date.now() + expires_in * 1000,
+@@ -1866,6 +1874,7 @@ export const useAuthStore = create<AuthState>()(
+             error: null,
+             activeAccountId: accountId,
+           });
++          showIdentities(accountId, { identities, primaryIdentity });
+ 
+           import('@/stores/email-store').then(({ useEmailStore }) => {
+             useEmailStore.getState().prefetchInitialData(client).catch((err) => {
+@@ -1954,7 +1963,7 @@ export const useAuthStore = create<AuthState>()(
+           await client.connect();
+ 
+           const jmapUsername = client.getUsername();
+-          const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), jmapUsername);
++          const { identities, primaryIdentity } = orderIdentities(await client.getIdentities(), jmapUsername);
+           // For SSO/OIDC, the JMAP session account name may be the
+           // preferred_username claim rather than the real email address.
+           // Prefer the email from the primary identity when available.
+@@ -2001,8 +2010,6 @@ export const useAuthStore = create<AuthState>()(
+             username,
+             client,
+             ...getClientRateLimitState(client),
+-            identities,
+-            primaryIdentity,
+             authMode: 'oauth',
+             accessToken: access_token,
+             tokenExpiresAt: Date.now() + expires_in * 1000,
+@@ -2010,6 +2017,7 @@ export const useAuthStore = create<AuthState>()(
+             error: null,
+             activeAccountId: accountId,
+           });
++          showIdentities(accountId, { identities, primaryIdentity });
+ 
+           import('@/stores/email-store').then(({ useEmailStore }) => {
+             useEmailStore.getState().prefetchInitialData(client).catch((err) => {
+@@ -2227,10 +2235,8 @@ export const useAuthStore = create<AuthState>()(
+ 
+             if (!restored) {
+               initializeFeatureStores(nextClient);
+-              nextClient.getIdentities().then((rawIds) => {
+-                const { identities, primaryIdentity } = loadIdentities(rawIds, nextAccount.username);
+-                set({ identities, primaryIdentity });
+-              }).catch((err) => debug.error('Failed to load identities after switch:', err));
++              loadActiveIdentities(nextClient, nextAccount)
++                .catch((err) => debug.error('Failed to load identities after switch:', err));
+             }
+ 
+             // Sync was switched off for the signed-out account above; the
+@@ -2559,15 +2565,13 @@ export const useAuthStore = create<AuthState>()(
+           primaryIdentity: restoredPrimary,
+         });
+ 
+-        if (!restored) {
+-          // Fetch fresh data
++        // A snapshot taken before the account's identities arrived restores
++        // none, so they are fetched then too.
++        if (!restored || restoredIdentities.length === 0) {
+           try {
+-            const { identities, primaryIdentity } = loadIdentities(await targetClient.getIdentities(), targetAccount.username);
+-            // Switched on again while these loaded: they belong to this
+-            // account, not the one now active.
++            await loadActiveIdentities(targetClient, targetAccount);
+             if (superseded()) return;
+-            set({ identities, primaryIdentity });
+-            initializeFeatureStores(targetClient);
++            if (!restored) initializeFeatureStores(targetClient);
+           } catch (err) {
+             debug.error(`Failed to load data for ${accountId}:`, err);
+           }
+@@ -2785,11 +2789,7 @@ export const useAuthStore = create<AuthState>()(
+             // Identities only feed the composer's From picker and the settings
+             // pages - not the mail list. Load them in the background instead of
+             // spending a serial round trip before the UI unblocks.
+-            const identitiesLoaded = targetClient.getIdentities()
+-              .then((raw) => {
+-                const { identities, primaryIdentity } = loadIdentities(raw, targetAccount.username);
+-                set({ identities, primaryIdentity });
+-              })
++            const identitiesLoaded = loadActiveIdentities(targetClient, targetAccount)
+               .catch((err) => debug.error('Failed to load identities during restore:', err));
+ 
+             set({
+@@ -2823,7 +2823,7 @@ export const useAuthStore = create<AuthState>()(
+             const acc = accountStore.getAccountById(id);
+             if (acc) {
+               accountStore.setActiveAccount(id);
+-              const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), acc.username);
++              const { identities, primaryIdentity } = orderIdentities(await client.getIdentities(), acc.username);
+               initializeFeatureStores(client);
+ 
+               set({
+@@ -2833,14 +2833,13 @@ export const useAuthStore = create<AuthState>()(
+                 username: acc.username,
+                 client,
+                 ...getClientRateLimitState(client),
+-                identities,
+-                primaryIdentity,
+                 authMode: acc.authMode,
+                 rememberMe: acc.rememberMe,
+                 connectionLost: false,
+                 error: null,
+                 activeAccountId: id,
+               });
++              showIdentities(id, { identities, primaryIdentity });
+               return;
+             }
+           }
+@@ -2916,7 +2915,7 @@ export const useAuthStore = create<AuthState>()(
+                 });
+                 accountStore.setActiveAccount(accountId);
+ 
+-                const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), state.username || '');
++                const { identities, primaryIdentity } = orderIdentities(await client.getIdentities(), state.username || '');
+                 initializeFeatureStores(client);
+                 void syncAccountDisplayName(accountId, client, primaryIdentity?.name);
+ 
+@@ -2925,11 +2924,10 @@ export const useAuthStore = create<AuthState>()(
+                   isLoading: false,
+                   client,
+                   ...getClientRateLimitState(client),
+-                  identities,
+-                  primaryIdentity,
+                   accessToken: token,
+                   activeAccountId: accountId,
+                 });
++                showIdentities(accountId, { identities, primaryIdentity });
+ 
+                 fetchConfig().then(config => {
+                   if (!config.settingsSyncEnabled) return;
+@@ -2987,7 +2985,7 @@ export const useAuthStore = create<AuthState>()(
+                 const cookieSlot = accountStore.getAccountById(accountId)?.cookieSlot ?? 0;
+                 await syncStalwartAuthContext(serverUrl, username, client.getAuthHeader(), cookieSlot);
+ 
+-                const { identities, primaryIdentity } = loadIdentities(await client.getIdentities(), username);
++                const { identities, primaryIdentity } = orderIdentities(await client.getIdentities(), username);
+                 initializeFeatureStores(client);
+                 void syncAccountDisplayName(accountId, client, primaryIdentity?.name);
+ 
+@@ -2998,11 +2996,10 @@ export const useAuthStore = create<AuthState>()(
+                   username,
+                   client,
+                   ...getClientRateLimitState(client),
+-                  identities,
+-                  primaryIdentity,
+                   authMode: 'basic',
+                   activeAccountId: accountId,
+                 });
++                showIdentities(accountId, { identities, primaryIdentity });
+ 
+                 fetchConfig().then(config => {
+                   if (!config.settingsSyncEnabled) return;
+@@ -3100,12 +3097,10 @@ export const useAuthStore = create<AuthState>()(
+       },
+ 
+       refreshIdentities: async () => {
+-        const { client, username } = get();
+-        if (!client || !username) return;
++        const { client, username, activeAccountId } = get();
++        if (!client || !username || !activeAccountId) return;
+         try {
+-          const rawIdentities = await client.getIdentities();
+-          const { identities, primaryIdentity } = loadIdentities(rawIdentities, username);
+-          set({ identities, primaryIdentity });
++          await loadActiveIdentities(client, { id: activeAccountId, username });
+         } catch {
+           // Silently fail - background sync should not surface errors to the user
+         }

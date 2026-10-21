@@ -36,6 +36,7 @@ buildNpmPackage (finalAttrs: {
     ./05-expanded-threads-stay-whole.patch
     ./06-threads-read-inline.patch
     ./07-read-receipts-from-the-mail-login.patch
+    ./08-identities-stay-with-their-login.patch
   ];
 
   configurePhase = ''
