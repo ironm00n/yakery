@@ -1,5 +1,5 @@
 diff --git a/stores/__tests__/email-store-delta-sync.test.ts b/stores/__tests__/email-store-delta-sync.test.ts
-index ac1fa1a..b1890f8 100644
+index ac1fa1aa..b1890f8b 100644
 --- a/stores/__tests__/email-store-delta-sync.test.ts
 +++ b/stores/__tests__/email-store-delta-sync.test.ts
 @@ -100,6 +100,7 @@ describe('Email/changes delta sync', () => {
@@ -66,10 +66,10 @@ index ac1fa1a..b1890f8 100644
  
  describe('Mailbox/changes delta sync', () => {
 diff --git a/stores/email-store.ts b/stores/email-store.ts
-index aecbea4..f2f7d2d 100644
+index cd4a71c5..fc4cf1a3 100644
 --- a/stores/email-store.ts
 +++ b/stores/email-store.ts
-@@ -666,6 +666,66 @@ function refillAfterKeywordChange(get: StoreGet, client: IJMAPClient, changed: I
+@@ -735,6 +735,66 @@ function refillAfterKeywordChange(get: StoreGet, client: IJMAPClient, changed: I
    void s.refreshCurrentMailbox(client);
  }
  
@@ -136,7 +136,7 @@ index aecbea4..f2f7d2d 100644
  async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null, get: StoreGet, set: StoreSet): Promise<boolean> {
    const s = get();
    const sync = s.emailListSync;
-@@ -707,10 +767,12 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
+@@ -776,10 +836,12 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
    // notification fires as before.
    const candidates = [...delta.created, ...delta.updated.filter((id) => !listIds.has(id))];
    if (candidates.length > EMAIL_DELTA_MAX_CANDIDATES) return false;
@@ -153,7 +153,7 @@ index aecbea4..f2f7d2d 100644
  
    const removed = new Set(destroyedInList);
    const updatedEmails = updatedInList.length > 0 ? await effectiveClient.getSomeEmails(updatedInList, accountArg) : [];
-@@ -745,6 +807,7 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
+@@ -814,6 +876,7 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
      set((state) => ({
        emailListSync: state.emailListSync?.mailboxId === sync.mailboxId ? { ...sync, state: delta.newState } : state.emailListSync,
      }));
@@ -161,7 +161,7 @@ index aecbea4..f2f7d2d 100644
      return true;
    }
  
-@@ -761,7 +824,20 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
+@@ -830,7 +893,20 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
  
    set((state) => {
      const threadEmailsCache = new Map(state.threadEmailsCache);
@@ -183,7 +183,7 @@ index aecbea4..f2f7d2d 100644
      const totalEmails = Math.max(state.totalEmails - (current.length - next.length), next.length);
      return {
        emails: next,
-@@ -771,6 +847,7 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
+@@ -840,6 +916,7 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
        emailListSync: state.emailListSync?.mailboxId === sync.mailboxId ? { ...sync, state: delta.newState } : state.emailListSync,
      };
    });
@@ -191,7 +191,7 @@ index aecbea4..f2f7d2d 100644
    return true;
  }
  
-@@ -5380,7 +5457,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+@@ -5856,7 +5933,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
          set((state) => {
            const newCache = new Map(state.threadEmailsCache);
            for (const tid of changedThreadIds) {
@@ -201,7 +201,7 @@ index aecbea4..f2f7d2d 100644
            }
            return {
              emails: merged,
-@@ -5394,22 +5472,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+@@ -5870,22 +5948,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
  
          // Re-fetch cross-folder thread data for any currently expanded threads
          // so they show the complete conversation (not just current-folder emails).
@@ -225,7 +225,7 @@ index aecbea4..f2f7d2d 100644
  
          // Fetch full thread counts in the background (non-blocking)
          void get().fetchThreadEmailCounts(client);
-@@ -5449,8 +5512,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+@@ -5926,8 +5989,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
    },
  
    fetchThreadEmails: async (client, threadKey) => {
@@ -235,7 +235,7 @@ index aecbea4..f2f7d2d 100644
  
      // Check if we already have this thread cached
      const cachedEmails = threadEmailsCache.get(threadKey);
-@@ -5462,37 +5524,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+@@ -5939,37 +6001,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
      set({ isLoadingThread: threadKey });
  
      try {

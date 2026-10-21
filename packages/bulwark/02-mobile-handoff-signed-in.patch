@@ -1,16 +1,29 @@
+diff --git a/app/(main)/[locale]/login/page.tsx b/app/(main)/[locale]/login/page.tsx
+index 81c50b02..4d7acc42 100644
 --- a/app/(main)/[locale]/login/page.tsx
 +++ b/app/(main)/[locale]/login/page.tsx
-@@ -374,6 +374,9 @@
-         window.location.replace(`${mobileRedirectUri}#${fragment.toString()}`);
+@@ -154,6 +154,7 @@ function LoginPageContent() {
+   const mobileState = mobileRedirectUri ? rawMobileState : "";
+   const isMobileHandoff = Boolean(mobileRedirectUri);
+   const [pendingHandoff, setPendingHandoff] = useState<{ url: string; username: string } | null>(null);
++  const [webSessionAlreadyOpen, setWebSessionAlreadyOpen] = useState(false);
+   usePrefetchMailView(!isMobileHandoff);
+   const { login, loginWithToken, loginDemo, isLoading, error, clearError, isAuthenticated } = useAuthStore();
+   const { theme, setTheme, initializeTheme } = useThemeStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, initializeTheme: s.initializeTheme })));
+@@ -380,6 +381,12 @@ function LoginPageContent() {
+         });
          return;
        }
 +      // A web session already open in this browser is not the app's sign-in:
 +      // the effect after startServerSideSso runs the mobile SSO flow instead.
-+      if (isMobileHandoff && serverOauthEnabled) return;
++      if (isMobileHandoff && serverOauthEnabled) {
++        setWebSessionAlreadyOpen(true);
++        return;
++      }
        let redirectTo = '/';
        try {
          const saved = sessionStorage.getItem('redirect_after_login');
-@@ -384,7 +387,7 @@
+@@ -390,7 +397,7 @@ function LoginPageContent() {
        } catch { /* ignore */ }
        router.push(toRouterPath(redirectTo));
      }
@@ -19,16 +32,15 @@
  
    useEffect(() => {
      clearError();
-@@ -539,6 +542,13 @@
+@@ -545,6 +552,12 @@ function LoginPageContent() {
      startServerSideSso();
    }, [autoSsoEnabled, oauthOnly, oauthDiscoveryDone, oauthMetadata, ssoError, isAddAccountMode, isAuthenticated, jmapServers.length, startServerSideSso]);
  
 +  useEffect(() => {
-+    if (!isMobileHandoff || !serverOauthEnabled || !isAuthenticated || isAddAccountMode) return;
-+    if (ssoError || mobileHandoffPayloadRef.current || autoSsoTriggered.current) return;
++    if (!webSessionAlreadyOpen || ssoError || autoSsoTriggered.current) return;
 +    autoSsoTriggered.current = true;
 +    startServerSideSso();
-+  }, [isMobileHandoff, serverOauthEnabled, isAuthenticated, isAddAccountMode, ssoError, startServerSideSso]);
++  }, [webSessionAlreadyOpen, ssoError, startServerSideSso]);
 +
    const handleThemeSelect = useCallback((newTheme: "light" | "dark" | "system") => {
      setTheme(newTheme);

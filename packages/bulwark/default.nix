@@ -10,13 +10,13 @@
 }:
 buildNpmPackage (finalAttrs: {
   pname = "bulwark";
-  version = "1.15.0";
+  version = "1.16.0";
 
   src = fetchFromGitHub {
     owner = "bulwarkmail";
     repo = "webmail";
     tag = finalAttrs.version;
-    hash = "sha256-mXD0gRdiqWYGfuEjsC8OdVxMuQawLPsfJ36iwh73cvM=";
+    hash = "sha256-mjc4F6NefqT34t5a5efSlmdQzueu0snJ/YUKdmf324U=";
     leaveDotGit = true;
     postFetch = ''
       cd "$out"
@@ -24,7 +24,7 @@ buildNpmPackage (finalAttrs: {
       find "$out" -name .git -print0 | xargs -0 rm -rf
     '';
   };
-  npmDepsHash = "sha256-8/UMyeoSz9w9/5PQfoDzEsQ2j+NpDE4H9XmJpVTfP3Q=";
+  npmDepsHash = "sha256-xidJueIZlOZx8McsM3CYK0EcPbXXUlDZYdfMiCVjYj0=";
 
   strictDeps = true;
 
