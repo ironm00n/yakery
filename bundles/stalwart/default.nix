@@ -18,9 +18,9 @@ let
     fileSecret
     ;
   cfg = config.bundles.stalwart;
-  domain = "ironmoon.dev";
-  agentDomain = "agent.${domain}";
-  hostname = "mail.${domain}";
+  inherit (my-lib.ironmoon) domain;
+  agentDomain = my-lib.ironmoon.mail.agents.domain;
+  hostname = my-lib.ironmoon.mail.host;
   httpPort = 8080;
   ips = inputs.secrets.data.ips.${config.networking.hostName};
   address = "${ips.ipv6.prefix}::2";
@@ -72,7 +72,7 @@ let
   };
 
   # the host sessions' account; every account on agentDomain is an agent too
-  agentLocalPart = "agent";
+  agentLocalPart = my-lib.ironmoon.mail.agents.sharedLocalPart;
 
   # the queue keeps the local part's case
   isAgentSender = "sender_domain == '${agentDomain}' || (sender_domain == '${domain}' && (starts_with(to_lowercase(sender), '${agentLocalPart}@') || starts_with(to_lowercase(sender), '${agentLocalPart}+')))";
@@ -296,7 +296,7 @@ in
       default = [ ];
       example = [ "someone@example.com" ];
       description = ''
-        Addresses outside ${domain} that agent@${domain} and the agents on ${agentDomain} may
+        Addresses outside ${domain} that ${agentLocalPart}@${domain} and the agents on ${agentDomain} may
         exchange mail with, besides ${domain} and its subdomains. Agents' mail to anyone else is
         refused at RCPT, or bounced when it reaches the queue another way, such as a Sieve redirect.
         Mail to the agents over port 25 is refused unless it passes DMARC as one of these senders.
@@ -445,7 +445,7 @@ in
           (upsertOn1 "Directory" "zitadel-oidc" [ "description" ] {
             "@type" = "Oidc";
             description = "ironmoon Zitadel";
-            issuerUrl = "https://auth.${domain}";
+            issuerUrl = "https://${my-lib.ironmoon.auth.host}";
             requireAudience = webuiClientId;
             claimUsername = "preferred_username";
             claimGroups = "mail_groups";

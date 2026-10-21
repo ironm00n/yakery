@@ -1,7 +1,8 @@
 { pkgs }:
 let
   inherit (pkgs) lib;
-  host = "auth.ironmoon.dev";
+  my-lib = import ../../lib { inherit lib; };
+  host = my-lib.ironmoon.auth.host;
   addr = "192.168.1.1";
   secretsDir = "/etc/zitadel-test";
   scope = "openid profile urn:zitadel:iam:org:project:id:zitadel:aud";
@@ -36,7 +37,7 @@ pkgs.testers.runNixOSTest {
       ];
       disabledModules = [ "services/web-apps/zitadel.nix" ];
       _module.args = {
-        my-lib = import ../../lib { inherit lib; };
+        inherit my-lib;
         inputs.secrets = {
           lib.zitadel = null;
           data.ips.machine = {

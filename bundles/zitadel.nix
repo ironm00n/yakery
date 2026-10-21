@@ -8,7 +8,7 @@
 }:
 let
   cfg = config.bundles.zitadel;
-  domain = "ironmoon.dev";
+  hostname = my-lib.ironmoon.auth.host;
   port = 39995;
   ips = inputs.secrets.data.ips.${config.networking.hostName};
   zitadelAddr = "${ips.ipv6.prefix}::1:1";
@@ -34,7 +34,7 @@ let
   postgres = config.services.postgresql.package;
 in
 {
-  options.bundles.zitadel.enable = lib.mkEnableOption "ZITADEL at auth.${domain}";
+  options.bundles.zitadel.enable = lib.mkEnableOption "ZITADEL at ${hostname}";
 
   config = lib.mkIf cfg.enable {
     assertions = [
@@ -76,7 +76,7 @@ in
       settings = {
         Port = port;
         ExternalPort = 443;
-        ExternalDomain = "auth.${domain}";
+        ExternalDomain = hostname;
         Database.postgres =
           let
             connection = {
@@ -129,7 +129,7 @@ in
       enable = true;
       openFirewall = true;
       acme-email = "me@ironmoon.dev";
-      hosts."auth.${domain}" = {
+      hosts.${hostname} = {
         inherit port;
         websockets = true;
         listenAddresses = [

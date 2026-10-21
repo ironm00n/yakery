@@ -8,7 +8,7 @@
 }:
 let
   cfg = config.bundles.bulwark;
-  domain = "ironmoon.dev";
+  inherit (my-lib.ironmoon) domain auth mail;
   hostname = "webmail.${domain}";
   port = 3000;
   ips = inputs.secrets.data.ips.${config.networking.hostName};
@@ -42,13 +42,13 @@ in
       enable = true;
       package = pkgs.callPackage ../packages/bulwark { };
       inherit port;
-      jmap_server_url = "https://mail.${domain}";
+      jmap_server_url = "https://${mail.host}";
       oauth = {
         enabled = true;
         only = true;
         client_id = "373816843720261633";
         client_secret_file = get-bulwark-secret "oauth_client_secret";
-        issuer_url = "https://auth.${domain}";
+        issuer_url = "https://${auth.host}";
       };
       session_secret_file = get-bulwark-secret "session_secret";
       settings_sync.enabled = true;
