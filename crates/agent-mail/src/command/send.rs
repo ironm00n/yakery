@@ -22,7 +22,7 @@ use crate::{
     policy::{Recipients, bare_sender},
     random::{ALPHANUMERIC, Draws},
     show::{addresses, emails, id, out, plain, preview, received, utc, warn},
-    signature::{ClaudeSession, Signature, host, subject_prefix},
+    signature::{ClaudeSession, Signature, host},
 };
 
 #[derive(clap::Args)]
@@ -220,7 +220,7 @@ struct Heading {
 }
 
 impl Heading {
-    fn decide(login: &Login, args: &Args, reply: Option<&Reply>, prefix: &str) -> Result<Heading> {
+    fn decide(login: &Login, args: &Args, reply: Option<&Reply>) -> Result<Heading> {
         let recipients = match (reply, args.all) {
             (Some(reply), true) => {
                 let (to, cc) = reply_all(login, &args.to, &args.cc, &reply.from, &reply.rest)?;
@@ -229,7 +229,7 @@ impl Heading {
             _ => Recipients::check(login, args.to.clone(), args.cc.clone())?,
         };
         let subject = match (&args.subject, reply) {
-            (Some(subject), _) => plain(&format!("{prefix} {subject}")),
+            (Some(subject), _) => plain(subject),
             (None, Some(reply)) => reply.subject.clone(),
             (None, None) => bail!("send needs --subject or --reply"),
         };
@@ -318,8 +318,7 @@ pub async fn run(args: Args) -> Result<()> {
         Some(parent) => Some(Reply::to(&mail, parent, args.past).await?),
         None => None,
     };
-    let prefix = subject_prefix(&host, me.as_ref());
-    let heading = Heading::decide(&mail.auth.login, &args, reply.as_ref(), &prefix)?;
+    let heading = Heading::decide(&mail.auth.login, &args, reply.as_ref())?;
     let draft = match &content {
         Content::Markdown { body, attachments } => {
             draft_markdown(&mail, &outbox, &heading, body, attachments).await?
@@ -555,7 +554,7 @@ mod tests {
 
     fn from(login: &str, args: &Args, reply: Option<&Reply>) -> Result<String> {
         let login: Login = login.parse().unwrap();
-        Heading::decide(&login, args, reply, "[desktop · mail]").map(|h| h.from.to_string())
+        Heading::decide(&login, args, reply).map(|h| h.from.to_string())
     }
 
     #[test]

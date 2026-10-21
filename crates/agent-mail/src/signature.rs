@@ -1,4 +1,4 @@
-//! Which Claude Code session is sending, for the subject prefix and the signature.
+//! Which Claude Code session is sending, for the signature.
 
 use std::{env, fs, path::PathBuf};
 
@@ -30,11 +30,6 @@ impl ClaudeSession {
 pub fn host() -> String {
     fs::read_to_string("/proc/sys/kernel/hostname")
         .map_or_else(|_| "unknown-host".into(), |h| h.trim().into())
-}
-
-pub fn subject_prefix(host: &str, session: Option<&ClaudeSession>) -> String {
-    let name = session.and_then(|s| s.name.as_deref()).unwrap_or("shell");
-    format!("[{host} · {name}]")
 }
 
 enum Line {
@@ -114,7 +109,6 @@ mod tests {
             sig.text(),
             "-- \nSent from a shell on desktop, not from a Claude Code session."
         );
-        assert_eq!(subject_prefix("desktop", None), "[desktop · shell]");
     }
 
     #[test]
@@ -130,10 +124,6 @@ mod tests {
         assert!(html.contains("<code>claude --resume abc</code>"));
         assert!(
             html.contains("<a href=\"https://claude.ai/code/br1\">https://claude.ai/code/br1</a>")
-        );
-        assert_eq!(
-            subject_prefix("desktop", Some(&s)),
-            "[desktop · mail <port>]"
         );
     }
 }
