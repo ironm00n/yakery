@@ -1,0 +1,241 @@
+diff --git a/components/email/__tests__/viewer-read-receipt-login.test.tsx b/components/email/__tests__/viewer-read-receipt-login.test.tsx
+new file mode 100644
+index 00000000..134a582e
+--- /dev/null
++++ b/components/email/__tests__/viewer-read-receipt-login.test.tsx
+@@ -0,0 +1,136 @@
++import { render, act, waitFor } from '@testing-library/react';
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++import type { Email, Identity, Mailbox } from '@/lib/jmap/types';
++import { useAuthStore } from '@/stores/auth-store';
++import { useAccountStore } from '@/stores/account-store';
++import { useEmailStore } from '@/stores/email-store';
++import { useSettingsStore } from '@/stores/settings-store';
++import { useToastStore } from '@/stores/toast-store';
++
++// With two logins, a read receipt for a message held by the non-active one
++// was submitted through the active login, naming an identity of the other:
++// Stalwart refused it ("Envelope mailFrom does not match identity email
++// address"). The receipt goes out through the message's login, from one of
++// that login's identities.
++
++vi.mock('@/hooks/use-media-query', () => ({
++  useDeviceDetection: () => ({ isMobile: false, isTablet: false, isDesktop: true }),
++  useMediaQuery: () => false,
++}));
++vi.mock('@/components/tour/tour-provider', () => ({
++  useTour: () => ({ activeTour: null, startTour: vi.fn(), endTour: vi.fn(), registerStep: vi.fn() }),
++}));
++vi.mock('@/components/plugins/plugin-slot', () => ({ PluginSlot: () => null }));
++vi.mock('@/hooks/use-plugin-slot-offers', () => ({ usePluginSlotOffers: () => [] }));
++
++class NoopResizeObserver {
++  observe() {}
++  unobserve() {}
++  disconnect() {}
++}
++vi.stubGlobal('ResizeObserver', NoopResizeObserver);
++
++const { EmailViewer } = await import('../email-viewer');
++
++const mailboxes = [
++  { id: 'inbox', name: 'Inbox', role: 'inbox', parentId: null, myRights: { mayAddItems: true } },
++] as unknown as Mailbox[];
++
++const identity = (id: string, email: string) => ({ id, email, name: email }) as Identity;
++
++const loginClient = (accountId: string, identities: Identity[]) => ({
++  getAccountId: () => accountId, getSieveAccountId: () => null, hasDelayedSend: () => false, getSession: () => null,
++  getIdentities: vi.fn(async () => identities),
++  sendReadReceipt: vi.fn(async () => {}),
++  setKeyword: vi.fn(async () => {}),
++});
++
++const receiptRequest = (to: string, stamp: Partial<Email> = {}) => ({
++  id: 'e1', blobId: 'b1', threadId: 't1', mailboxIds: { inbox: true }, keywords: { $seen: true },
++  from: [{ name: 'Alice', email: 'alice@example.com' }], to: [{ name: '', email: to }],
++  subject: 'Hello', receivedAt: '2026-01-01T00:00:00Z', preview: 'Hello', hasAttachment: false, size: 100,
++  textBody: [{ partId: '1', type: 'text/plain' }], htmlBody: [{ partId: '1', type: 'text/plain' }], attachments: [],
++  bodyValues: { '1': { value: 'Hello there' } },
++  headers: { 'Disposition-Notification-To': '<alice@example.com>' },
++  ...stamp,
++}) as unknown as Email;
++
++const clientA = loginClient('jmap-a', [identity('a0', 'me@a.example')]);
++const clientB = loginClient('jmap-b', [identity('b0', 'first@b.example'), identity('b1', 'me@b.example')]);
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  useSettingsStore.setState({ readReceiptResponse: 'always' });
++  useAccountStore.setState({
++    accounts: [{ id: 'A', isConnected: true }, { id: 'B', isConnected: true }] as never,
++  });
++  useAuthStore.setState({
++    client: clientA as never,
++    activeAccountId: 'A',
++    identities: [identity('a0', 'me@a.example')],
++    getClientForAccount: ((id: string) => ({ A: clientA, B: clientB } as never)[id]) as never,
++  });
++  useEmailStore.setState({ viewingAccountId: null });
++  useToastStore.getState().clearToasts();
++});
++
++const open = (email: Email) =>
++  render(<EmailViewer email={email} mailboxes={mailboxes} selectedMailbox="inbox" currentMailboxRole="inbox" />);
++
++describe('read receipt for a message of another login', () => {
++  it('is submitted through that login, from its identity the message was sent to', async () => {
++    open(receiptRequest('me@b.example', { sourceClientAccountId: 'B', sourceAccountId: 'jmap-b' }));
++
++    await waitFor(() => expect(clientB.sendReadReceipt).toHaveBeenCalledTimes(1));
++    expect(clientB.sendReadReceipt).toHaveBeenCalledWith(expect.objectContaining({
++      identityId: 'b1', fromEmail: 'me@b.example', to: 'alice@example.com',
++    }));
++    expect(clientA.sendReadReceipt).not.toHaveBeenCalled();
++  });
++
++  it("is not sent when none of that login's identities received the message, and says why", async () => {
++    open(receiptRequest('me@a.example', { sourceClientAccountId: 'B', sourceAccountId: 'jmap-b' }));
++
++    await waitFor(() => expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({
++      type: 'error', title: 'read_receipt.send_failed', message: 'No identity of this login received the mail',
++    })]));
++    expect(clientB.sendReadReceipt).not.toHaveBeenCalled();
++    expect(clientA.sendReadReceipt).not.toHaveBeenCalled();
++  });
++
++  it("follows the login whose folders are being viewed when the message isn't stamped", async () => {
++    useEmailStore.setState({ viewingAccountId: 'B' });
++    open(receiptRequest('me@b.example'));
++
++    await waitFor(() => expect(clientB.sendReadReceipt).toHaveBeenCalledTimes(1));
++    expect(clientB.sendReadReceipt).toHaveBeenCalledWith(expect.objectContaining({ identityId: 'b1' }));
++    expect(clientA.sendReadReceipt).not.toHaveBeenCalled();
++  });
++
++  it("is held back until that login's identities are known", async () => {
++    clientB.getIdentities.mockReturnValueOnce(new Promise<Identity[]>(() => {}));
++    useAccountStore.setState({
++      accounts: [{ id: 'A', isConnected: true }, { id: 'C', isConnected: true }] as never,
++    });
++    useAuthStore.setState({
++      getClientForAccount: ((id: string) => ({ A: clientA, C: clientB } as never)[id]) as never,
++    });
++    open(receiptRequest('me@b.example', { sourceClientAccountId: 'C', sourceAccountId: 'jmap-c' }));
++
++    await act(async () => {});
++    expect(clientB.sendReadReceipt).not.toHaveBeenCalled();
++    expect(clientA.sendReadReceipt).not.toHaveBeenCalled();
++  });
++});
++
++describe('read receipt for a message of the active login', () => {
++  it('is submitted through the active login as before', async () => {
++    open(receiptRequest('me@a.example'));
++
++    await waitFor(() => expect(clientA.sendReadReceipt).toHaveBeenCalledTimes(1));
++    expect(clientA.sendReadReceipt).toHaveBeenCalledWith(expect.objectContaining({
++      identityId: 'a0', fromEmail: 'me@a.example',
++    }));
++    expect(clientB.sendReadReceipt).not.toHaveBeenCalled();
++  });
++});
+diff --git a/components/email/email-viewer.tsx b/components/email/email-viewer.tsx
+index f14fb2db..e03ceb23 100644
+--- a/components/email/email-viewer.tsx
++++ b/components/email/email-viewer.tsx
+@@ -115,7 +115,7 @@ import { EmailIdentityBadge } from "./email-identity-badge";
+ import { UnsubscribeBanner } from "./unsubscribe-banner";
+ import { CalendarInvitationBanner } from "./calendar-invitation-banner";
+ import { ReadReceiptBanner } from "./read-receipt-banner";
+-import { stripCrossAccountIdentityPrefix } from "@/hooks/use-pro-multi-account-identities";
++import { stripCrossAccountIdentityPrefix, useProMultiAccountIdentities } from "@/hooks/use-pro-multi-account-identities";
+ import { useTour } from "@/components/tour/tour-provider";
+ import { useMenuNavigation } from "@/hooks/use-menu-navigation";
+ import { findCalendarAttachment, isCalendarMimeType } from "@/lib/calendar-invitation";
+@@ -3509,15 +3509,24 @@ export function EmailViewer({
+     return addr || null;
+   }, [email?.headers]);
+ 
++  // The MDN goes out through the login holding the message, from one of its
++  // identities: a submission naming another account's identity is refused.
++  const viewingAccountId = useEmailStore((s) => s.viewingAccountId);
++  const multiAccountIdentities = useProMultiAccountIdentities();
++  const mailLoginId = email?.sourceClientAccountId ?? viewingAccountId;
++  const otherMailLoginId = mailLoginId && mailLoginId !== activeAccountId ? mailLoginId : null;
++  const receiptIdentities = otherMailLoginId
++    ? multiAccountIdentities.groups.find((g) => g.localAccountId === otherMailLoginId)?.identities
++    : identities;
++
+   // The identity whose address received the original message — the MDN is sent
+-  // "from" that address. Falls back to the primary identity.
++  // "from" that address, and with none of them it is not sent.
+   const receiptIdentity = useMemo(() => {
+-    if (!identities?.length) return null;
+     const recipients = [...(email?.to || []), ...(email?.cc || [])]
+       .map(r => r.email?.toLowerCase())
+       .filter(Boolean);
+-    return identities.find(i => recipients.includes(i.email?.toLowerCase())) || identities[0];
+-  }, [identities, email?.to, email?.cc]);
++    return receiptIdentities?.find(i => recipients.includes(i.email?.toLowerCase())) ?? null;
++  }, [receiptIdentities, email?.to, email?.cc]);
+ 
+   const mdnAlreadyHandled = email?.keywords?.['$mdnsent'] === true;
+   const [mdnHandledLocally, setMdnHandledLocally] = useState(false);
+@@ -3536,13 +3545,21 @@ export function EmailViewer({
+     readReceiptResponse !== 'never' &&
+     inReceiptEligibleFolder &&
+     !isDraft &&
+-    !!receiptIdentity;
++    !!receiptIdentities?.length;
+ 
+   const sendReadReceiptNow = useCallback(async (automatic: boolean) => {
+-    if (!client || !email || !readReceiptRequestedBy || !receiptIdentity) return;
++    const receiptClient = otherMailLoginId
++      ? useAuthStore.getState().getClientForAccount(otherMailLoginId)
++      : client;
++    if (!receiptClient || !client || !email || !readReceiptRequestedBy) return;
++    if (!receiptIdentity) {
++      const reason = 'No identity of this login received the mail';
++      toast.error(t('read_receipt.send_failed'), { message: reason });
++      throw new Error(reason);
++    }
+     const { rawId } = stripCrossAccountIdentityPrefix(receiptIdentity.id);
+     try {
+-      await client.sendReadReceipt({
++      await receiptClient.sendReadReceipt({
+         to: readReceiptRequestedBy,
+         fromEmail: receiptIdentity.email,
+         fromName: receiptIdentity.name,
+@@ -3564,7 +3581,7 @@ export function EmailViewer({
+       });
+       throw err;
+     }
+-  }, [client, email, readReceiptRequestedBy, receiptIdentity, t]);
++  }, [client, otherMailLoginId, email, readReceiptRequestedBy, receiptIdentity, t]);
+ 
+   const ignoreReadReceipt = useCallback(async () => {
+     setMdnHandledLocally(true);
+@@ -3582,7 +3599,8 @@ export function EmailViewer({
+     if (!shouldOfferReadReceipt || !email) return;
+     if (autoMdnRef.current === email.id) return;
+     autoMdnRef.current = email.id;
+-    sendReadReceiptNow(true).catch(() => { autoMdnRef.current = null; });
++    // A refusal for want of an identity is final; any other failure retries.
++    sendReadReceiptNow(true).catch(() => { if (receiptIdentity) autoMdnRef.current = null; });
+     // email is already captured via email?.id and sendReadReceiptNow (which
+     // depends on `email`); the autoMdnRef guard prevents a double send.
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+diff --git a/components/mail/__tests__/blob-routing.test.tsx b/components/mail/__tests__/blob-routing.test.tsx
+index 668edfa8..306fd7cb 100644
+--- a/components/mail/__tests__/blob-routing.test.tsx
++++ b/components/mail/__tests__/blob-routing.test.tsx
+@@ -38,7 +38,7 @@ vi.mock('@/components/plugins/plugin-slot', () => ({ PluginSlot: () => null }));
+ vi.mock('@/hooks/use-plugin-slot-offers', () => ({ usePluginSlotOffers: () => [] }));
+ vi.mock('@/hooks/use-config', () => ({ useConfig: () => ({ appName: 'Mail' }) }));
+ vi.mock('@/hooks/use-identity-sync', () => ({ useIdentitySync: () => {} }));
+-vi.mock('@/hooks/use-pro-multi-account-identities', () => ({ useProMultiAccountIdentities: () => [] }));
++vi.mock('@/hooks/use-pro-multi-account-identities', () => ({ useProMultiAccountIdentities: () => ({ enabled: false, groups: [], allIdentities: [] }) }));
+ vi.mock('@/hooks/use-pro-multi-account-mailboxes', () => ({ useProMultiAccountMailboxes: () => {} }));
+ vi.mock('@/hooks/use-wopi-status', () => ({ useWopiStatus: () => null, canWopiOpen: () => false }));
+ vi.mock('@/hooks/use-browser-navigation', () => ({ useBrowserNavigation: () => {} }));
