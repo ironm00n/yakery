@@ -119,7 +119,6 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Bare LFs as CRLF; CRLFs stay as they are.
 fn crlf(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len() + bytes.len() / 32);
     for (i, &b) in bytes.iter().enumerate() {

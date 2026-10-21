@@ -26,7 +26,6 @@ impl Secret {
         &self.0
     }
 
-    /// One character from each class, the rest from all of them, then shuffled.
     pub fn password(len: usize) -> Result<Self> {
         let everything = PASSWORD_CLASSES.concat();
         let mut draws = Draws::default();

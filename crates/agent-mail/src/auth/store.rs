@@ -68,7 +68,6 @@ pub fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// `<home>/.local/state/agent-mail/locks`, with home from the passwd entry of the real user.
 pub fn locks_dir() -> Result<PathBuf> {
     Ok(home()?.join(".local/state/agent-mail/locks"))
 }
@@ -95,7 +94,6 @@ pub struct Held {
 }
 
 impl Held {
-    /// For tests of code that takes a lock but runs without a state directory.
     #[cfg(test)]
     pub fn nothing() -> Held {
         Held { _file: None }
@@ -133,7 +131,6 @@ impl Store {
         }
     }
 
-    /// Waits up to `LOCK_TIMEOUT` for an exclusive lock on `<locks dir>/<name>`.
     async fn hold(&self, name: &str) -> Result<Held> {
         private_dir(&self.locks)?;
         let path = self.locks.join(name);

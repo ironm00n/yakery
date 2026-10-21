@@ -47,7 +47,6 @@ pub fn is_receipt(m: &Email) -> bool {
     })
 }
 
-/// What a delivered mail's receipt request comes to.
 pub enum Asked {
     Nothing,
     /// Not sent, but `$MDNSent` is still set, as RFC 3503 §3 asks of automatic processing.

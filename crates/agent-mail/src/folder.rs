@@ -120,7 +120,6 @@ impl Folder {
         Ok(folder)
     }
 
-    /// The path of `name` if it was saved already.
     pub fn existing(&self, name: &str) -> Result<Option<PathBuf>> {
         match statat(&self.dir, name, AtFlags::SYMLINK_NOFOLLOW) {
             Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile => {

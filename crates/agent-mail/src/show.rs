@@ -22,7 +22,6 @@ pub fn utc(secs: i64) -> String {
     )
 }
 
-/// Controls (CR and LF among them) and Unicode line separators become spaces.
 pub fn plain(text: &str) -> String {
     text.chars()
         .map(|c| {

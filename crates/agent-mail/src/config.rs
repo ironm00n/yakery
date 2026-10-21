@@ -74,7 +74,6 @@ fn incomplete(path: &Path) -> ConfigError {
     ))
 }
 
-/// `$<var>/agent-mail`, or `~/<fallback>/agent-mail` when the variable is unset or relative.
 pub fn xdg_dir(var: &str, fallback: &str) -> Result<PathBuf> {
     let base = match env::var_os(var).map(PathBuf::from) {
         Some(dir) if dir.is_absolute() => dir,

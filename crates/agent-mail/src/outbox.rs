@@ -51,7 +51,6 @@ enum Submitted {
     NotCreated(anyhow::Error),
 }
 
-/// What submitting an email came to.
 #[derive(Debug)]
 pub enum Outcome {
     Submitted {
@@ -114,7 +113,6 @@ impl Outbox {
         })
     }
 
-    /// Adds the submission and the read-back of its delivery status.
     fn submit(&self, r: &mut Request<'_>, email_id: &str, rcpt_to: &[Address]) {
         r.set_email_submission()
             .create_with_id("send")
@@ -171,7 +169,6 @@ impl Outbox {
         }
     }
 
-    /// The submission of `email_id`, for when the reply to submitting it was lost.
     async fn find(&self, mail: &Mail, email_id: &str) -> Result<Option<(String, Delivery)>> {
         let mut responses = mail
             .call(|r| {
@@ -212,7 +209,6 @@ impl Outbox {
     }
 }
 
-/// The refusals as one line each, for an error or a warning.
 pub fn describe(refused: &[Refusal]) -> String {
     let lines: Vec<String> = refused
         .iter()
@@ -221,7 +217,6 @@ pub fn describe(refused: &[Refusal]) -> String {
     lines.join("\n")
 }
 
-/// For callers whose submission must reach every recipient.
 pub fn require_all(id: &str, delivery: &Delivery) -> Result<()> {
     if let Delivery::Refused(refused) = delivery {
         bail!(

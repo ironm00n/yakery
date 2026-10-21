@@ -198,7 +198,6 @@ impl Reply {
     }
 }
 
-/// What a mail says: Markdown rendered here, with its attachments, or an entity rendered elsewhere.
 enum Content {
     Markdown {
         body: Body,
@@ -328,7 +327,6 @@ pub async fn run(args: Args) -> Result<()> {
     deliver(&mail, &outbox, &draft, &heading, reply.as_ref()).await
 }
 
-/// The draft of a mail rendered here, through JMAP's body parts, its attachments uploaded first.
 async fn draft_markdown(
     mail: &Mail,
     outbox: &Outbox,
@@ -396,7 +394,6 @@ async fn draft_markdown(
     Ok(id(&draft).to_owned())
 }
 
-/// The draft of a mail rendered elsewhere: agent-mail's fields, then the entity, stored as it is.
 async fn draft_mime(
     mail: &Mail,
     outbox: &Outbox,
