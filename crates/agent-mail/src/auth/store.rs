@@ -302,7 +302,7 @@ pub mod tests {
     #[tokio::test]
     async fn tokens_round_trip_with_private_modes() {
         let dir = scratch("store");
-        let store = store(&dir, "agent@ironmoon.dev");
+        let store = store(&dir, "agent@example.org");
         let held = store.auth_lock().await.unwrap();
         let file = store.tokens(&held);
         assert!(file.read().unwrap().access.is_none());
@@ -327,17 +327,17 @@ pub mod tests {
     #[tokio::test]
     async fn another_logins_tokens_read_as_none() {
         let dir = scratch("logins");
-        let agents = store(&dir, "agent@ironmoon.dev");
+        let agents = store(&dir, "agent@example.org");
         let held = agents.auth_lock().await.unwrap();
         agents.tokens(&held).write(tokens("agents")).unwrap();
         drop(held);
-        let other = store(&dir, "ada@agent.ironmoon.dev");
+        let other = store(&dir, "ada@agent.example.org");
         let held = other.auth_lock().await.unwrap();
         let read = other.tokens(&held).read().unwrap();
         assert!(read.access.is_none() && read.refresh.is_none());
         other.tokens(&held).write(tokens("adas")).unwrap();
         drop(held);
-        let again = store(&dir, "Agent@IronMoon.dev");
+        let again = store(&dir, "Agent@Example.org");
         let held = again.auth_lock().await.unwrap();
         assert!(again.tokens(&held).read().unwrap().access.is_none());
         fs::remove_dir_all(dir).unwrap();
@@ -352,7 +352,7 @@ pub mod tests {
             r#"{"access":{"token":"t","expires_at":9},"refresh":"r"}"#,
         )
         .unwrap();
-        let store = store(&dir, "agent@ironmoon.dev");
+        let store = store(&dir, "agent@example.org");
         let held = store.auth_lock().await.unwrap();
         assert!(store.tokens(&held).read().unwrap().access.is_none());
         fs::remove_dir_all(dir).unwrap();

@@ -4,38 +4,62 @@ use anyhow::{Context, Result, bail};
 
 use crate::{address::Address, identity::Login};
 
-pub const AUTH_HOST: &str = "auth.ironmoon.dev";
-pub const CLIENT_ID: &str = "395450175197396579";
 pub const SCOPE: &str = "openid email profile offline_access";
 pub const ZITADEL_API_SCOPE: &str = "urn:zitadel:iam:org:project:id:zitadel:aud";
-/// jmap-client discovers the session at `/.well-known/jmap`, which Stalwart redirects to `/jmap/session`.
-pub const JMAP_HOST: &str = "mail.ironmoon.dev";
 
-/// Logins that may mail only these domains and the correspondents; every other login mails anyone.
-const RESTRICTED: &[(&str, &[&str])] = &[(
-    "agent@ironmoon.dev",
-    &["ironmoon.dev", "agent.ironmoon.dev"],
-)];
-
-/// Logins every Claude session shares. Their mail goes out only from a topic subaddress, so a reply reaches the
-/// session waiting on that topic.
-const SHARED: &[&str] = &["agent@ironmoon.dev"];
-
-/// The login's own address as a sender; a shared login has none.
-pub fn bare_sender(login: &Login) -> Result<Address> {
-    let text = login.to_string();
-    if SHARED.iter().any(|l| l.eq_ignore_ascii_case(&text)) {
-        bail!("{login} is shared by every session, so it sends only from a topic subaddress");
-    }
-    Ok(login.address().clone())
+/// Each value is the deployment's in a build and its fixture in a test build, and neither may be empty.
+macro_rules! deployment {
+    ($($(#[$doc:meta])* $vis:vis $name:ident = $value:expr, test $fixture:literal;)*) => {$(
+        $(#[$doc])*
+        #[cfg(not(test))]
+        $vis const $name: &str = $value;
+        $(#[$doc])*
+        #[cfg(test)]
+        $vis const $name: &str = $fixture;
+        const _: () = assert!(!$name.is_empty(), concat!(stringify!($name), " is empty"));
+    )*};
 }
 
-/// Comma-separated addresses outside those domains that a restricted login may still mail. package.nix sets it
-/// from the secrets flake's `data.mail.agentCorrespondents`, the list Stalwart lets the agents reach.
+deployment! {
+    pub AUTH_HOST = "auth.ironmoon.dev", test "auth.example.org";
+    pub CLIENT_ID = "395450175197396579", test "agent-mail-test";
+    /// jmap-client discovers the session at `/.well-known/jmap`, which Stalwart redirects to `/jmap/session`.
+    pub JMAP_HOST = "mail.ironmoon.dev", test "mail.example.org";
+    DOMAIN = "ironmoon.dev", test "example.org";
+    AGENT_DOMAIN = "agent.ironmoon.dev", test "agent.example.org";
+    SHARED_LOCAL_PART = "agent", test "agent";
+}
+
+/// Comma-separated addresses outside the deployment's domains that the shared login may still mail. package.nix
+/// sets it from the secrets flake's `data.mail.agentCorrespondents`, the list Stalwart lets the agents reach.
+#[cfg(not(test))]
 const CORRESPONDENTS: &str = match option_env!("AGENT_MAIL_CORRESPONDENTS") {
     Some(list) => list,
     None => "",
 };
+#[cfg(test)]
+const CORRESPONDENTS: &str = "";
+
+/// `<shared local part>@<domain>`, the login every Claude session shares.
+fn is_shared(login: &Login) -> bool {
+    let address = login.address();
+    address.local().eq_ignore_ascii_case(SHARED_LOCAL_PART)
+        && address.domain().eq_ignore_ascii_case(DOMAIN)
+}
+
+/// The domains a login may mail besides the correspondents; `None` when it may mail anyone.
+fn restriction(login: &Login) -> Option<[&'static str; 2]> {
+    is_shared(login).then_some([DOMAIN, AGENT_DOMAIN])
+}
+
+/// The login's own address as a sender. The shared login has none: its mail goes out only from a topic
+/// subaddress, so a reply reaches the session waiting on that topic.
+pub fn bare_sender(login: &Login) -> Result<Address> {
+    if is_shared(login) {
+        bail!("{login} is shared by every session, so it sends only from a topic subaddress");
+    }
+    Ok(login.address().clone())
+}
 
 fn correspondents(list: &str) -> Result<Vec<Address>> {
     list.split(',')
@@ -65,11 +89,7 @@ impl Recipients {
         cc: Vec<Address>,
         correspondents: &[Address],
     ) -> Result<Recipients> {
-        let login_text = login.to_string();
-        if let Some((_, domains)) = RESTRICTED
-            .iter()
-            .find(|(l, _)| l.eq_ignore_ascii_case(&login_text))
-        {
+        if let Some(domains) = restriction(login) {
             let outside: Vec<String> = to
                 .iter()
                 .chain(&cc)
@@ -111,34 +131,47 @@ mod tests {
     #[test]
     fn the_host_login_mails_only_allowlisted_domains() {
         for ok in [
-            "ironmoon@ironmoon.dev",
-            "x@AGENT.ironmoon.dev",
-            "agent+t@IronMoon.Dev",
+            "owner@example.org",
+            "x@AGENT.example.org",
+            "agent+t@Example.Org",
         ] {
-            assert!(check("agent@ironmoon.dev", ok).is_ok(), "{ok}");
-            assert!(check("Agent@IronMoon.dev", ok).is_ok(), "{ok}");
+            assert!(check("agent@example.org", ok).is_ok(), "{ok}");
+            assert!(check("Agent@Example.org", ok).is_ok(), "{ok}");
         }
         for bad in [
             "someone@example.com",
-            "x@evil-ironmoon.dev",
-            "x@ironmoon.dev.example.com",
-            "x@sub.agent.ironmoon.dev",
+            "x@evil-example.org",
+            "x@example.org.example.com",
+            "x@sub.agent.example.org",
         ] {
-            assert!(check("agent@ironmoon.dev", bad).is_err(), "{bad}");
+            assert!(check("agent@example.org", bad).is_err(), "{bad}");
         }
     }
 
     #[test]
     fn vm_agent_logins_mail_anyone() {
-        assert!(check("ada@agent.ironmoon.dev", "someone@example.com").is_ok());
+        assert!(check("ada@agent.example.org", "someone@example.com").is_ok());
+    }
+
+    #[test]
+    fn only_the_shared_local_part_at_the_domain_is_shared() {
+        for other in [
+            "agent@agent.example.org",
+            "agents@example.org",
+            "agent@example.com",
+        ] {
+            let login: Login = other.parse().unwrap();
+            assert!(!is_shared(&login) && bare_sender(&login).is_ok(), "{other}");
+        }
+        assert!(bare_sender(&"AGENT@example.ORG".parse().unwrap()).is_err());
     }
 
     #[test]
     fn cc_is_checked_too() {
-        let login = "agent@ironmoon.dev".parse().unwrap();
+        let login = "agent@example.org".parse().unwrap();
         let err = Recipients::check_against(
             &login,
-            vec!["ironmoon@ironmoon.dev".parse().unwrap()],
+            vec!["owner@example.org".parse().unwrap()],
             vec!["someone@example.com".parse().unwrap()],
             &[],
         )
@@ -146,14 +179,14 @@ mod tests {
         .unwrap();
         assert_eq!(
             err.to_string(),
-            "agent@ironmoon.dev may mail only ironmoon.dev and agent.ironmoon.dev, not someone@example.com"
+            "agent@example.org may mail only example.org and agent.example.org, not someone@example.com"
         );
     }
 
     #[test]
     fn a_correspondent_is_allowed_and_nobody_else_at_its_domain() {
-        let login = "agent@ironmoon.dev".parse().unwrap();
-        let listed = correspondents(" pen.pal@example.com , other@example.org").unwrap();
+        let login = "agent@example.org".parse().unwrap();
+        let listed = correspondents(" pen.pal@example.com , other@example.net").unwrap();
         let to = |a: &str| vec![a.parse().unwrap()];
         assert!(
             Recipients::check_against(&login, to("Pen.Pal@Example.com"), vec![], &listed).is_ok()
@@ -163,7 +196,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             err.to_string(),
-            "agent@ironmoon.dev may mail only ironmoon.dev, agent.ironmoon.dev and its correspondents, not stranger@example.com"
+            "agent@example.org may mail only example.org, agent.example.org and its correspondents, not stranger@example.com"
         );
     }
 

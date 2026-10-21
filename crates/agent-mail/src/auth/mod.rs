@@ -290,7 +290,7 @@ mod tests {
             let dir = scratch(name);
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("password"), file).unwrap();
-            let login: Login = "ada@agent.ironmoon.dev".parse().unwrap();
+            let login: Login = "ada@agent.example.org".parse().unwrap();
             let auth = Auth {
                 zitadel: fake,
                 store: Store::at(dir.join("state"), dir.join("locks"), &login),
@@ -479,7 +479,7 @@ mod tests {
         let f = Fixture::new("wrong", "old", fake("other"));
         let first = f.auth.access().await.err().unwrap();
         assert!(first.is::<PasswordRefused>() && is_permanent(&first));
-        let login: Login = "ada@agent.ironmoon.dev".parse().unwrap();
+        let login: Login = "ada@agent.example.org".parse().unwrap();
         let next_process = Auth {
             zitadel: fake("other"),
             store: Store::at(f.dir.join("state"), f.dir.join("locks"), &login),

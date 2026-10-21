@@ -191,21 +191,21 @@ mod tests {
     fn only_the_two_origins_are_accepted() {
         assert!(
             Origin::Auth
-                .check("https://auth.ironmoon.dev/ui/login/device")
+                .check("https://auth.example.org/ui/login/device")
                 .is_ok()
         );
         assert!(
             Origin::Mail
-                .check("https://mail.ironmoon.dev/jmap/upload/{accountId}/")
+                .check("https://mail.example.org/jmap/upload/{accountId}/")
                 .is_ok()
         );
         for bad in [
-            "http://auth.ironmoon.dev/x",
-            "https://auth.ironmoon.dev:8443/x",
-            "https://user:pw@auth.ironmoon.dev/x",
-            "https://auth.ironmoon.dev.evil.com/x",
-            "https://evil.com/?https://auth.ironmoon.dev",
-            "https://mail.ironmoon.dev/x",
+            "http://auth.example.org/x",
+            "https://auth.example.org:8443/x",
+            "https://user:pw@auth.example.org/x",
+            "https://auth.example.org.evil.com/x",
+            "https://evil.com/?https://auth.example.org",
+            "https://mail.example.org/x",
             "javascript:alert(1)",
         ] {
             assert!(Origin::Auth.check(bad).is_err(), "{bad}");
@@ -221,8 +221,8 @@ mod tests {
         assert!(keeps);
         for off in [
             "https://evil.com/steal",
-            "http://auth.ironmoon.dev/x",
-            "https://mail.ironmoon.dev/x",
+            "http://auth.example.org/x",
+            "https://mail.example.org/x",
         ] {
             assert!(
                 redirect(&at, StatusCode::TEMPORARY_REDIRECT, Some(off)).is_err(),
@@ -237,7 +237,7 @@ mod tests {
         let page = Origin::Auth.url("/ui/login/loginname");
         assert_eq!(
             page.join("password").unwrap().as_str(),
-            "https://auth.ironmoon.dev/ui/login/password"
+            "https://auth.example.org/ui/login/password"
         );
         assert_eq!(
             page.join("/ui/login/device/allowed").unwrap().path(),
@@ -246,8 +246,8 @@ mod tests {
         for off in [
             "https://evil.com/collect",
             "//evil.com/collect",
-            "http://auth.ironmoon.dev/x",
-            "https://mail.ironmoon.dev/x",
+            "http://auth.example.org/x",
+            "https://mail.example.org/x",
         ] {
             assert!(page.join(off).is_err(), "{off}");
         }

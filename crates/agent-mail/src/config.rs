@@ -225,7 +225,7 @@ mod tests {
         let path = Path::new("/c/agent-mail/config.json");
         for text in [
             "{}",
-            r#"{"login": "agent@ironmoon.dev"}"#,
+            r#"{"login": "agent@example.org"}"#,
             "not json",
             r#"{"login": "a@b", "password_file": "x"}"#,
         ] {
@@ -243,10 +243,10 @@ mod tests {
     fn complete_config_parses() {
         let config = Config::parse(
             Path::new("config.json"),
-            r#"{"login": "ada@agent.ironmoon.dev", "password-file": "/run/ada"}"#,
+            r#"{"login": "ada@agent.example.org", "password-file": "/run/ada"}"#,
         )
         .unwrap();
-        assert_eq!(config.login.to_string(), "ada@agent.ironmoon.dev");
+        assert_eq!(config.login.to_string(), "ada@agent.example.org");
         assert_eq!(config.password.0, PathBuf::from("/run/ada"));
     }
 }

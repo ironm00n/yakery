@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn a_submission_every_recipient_refused_is_refused() {
         let got = read(&created(
-            r#"{"nosuch@ironmoon.dev":{"smtpReply":"550 5.1.2 Mailbox does not exist.","delivered":"no","displayed":"unknown"}}"#,
+            r#"{"nosuch@example.org":{"smtpReply":"550 5.1.2 Mailbox does not exist.","delivered":"no","displayed":"unknown"}}"#,
         ));
         let Submitted::Created { id, delivery } = got else {
             panic!("{got:?}")
@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(
             delivery,
             Delivery::Refused(vec![Refusal {
-                address: "nosuch@ironmoon.dev".into(),
+                address: "nosuch@example.org".into(),
                 reply: "550 5.1.2 Mailbox does not exist.".into()
             }])
         );
@@ -274,8 +274,8 @@ mod tests {
     #[test]
     fn a_partly_refused_submission_lists_the_refused() {
         let got = read(&created(
-            r#"{"a@ironmoon.dev":{"smtpReply":"250 2.1.5 Queued","delivered":"unknown","displayed":"unknown"},
-                "b@ironmoon.dev":{"smtpReply":"550 no","delivered":"no","displayed":"unknown"}}"#,
+            r#"{"a@example.org":{"smtpReply":"250 2.1.5 Queued","delivered":"unknown","displayed":"unknown"},
+                "b@example.org":{"smtpReply":"550 no","delivered":"no","displayed":"unknown"}}"#,
         ));
         let Submitted::Created {
             delivery: Delivery::Accepted { refused },
@@ -289,7 +289,7 @@ mod tests {
                 .iter()
                 .map(|r| r.address.as_str())
                 .collect::<Vec<_>>(),
-            ["b@ironmoon.dev"]
+            ["b@example.org"]
         );
     }
 

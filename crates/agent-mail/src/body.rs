@@ -101,21 +101,20 @@ mod tests {
 
     #[test]
     fn links_render_and_bare_urls_autolink() {
-        let html =
-            html("see [the page](https://artifacts.ironmoon.dev/x) and https://ironmoon.dev");
+        let html = html("see [the page](https://artifacts.example.org/x) and https://example.org");
         assert!(
-            html.contains(r#"<a href="https://artifacts.ironmoon.dev/x">the page</a>"#),
+            html.contains(r#"<a href="https://artifacts.example.org/x">the page</a>"#),
             "{html}"
         );
         assert!(
-            html.contains(r#"<a href="https://ironmoon.dev">https://ironmoon.dev</a>"#),
+            html.contains(r#"<a href="https://example.org">https://example.org</a>"#),
             "{html}"
         );
     }
 
     #[test]
     fn a_bare_url_stops_before_trailing_punctuation() {
-        let url = "https://artifacts.ironmoon.dev/claude/v6.pdf";
+        let url = "https://artifacts.example.org/claude/v6.pdf";
         let link = format!(r#"<a href="{url}">{url}</a>"#);
         for (markdown, after) in [
             (

@@ -636,9 +636,9 @@ mod tests {
 
     #[test]
     fn the_session_must_belong_to_the_configured_login() {
-        let login: Login = "agent@ironmoon.dev".parse().unwrap();
-        assert!(check_account("Agent@IronMoon.dev", &login).is_ok());
-        let other = check_account("ada@agent.ironmoon.dev", &login)
+        let login: Login = "agent@example.org".parse().unwrap();
+        assert!(check_account("Agent@Example.org", &login).is_ok());
+        let other = check_account("ada@agent.example.org", &login)
             .err()
             .unwrap();
         assert!(is_permanent(&other), "{other:#}");
@@ -647,10 +647,10 @@ mod tests {
     #[test]
     fn downloads_stay_on_the_mail_origin() {
         let template =
-            "https://mail.ironmoon.dev/jmap/download/{accountId}/{blobId}/{name}?accept={type}";
+            "https://mail.example.org/jmap/download/{accountId}/{blobId}/{name}?accept={type}";
         assert_eq!(
             download_url(template, "b", "Ab_9-z").unwrap().as_str(),
-            "https://mail.ironmoon.dev/jmap/download/b/Ab_9-z/attachment?accept=application%2Foctet-stream"
+            "https://mail.example.org/jmap/download/b/Ab_9-z/attachment?accept=application%2Foctet-stream"
         );
         for blob in ["", "../x", "a/b", "a?b", "a%2Fb", "@evil.com"] {
             assert!(download_url(template, "b", blob).is_err(), "{blob}");

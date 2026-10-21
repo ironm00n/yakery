@@ -540,7 +540,7 @@ mod tests {
 
     fn args(topic: Option<&str>) -> Args {
         Args {
-            to: addresses_of(&["ironmoon@ironmoon.dev"]),
+            to: addresses_of(&["owner@example.org"]),
             cc: vec![],
             topic: topic.map(|t| t.parse().unwrap()),
             reply: None,
@@ -559,21 +559,21 @@ mod tests {
 
     #[test]
     fn the_shared_login_sends_only_from_a_topic() {
-        let refused = from("agent@ironmoon.dev", &args(None), None).unwrap_err();
+        let refused = from("agent@example.org", &args(None), None).unwrap_err();
         assert!(
             format!("{refused:#}").contains("sends only from a topic subaddress"),
             "{refused:#}"
         );
         assert_eq!(
-            from("agent@ironmoon.dev", &args(Some("tooling")), None).unwrap(),
-            "agent+tooling@ironmoon.dev"
+            from("agent@example.org", &args(Some("tooling")), None).unwrap(),
+            "agent+tooling@example.org"
         );
         let reply = Reply {
             parent: "p".into(),
             message_id: vec![],
             references: vec![],
             subject: "Re: [desktop · pool] x".into(),
-            topic: Some("agent+pool@ironmoon.dev".into()),
+            topic: Some("agent+pool@example.org".into()),
             from: vec![],
             rest: vec![],
         };
@@ -582,27 +582,27 @@ mod tests {
             ..args(None)
         };
         assert_eq!(
-            from("agent@ironmoon.dev", &answer, Some(&reply)).unwrap(),
-            "agent+pool@ironmoon.dev"
+            from("agent@example.org", &answer, Some(&reply)).unwrap(),
+            "agent+pool@example.org"
         );
         let untopical = Reply {
             topic: None,
             ..reply
         };
-        assert!(from("agent@ironmoon.dev", &answer, Some(&untopical)).is_err());
+        assert!(from("agent@example.org", &answer, Some(&untopical)).is_err());
         assert_eq!(
-            from("ada@agent.ironmoon.dev", &args(None), None).unwrap(),
-            "ada@agent.ironmoon.dev"
+            from("ada@agent.example.org", &args(None), None).unwrap(),
+            "ada@agent.example.org"
         );
     }
 
     fn heading(reply: bool) -> Heading {
         let ids = |list: &[&str]| list.iter().map(|i| i.parse().unwrap()).collect();
         Heading {
-            from: "agent+tooling@ironmoon.dev".parse().unwrap(),
-            to: addresses_of(&["ironmoon@ironmoon.dev"]),
+            from: "agent+tooling@example.org".parse().unwrap(),
+            to: addresses_of(&["owner@example.org"]),
             cc: match reply {
-                true => addresses_of(&["owenduckham11@gmail.com", "bob@agent.ironmoon.dev"]),
+                true => addresses_of(&["pen.pal@example.com", "bob@agent.example.org"]),
                 false => vec![],
             },
             subject: match reply {
@@ -610,11 +610,11 @@ mod tests {
                 false => "[desktop · mail] pick one".into(),
             },
             in_reply_to: match reply {
-                true => ids(&["p@ironmoon.dev"]),
+                true => ids(&["p@example.org"]),
                 false => vec![],
             },
             references: match reply {
-                true => ids(&["root@ironmoon.dev", "p@ironmoon.dev"]),
+                true => ids(&["root@example.org", "p@example.org"]),
                 false => vec![],
             },
         }
@@ -622,32 +622,32 @@ mod tests {
 
     #[test]
     fn a_new_mail_carries_agent_mails_fields_only() {
-        let id: MessageId = "T@ironmoon.dev".parse().unwrap();
+        let id: MessageId = "T@example.org".parse().unwrap();
         assert_eq!(
             heading(false).fields(1_760_000_000, &id),
             "Date: Thu, 9 Oct 2025 08:53:20 +0000\r\n\
-             From: agent+tooling@ironmoon.dev\r\n\
-             To: ironmoon@ironmoon.dev\r\n\
+             From: agent+tooling@example.org\r\n\
+             To: owner@example.org\r\n\
              Subject: =?UTF-8?B?W2Rlc2t0b3AgwrcgbWFpbF0gcGljayBvbmU=?=\r\n\
-             Message-ID: <T@ironmoon.dev>\r\n\
-             Disposition-Notification-To: agent+tooling@ironmoon.dev\r\n"
+             Message-ID: <T@example.org>\r\n\
+             Disposition-Notification-To: agent+tooling@example.org\r\n"
         );
     }
 
     #[test]
     fn a_reply_threads_under_its_parent_and_keeps_its_cc() {
-        let id: MessageId = "T@ironmoon.dev".parse().unwrap();
+        let id: MessageId = "T@example.org".parse().unwrap();
         let fields = heading(true).fields(1_760_000_000, &id);
         let lines: Vec<&str> = fields.split("\r\n").collect();
         assert_eq!(
             lines[3..],
             [
-                "Cc: owenduckham11@gmail.com, bob@agent.ironmoon.dev",
+                "Cc: pen.pal@example.com, bob@agent.example.org",
                 "Subject: =?UTF-8?B?UmU6IFtkZXNrdG9wIMK3IG1haWxdIHRoZSBwaWNrIMK3IG5vdw==?=",
-                "Message-ID: <T@ironmoon.dev>",
-                "In-Reply-To: <p@ironmoon.dev>",
-                "References: <root@ironmoon.dev> <p@ironmoon.dev>",
-                "Disposition-Notification-To: agent+tooling@ironmoon.dev",
+                "Message-ID: <T@example.org>",
+                "In-Reply-To: <p@example.org>",
+                "References: <root@example.org> <p@example.org>",
+                "Disposition-Notification-To: agent+tooling@example.org",
                 "",
             ]
         );
@@ -661,7 +661,7 @@ mod tests {
             args: Args,
         }
         let parse = |extra: &[&str]| {
-            let base = ["send", "--to", "ironmoon@ironmoon.dev", "--subject", "s"];
+            let base = ["send", "--to", "owner@example.org", "--subject", "s"];
             <Cli as clap::Parser>::try_parse_from(base.iter().chain(extra))
         };
         let conflict = parse(&["--mime", "m.eml", "--attach", "a.png"])
@@ -674,65 +674,65 @@ mod tests {
 
     #[test]
     fn reply_all_adds_everyone_but_us_once() {
-        let login: Login = "agent@ironmoon.dev".parse().unwrap();
+        let login: Login = "agent@example.org".parse().unwrap();
         let (to, cc) = reply_all(
             &login,
-            &addresses_of(&["Ada@agent.ironmoon.dev"]),
+            &addresses_of(&["Ada@agent.example.org"]),
             &[],
-            &strings(&["ironmoon@ironmoon.dev"]),
+            &strings(&["owner@example.org"]),
             &strings(&[
-                "agent+pool@ironmoon.dev",
-                "ada@agent.ironmoon.dev",
-                "IronMoon@ironmoon.dev",
-                "bob@agent.ironmoon.dev",
+                "agent+pool@example.org",
+                "ada@agent.example.org",
+                "Owner@example.org",
+                "bob@agent.example.org",
             ]),
         )
         .unwrap();
         assert_eq!(
             to,
-            addresses_of(&["ada@agent.ironmoon.dev", "ironmoon@ironmoon.dev"])
+            addresses_of(&["ada@agent.example.org", "owner@example.org"])
         );
-        assert_eq!(cc, addresses_of(&["bob@agent.ironmoon.dev"]));
+        assert_eq!(cc, addresses_of(&["bob@agent.example.org"]));
     }
 
     #[test]
     fn reply_all_to_our_own_mail_moves_the_first_other_to_to() {
-        let login: Login = "agent@ironmoon.dev".parse().unwrap();
+        let login: Login = "agent@example.org".parse().unwrap();
         let (to, cc) = reply_all(
             &login,
             &[],
             &[],
-            &strings(&["agent+pool@ironmoon.dev"]),
-            &strings(&["ironmoon@ironmoon.dev", "bob@agent.ironmoon.dev"]),
+            &strings(&["agent+pool@example.org"]),
+            &strings(&["owner@example.org", "bob@agent.example.org"]),
         )
         .unwrap();
         assert_eq!(
             (to, cc),
             (
-                addresses_of(&["ironmoon@ironmoon.dev"]),
-                addresses_of(&["bob@agent.ironmoon.dev"])
+                addresses_of(&["owner@example.org"]),
+                addresses_of(&["bob@agent.example.org"])
             )
         );
         let nobody = reply_all(
             &login,
             &[],
             &[],
-            &strings(&["agent@ironmoon.dev"]),
-            &strings(&["agent+x@ironmoon.dev"]),
+            &strings(&["agent@example.org"]),
+            &strings(&["agent+x@example.org"]),
         );
         assert!(nobody.is_err());
     }
 
     #[test]
     fn the_reply_guard_prompts_for_newer_and_same_second_mail_from_others() {
-        let login: Login = "agent@ironmoon.dev".parse().unwrap();
-        let parent = mail("p", "2026-10-17T10:00:00Z", "ironmoon@ironmoon.dev");
+        let login: Login = "agent@example.org".parse().unwrap();
+        let parent = mail("p", "2026-10-17T10:00:00Z", "owner@example.org");
         let thread = [
-            mail("old", "2026-10-17T09:00:00Z", "ironmoon@ironmoon.dev"),
+            mail("old", "2026-10-17T09:00:00Z", "owner@example.org"),
             parent.clone(),
-            mail("same", "2026-10-17T10:00:00Z", "ironmoon@ironmoon.dev"),
-            mail("ours", "2026-10-17T11:00:00Z", "agent+tooling@ironmoon.dev"),
-            mail("his", "2026-10-17T12:00:00Z", "ironmoon@ironmoon.dev"),
+            mail("same", "2026-10-17T10:00:00Z", "owner@example.org"),
+            mail("ours", "2026-10-17T11:00:00Z", "agent+tooling@example.org"),
+            mail("his", "2026-10-17T12:00:00Z", "owner@example.org"),
         ];
         let newer: Vec<&str> = newer_from_others(&login, &parent, &thread)
             .into_iter()
