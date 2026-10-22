@@ -443,11 +443,11 @@
         "systems": []
       },
       "locked": {
-        "lastModified": 1792323979,
-        "narHash": "sha256-yrrnxTIgVhkV5EwEtZIogP2ScHTC3lcPYHLiUXt63v8=",
+        "lastModified": 1792684850,
+        "narHash": "sha256-9RCqwG1nEcLn5WLEIc0zIANbiXtIJazJ0inXq0UmNlQ=",
         "ref": "refs/heads/master",
-        "rev": "884cee54b0f30a4b780ad23b44ca3700f4c98bb4",
-        "revCount": 26,
+        "rev": "e8a6ebca309d135e0177d50463facf13e0e576de",
+        "revCount": 27,
         "type": "git",
         "url": "ssh://git@github.com/ironm00n/secrets.git"
       },
