@@ -1,0 +1,297 @@
+diff --git a/components/email/email-viewer.tsx b/components/email/email-viewer.tsx
+index da40dd4d..126daa01 100644
+--- a/components/email/email-viewer.tsx
++++ b/components/email/email-viewer.tsx
+@@ -5,7 +5,7 @@ import { Email, ContactCard, Mailbox } from "@/lib/jmap/types";
+ import { emailExportFilename, attachmentDownloadFilename, attachmentsBundleFilename, DEFAULT_EMAIL_TEMPLATE, DEFAULT_ATTACHMENT_TEMPLATE } from "@/lib/download-filename";
+ import { EML_IMPORT_ACCEPT, expandImportableEmails } from "@/lib/eml-import";
+ import { applyNewTabToAnchor, emailIframeCsp, escapeHtml, isExternalResourceUrl, isOpenableLinkHref, plainTextToSafeHtml, sanitizeEmailBodyForIframe, sanitizeEmailHtml, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
+-import { getRenderableHtmlBody } from "@/lib/email-body-selection";
++import { getPlainTextAlternative, getRenderableHtmlBody } from "@/lib/email-body-selection";
+ import { collectReferencedCids, isEmbeddedInBody, normalizeCid } from "@/lib/attachment-visibility";
+ import { collapsePlainTextQuotes, setupQuoteCollapse } from "@/lib/quote-collapse";
+ import { DARK_PENDING_CLASS, applyEmailDarkMode, emailColorScheme, emailDarkModeCss, emailHasNativeDarkMode as htmlHasNativeDarkMode, resolveColorSchemeMedia } from "@/lib/email-dark-mode";
+@@ -2522,7 +2522,7 @@ export function EmailViewer({
+         // Sanitize (no dark mode color transforms - emails render true-to-life
+         // in the iframe) and enforce the external-content policy.
+         const { html: cleanHtml, blockedExternalContent } =
+-          sanitizeEmailBodyForIframe(htmlContent, shouldBlockExternal);
++          sanitizeEmailBodyForIframe(htmlContent, shouldBlockExternal, getPlainTextAlternative(email));
+ 
+         // Update blocked content state
+         if (blockedExternalContent && !hasBlockedContent) {
+diff --git a/components/email/thread-conversation-view.tsx b/components/email/thread-conversation-view.tsx
+index 59ec7ac8..067aaf30 100644
+--- a/components/email/thread-conversation-view.tsx
++++ b/components/email/thread-conversation-view.tsx
+@@ -4,7 +4,7 @@ import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallba
+ import { Email, ThreadGroup } from "@/lib/jmap/types";
+ import { collapseBlockedImageContainers, emailIframeCsp, plainTextToSafeHtml, sanitizeEmailBodyForIframe, sanitizePlainTextRenderedHtml } from "@/lib/email-sanitization";
+ import { emailDisplayDate } from "@/lib/email-date";
+-import { getRenderableHtmlBody } from "@/lib/email-body-selection";
++import { getPlainTextAlternative, getRenderableHtmlBody } from "@/lib/email-body-selection";
+ import { findVerificationCode, verificationCodeBodyText } from "@/lib/verification-code";
+ import { VerificationCodeChip } from "./verification-code-chip";
+ import { collectReferencedCids, isEmbeddedInBody, normalizeCid } from "@/lib/attachment-visibility";
+@@ -648,9 +648,9 @@ export function ConversationEmailBody({
+         }
+ 
+         // The desktop viewer's sanitizer, blocker and data:-URI guard: the body
+-        // renders in an iframe here too, so it keeps its <style> and <svg>.
++        // renders in an iframe here too, so it keeps its <style>, <svg> and <math>.
+         // Every link gets a new tab once the frame loads (handleIframeLoad).
+-        const { html, blockedExternalContent } = sanitizeEmailBodyForIframe(htmlContent, !allowExternal);
++        const { html, blockedExternalContent } = sanitizeEmailBodyForIframe(htmlContent, !allowExternal, getPlainTextAlternative(email));
+         if (blockedExternalContent && !hasBlockedContent) setHasBlockedContent(true);
+ 
+         return { html, isHtml: true };
+diff --git a/components/files/eml-preview.tsx b/components/files/eml-preview.tsx
+index 4e249b1f..89c8b814 100644
+--- a/components/files/eml-preview.tsx
++++ b/components/files/eml-preview.tsx
+@@ -47,7 +47,7 @@ export function EmlPreview({ message }: { message: ParsedEml }) {
+   // dir="auto" on a wrapper we control lets the first strong character pick
+   // the direction, matching the main viewer.
+   const body = message.html
+-    ? `<div dir="auto">${sanitizeEmailBodyForIframe(message.html, blockRemote).html}</div>`
++    ? `<div dir="auto">${sanitizeEmailBodyForIframe(message.html, blockRemote, message.text).html}</div>`
+     : message.text
+       ? `<pre dir="auto" style="white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,monospace;margin:0;padding:8px">${escapeHtml(message.text)}</pre>`
+       : "";
+diff --git a/lib/__tests__/email-sanitization.test.ts b/lib/__tests__/email-sanitization.test.ts
+index 7b660b16..e6e47b4d 100644
+--- a/lib/__tests__/email-sanitization.test.ts
++++ b/lib/__tests__/email-sanitization.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, it, expect } from 'vitest';
++import { describe, it, expect, vi } from 'vitest';
+ import DOMPurify from 'dompurify';
+ import {
+   sanitizeEmailHtml,
+@@ -24,6 +24,7 @@ import {
+   restrictDataUriResourcesOnNode,
+   sanitizeEmailHtmlForIframe,
+   sanitizeEmailBodyForIframe,
++  rendersAsSanitized,
+   TRANSPARENT_BLOCKED_PIXEL,
+ } from '../email-sanitization';
+ 
+@@ -1086,6 +1087,58 @@ describe('email-sanitization', () => {
+       expect(EMAIL_SANITIZE_CONFIG.FORBID_TAGS).toEqual(expect.arrayContaining(['svg', 'style']));
+       expect(EMAIL_IFRAME_SANITIZE_CONFIG.FORBID_TAGS).not.toContain('svg');
+     });
++
++    const FORMULA = '<math display="block"><semantics><mrow><mi>x</mi><mo>=</mo><mfrac>'
++      + '<mrow><mo>−</mo><mi>b</mi><mo>±</mo><msqrt><msup><mi>b</mi><mn>2</mn></msup><mo>−</mo><mn>4</mn><mi>a</mi><mi>c</mi></msqrt></mrow>'
++      + '<mrow><mn>2</mn><mi>a</mi></mrow></mfrac></mrow>'
++      + '<annotation encoding="application/x-tex">x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}</annotation></semantics></math>';
++
++    it('keeps static MathML and its TeX annotation as sent, but not in the main document', () => {
++      expect(sanitizeEmailBodyForIframe(FORMULA, true).html).toBe(FORMULA);
++      expect(sanitizeEmailHtmlForIframe(FORMULA)).toBe(FORMULA);
++      expect(sanitizeEmailHtml(`<p>${FORMULA}</p>`)).toBe('<p></p>');
++    });
++
++    it('keeps no links, markup, images or interaction inside math', () => {
++      const html = sanitizeEmailBodyForIframe(
++        '<math href="https://example.org/a"><mi xlink:href="https://example.org/b">x</mi>'
++          + '<mtext><a href="https://example.org/c">c</a><img src="https://example.org/d.png"><script>alert(1)</script></mtext>'
++          + '<mi><svg><rect width="1" height="1"/></svg></mi>'
++          + '<semantics><mi>y</mi><annotation-xml encoding="text/html"><p>e</p></annotation-xml>'
++          + '<annotation encoding="text/html"><mi>t</mi>ex</annotation></semantics>'
++          + '<maction actiontype="toggle"><mi>z</mi></maction><mglyph src="https://example.org/f.png"/></math>',
++        false,
++      ).html;
++      expect(html).toBe('<math><mi>x</mi><mtext></mtext><mi></mi>'
++        + '<semantics><mi>y</mi><annotation encoding="text/html">tex</annotation></semantics><mi>z</mi></math>');
++    });
++
++    // Sanitizer output blind to mglyph/style (via table foster-parenting, nested forms) and svg/p/style mXSS.
++    const MUTATING = [
++      '<math><mtext><mglyph><style><img src=x onerror=alert(1)></style></mglyph><table></table></mtext></math>',
++      '<form><math><mtext><form><mglyph><style></math><img src onerror=alert(1)></style></mglyph></form></mtext></math></form>',
++      '<svg></p><style><a id="</style><img src=1 onerror=alert(1)>"></a></style></svg>',
++    ];
++
++    it.each(MUTATING)('finds the mutation in %s and renders text instead', (mutating) => {
++      expect(rendersAsSanitized(mutating, false)).toBe(false);
++      vi.spyOn(DOMPurify, 'sanitize').mockReturnValueOnce(mutating);
++      expect(sanitizeEmailBodyForIframe(mutating, false, 'a <text> part'))
++        .toEqual({ html: '<div style="white-space: pre-wrap">a &lt;text&gt; part</div>', blockedExternalContent: false });
++    });
++
++    it('fails a body the second pass changes, and passes what quirks, <pre> and bare text parse into', () => {
++      expect(rendersAsSanitized('<img src="x" onerror="alert(1)">', false)).toBe(false);
++      for (const html of ['<p>a<table><tr><td>b</td></tr></table></p>', '<pre>\n\nc</pre>', 'AT&T']) {
++        expect(sanitizeEmailBodyForIframe(html, false).html).not.toContain('pre-wrap');
++      }
++    });
++
++    it('renders the body as text when the mutated mail has no text part', () => {
++      vi.spyOn(DOMPurify, 'sanitize').mockReturnValueOnce(MUTATING[0]);
++      expect(sanitizeEmailBodyForIframe('<p>one</p><p>two</p>' + MUTATING[0], true, ' ').html)
++        .toBe('<div style="white-space: pre-wrap">one\n\ntwo</div>');
++    });
+   });
+ });
+ 
+diff --git a/lib/email-body-selection.ts b/lib/email-body-selection.ts
+index ee000d81..cff4a4c2 100644
+--- a/lib/email-body-selection.ts
++++ b/lib/email-body-selection.ts
+@@ -54,3 +54,9 @@ export function getDraftTextBody(
+     .filter((value): value is string => !!value)
+     .join('\n');
+ }
++
++/** The message's own text/plain alternative, if it has one. */
++export function getPlainTextAlternative(email: Pick<Email, 'textBody' | 'bodyValues'>): string | undefined {
++  const part = email.textBody?.[0];
++  return part?.partId && part.type?.toLowerCase() === 'text/plain' ? email.bodyValues?.[part.partId]?.value : undefined;
++}
+diff --git a/lib/email-sanitization.ts b/lib/email-sanitization.ts
+index d8ed4e1b..8db27bb7 100644
+--- a/lib/email-sanitization.ts
++++ b/lib/email-sanitization.ts
+@@ -1,4 +1,5 @@
+-import DOMPurify from 'dompurify';
++import DOMPurify, { type Config } from 'dompurify';
++import { htmlToPlainText } from '@/lib/html-to-text';
+ 
+ /**
+  * Unified DOMPurify configuration for email content
+@@ -39,8 +40,9 @@ export const EMAIL_SANITIZE_CONFIG = {
+  * cannot express it, because DOMPurify's data:-URI carve-out for media tags
+  * short-circuits ALLOWED_URI_REGEXP and is not removable via config.
+  */
+-function sanitizeWithDataUriGuard(html: string, config: typeof EMAIL_SANITIZE_CONFIG): string {
++function sanitizeWithDataUriGuard(html: string, config: Config): string {
+   DOMPurify.addHook('afterSanitizeAttributes', restrictDataUriResourcesOnNode);
++  DOMPurify.addHook('afterSanitizeAttributes', keepMathStaticOnNode);
+   try {
+     return DOMPurify.sanitize(html, config);
+   } finally {
+@@ -63,19 +65,38 @@ export function sanitizeEmailHtml(html: string): string {
+  * cannot leak into the host app, and static inline <svg> (diagrams, charts)
+  * under DOMPurify's own SVG allowlist. <foreignObject> stays out, since it
+  * would embed HTML inside the drawing, and so does every SVG animation
+- * element: a mail's vector images are pictures, not movies. Scripts are still
+- * blocked by the sandbox attribute (no allow-scripts). Use ONLY for
+- * iframe-rendered content – never for content rendered into the main DOM.
++ * element: a mail's vector images are pictures, not movies. Static <math>, with
++ * <semantics> and its text <annotation>, holds MathML only: no HTML or SVG in
++ * it, no <annotation-xml>, <maction> or <mglyph>, no links ({@link keepMathStaticOnNode}).
++ * Scripts are still blocked by the sandbox attribute (no allow-scripts). Use
++ * ONLY for iframe-rendered content – never for content rendered into the main DOM.
+  */
+ export const EMAIL_IFRAME_SANITIZE_CONFIG = {
+   ...EMAIL_SANITIZE_CONFIG,
++  ADD_TAGS: ['semantics', 'annotation'],
+   FORBID_TAGS: [
+-    ...EMAIL_SANITIZE_CONFIG.FORBID_TAGS.filter((t) => t !== 'style' && t !== 'svg'),
++    ...EMAIL_SANITIZE_CONFIG.FORBID_TAGS.filter((t) => !['style', 'svg', 'math'].includes(t)),
+     'foreignobject',
+     'animate', 'animatecolor', 'animatemotion', 'animatetransform', 'set', 'discard',
++    'annotation-xml', 'maction', 'mglyph',
+   ],
++  MATHML_TEXT_INTEGRATION_POINTS: {},
+ };
+ 
++const MATHML_NAMESPACE = 'http://www.w3.org/1998/Math/MathML';
++
++/**
++ * The half of the iframe config's MathML rule DOMPurify's config cannot
++ * scope to one namespace: Firefox follows `href` on any MathML element, and
++ * an <annotation> keeps its text but no markup.
++ */
++export function keepMathStaticOnNode(node: Element): void {
++  if (node.namespaceURI !== MATHML_NAMESPACE) return;
++  node.removeAttribute('href');
++  node.removeAttribute('xlink:href');
++  if (node.localName === 'annotation') node.replaceChildren(node.textContent ?? '');
++}
++
+ /**
+  * Sanitize email HTML for rendering inside a sandboxed iframe.
+  * Preserves <style> tags so the email's own CSS is applied.
+@@ -127,11 +148,36 @@ export interface IframeBodySanitizeResult {
+  * @param blockExternal Whether the user's policy blocks external resources for
+  *   this message ('block', or 'ask' before the user allowed, and sender not
+  *   trusted).
++ * @param plainText The message's text/plain part, shown instead of a body that
++ *   would not render as sanitized ({@link rendersAsSanitized}); else the body's text is.
+  */
+ export function sanitizeEmailBodyForIframe(
+   html: string,
+   blockExternal: boolean,
++  plainText?: string,
+ ): IframeBodySanitizeResult {
++  const sanitized = purifyBodyForIframe(frameBody(html), blockExternal, false);
++  if (rendersAsSanitized(sanitized.html, blockExternal)) return sanitized;
++  const text = plainText?.trim() ? plainText : htmlToPlainText(sanitizeEmailHtml(html), { paragraphSpacing: true });
++  return { html: `<div style="white-space: pre-wrap">${plainTextToSafeHtml(text)}</div>`, blockedExternalContent: false };
++}
++
++/**
++ * Whether the srcdoc iframe renders the tree the sanitizer saw: sanitizing `clean`, parsed
++ * again as the frame parses it, removes and changes nothing; else the first pass missed a mutation (mXSS).
++ */
++export function rendersAsSanitized(clean: string, blockExternal: boolean): boolean {
++  const again = purifyBodyForIframe(frameBody(clean), blockExternal, true);
++  return DOMPurify.removed.length === 0 && again.html === clean;
++}
++
++/** `html` parsed as the srcdoc frame parses its body: in a whole no-quirks document. */
++function frameBody(html: string): HTMLElement {
++  return parseHtmlSafely(`<!DOCTYPE html><html><head></head><body>${html}</body></html>`).body;
++}
++
++/** One pass over a parsed body; `again` keeps the `data-blocked-*` stashes a first pass wrote. */
++function purifyBodyForIframe(body: HTMLElement, blockExternal: boolean, again: boolean): IframeBodySanitizeResult {
+   const config = blockExternal
+     ? {
+         ...EMAIL_IFRAME_SANITIZE_CONFIG,
+@@ -139,6 +185,9 @@ export function sanitizeEmailBodyForIframe(
+         FORBID_TAGS: [...EMAIL_IFRAME_SANITIZE_CONFIG.FORBID_TAGS, 'link'],
+       }
+     : EMAIL_IFRAME_SANITIZE_CONFIG;
++  DOMPurify.addHook('uponSanitizeAttribute', (_node, attr) => {
++    attr.forceKeepAttr ||= again && attr.attrName.startsWith('data-blocked-');
++  });
+ 
+   let blockedExternalContent = false;
+   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+@@ -155,11 +204,14 @@ export function sanitizeEmailBodyForIframe(
+     applyNewTabToAnchor(node);
+     // Re-apply the data:-URI allowlist DOMPurify skips on media tags.
+     restrictDataUriResourcesOnNode(node);
++    keepMathStaticOnNode(node);
++    keepLeadingNewline(node);
+   });
+ 
+   let clean: string;
+   try {
+-    clean = DOMPurify.sanitize(html, config);
++    // On a given body FORCE_BODY would drop its first child.
++    clean = DOMPurify.sanitize(body, { ...config, FORCE_BODY: false });
+   } finally {
+     DOMPurify.removeAllHooks();
+   }
+@@ -172,6 +224,17 @@ export function sanitizeEmailBodyForIframe(
+   return { html: clean, blockedExternalContent };
+ }
+ 
++/**
++ * The parser drops a newline right after <pre>, <textarea> and <listing>, and today's
++ * serializers write none back: each reparse would lose a leading blank line.
++ */
++function keepLeadingNewline(node: Element): void {
++  const text = node.firstChild;
++  if (!/^(PRE|TEXTAREA|LISTING)$/.test(node.tagName) || text?.nodeType !== 3 || !text.nodeValue?.startsWith('\n')) return;
++  const probe = Object.assign(node.ownerDocument.createElement('pre'), { textContent: '\n' });
++  if (probe.innerHTML === '\n') text.nodeValue = '\n' + text.nodeValue;
++}
++
+ /**
+  * Sanitize HTML signature with stricter rules
+  * Allows basic formatting plus <img> for company logos, plus table-based
