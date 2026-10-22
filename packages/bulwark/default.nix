@@ -38,6 +38,7 @@ buildNpmPackage (finalAttrs: {
     ./07-read-receipts-from-the-mail-login.patch
     ./08-identities-stay-with-their-login.patch
     ./09-senders-are-addresses.patch
+    ./10-mail-keeps-its-math.patch
   ];
 
   configurePhase = ''
