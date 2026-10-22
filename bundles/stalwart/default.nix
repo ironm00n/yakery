@@ -74,23 +74,50 @@ let
   # the host sessions' account; every account on agentDomain is an agent too
   agentLocalPart = my-lib.ironmoon.mail.agents.sharedLocalPart;
 
+  mailAddress = lib.types.strMatching "[a-z0-9._+-]+@[a-z0-9.-]+";
+  accountOf =
+    address:
+    let
+      parts = lib.splitString "@" address;
+    in
+    {
+      local = lib.head (lib.splitString "+" (lib.head parts));
+      host = lib.last parts;
+    };
+  accountAddress =
+    address:
+    let
+      inherit (accountOf address) local host;
+    in
+    "${local}@${host}";
+
   # the queue keeps the local part's case
-  isAgentSender = "sender_domain == '${agentDomain}' || (sender_domain == '${domain}' && (starts_with(to_lowercase(sender), '${agentLocalPart}@') || starts_with(to_lowercase(sender), '${agentLocalPart}+')))";
+  isSentBy =
+    address:
+    let
+      inherit (accountOf address) local host;
+    in
+    "sender_domain == '${host}' && (starts_with(to_lowercase(sender), '${local}@') || starts_with(to_lowercase(sender), '${local}+'))";
+  isAgentSender = "sender_domain == '${agentDomain}' || (${isSentBy "${agentLocalPart}@${domain}"})";
+  isRcpt = rcpt: "to_lowercase(rcpt) == '${rcpt}'";
   agentMayReach = lib.concatStringsSep " || " (
     [
       "rcpt_domain == '${domain}'"
       "ends_with(rcpt_domain, '.${domain}')"
     ]
-    ++ map (rcpt: "to_lowercase(rcpt) == '${rcpt}'") cfg.agentCorrespondents
+    ++ map isRcpt cfg.agentCorrespondents
+    # the envelope sender is the account's own address, whichever subaddress the From names
+    ++ lib.mapAttrsToList (
+      agent: correspondents:
+      "((${isSentBy agent}) && (${lib.concatMapStringsSep " || " isRcpt correspondents}))"
+    ) cfg.agentCorrespondentsFor
   );
   agentRcptForbidden = "(${isAgentSender}) && !(${agentMayReach})";
 
   # RCPT-stage scripts see only the recipient being added
   unreceivable =
     let
-      parts = lib.splitString "@" config.services.stalwart.backup.account;
-      local = lib.head parts;
-      host = lib.last parts;
+      inherit (accountOf config.services.stalwart.backup.account) local host;
     in
     ''
       require ["envelope", "reject"];
@@ -101,17 +128,18 @@ let
 
   sieveList = strings: "[${lib.concatMapStringsSep ", " builtins.toJSON strings}]";
 
-  # sieve-rs joins the DATA-stage recipients into one string, CRLF between them: the agents'
-  # patterns match anywhere in it, a service mailbox's start and end between recipients.
+  # sieve-rs joins the DATA-stage recipients into one string, CRLF between them, and a
+  # service mailbox's patterns match its start and end between recipients.
   # A DMARC pass vouches for the From domain; Gmail and the like vouch for its local part.
   inboundGate =
     {
       recipients,
+      match ? "matches",
       senders,
       refusal,
     }:
     ''
-      if envelope :all :matches "to" ${sieveList recipients} {
+      if envelope :all :${match} "to" ${sieveList recipients} {
         if not allof (string :is "''${env.dmarc.result}" "pass", address :count "eq" :comparator "i;ascii-numeric" "from" "1", anyof (${lib.concatStringsSep ", " senders})) {
           reject ${builtins.toJSON refusal};
         }
@@ -127,28 +155,77 @@ let
     "${name}@${domain}"
     "${name}+*@${domain}"
   ];
+
+  # in the fancy-regex syntax sieve-rs's :regex reads; sieve-rs unescapes \\n, \\r and \\t in a
+  # string to control characters, so no backslash precedes those
+  agentAddress = "([^@\r\n]*@${lib.escapeRegex agentDomain}|${lib.escapeRegex agentLocalPart}(\\+[^@\r\n]*)?@${lib.escapeRegex domain})";
+  alternatives = addresses: lib.concatMapStringsSep "|" lib.escapeRegex addresses;
+  # one whole recipient of the CRLF-joined list
+  agentRecipient =
+    except:
+    "(^|\n)${
+      lib.optionalString (except != [ ]) "(?!(${alternatives except})(\r|$))"
+    }${agentAddress}(\r|$)";
+  agentSenders =
+    correspondents:
+    lib.optional (correspondents != [ ]) ''address :all :is "from" ${sieveList correspondents}''
+    ++ [
+      ''address :domain :is "from" "${domain}"''
+      ''address :domain :matches "from" "*.${domain}"''
+    ];
+  agentRefusal = "550 5.7.1 agents take mail only from their correspondents";
+
+  grants = lib.concatLists (
+    lib.mapAttrsToList (
+      agent:
+      map (correspondent: {
+        inherit agent correspondent;
+      })
+    ) cfg.agentCorrespondentsFor
+  );
+  # Stalwart delivers a subaddress to its account, which is all the DATA stage sees of it
+  grantsByAccount = lib.mapAttrs (_: map (grant: grant.correspondent)) (
+    lib.groupBy (grant: accountAddress grant.agent) grants
+  );
+
+  # agent-mail hands a session the mail whose To or Cc names its topic
+  grantsByCorrespondent = removeAttrs (lib.mapAttrs (_: map (grant: grant.agent)) (
+    lib.groupBy (grant: grant.correspondent) grants
+  )) cfg.agentCorrespondents;
+  topicGate =
+    correspondent: agents:
+    let
+      anyAgent = agentRecipient [ ];
+      otherAgent = "(?i)^(?!(${alternatives agents})$)${agentAddress}$";
+    in
+    ''
+      if allof (envelope :all :regex "to" ${builtins.toJSON anyAgent}, address :all :is "from" ${builtins.toJSON correspondent}, address :all :regex ["to", "cc"] ${builtins.toJSON otherAgent}) {
+        reject ${builtins.toJSON agentRefusal};
+      }
+    '';
+
+  # a message to several agents must pass the gate of each
   inbound = lib.concatStrings (
     [
       ''
-        require ["envelope", "reject", "variables", "relational", "comparator-i;ascii-numeric"];
+        require ["envelope", "reject", "variables", "relational", "comparator-i;ascii-numeric", "regex"];
       ''
       (inboundGate {
-        recipients = [
-          "*@${agentDomain}*"
-          "*${agentLocalPart}@${domain}*"
-          "*${agentLocalPart}+*@${domain}*"
-        ];
-        senders =
-          lib.optional (
-            cfg.agentCorrespondents != [ ]
-          ) ''address :all :is "from" ${sieveList cfg.agentCorrespondents}''
-          ++ [
-            ''address :domain :is "from" "${domain}"''
-            ''address :domain :matches "from" "*.${domain}"''
-          ];
-        refusal = "550 5.7.1 agents take mail only from their correspondents";
+        recipients = [ (agentRecipient (lib.attrNames grantsByAccount)) ];
+        match = "regex";
+        senders = agentSenders cfg.agentCorrespondents;
+        refusal = agentRefusal;
       })
     ]
+    ++ lib.mapAttrsToList (
+      account: correspondents:
+      inboundGate {
+        recipients = anyRecipient account;
+        senders = agentSenders (cfg.agentCorrespondents ++ correspondents);
+        refusal = agentRefusal;
+      }
+    ) grantsByAccount
+    ++ lib.mapAttrsToList topicGate grantsByCorrespondent
     ++ lib.mapAttrsToList (
       name: mailbox:
       inboundGate {
@@ -272,7 +349,7 @@ in
               '';
             };
             mayMail = lib.mkOption {
-              type = lib.types.nonEmptyListOf (lib.types.strMatching "[a-z0-9._+-]+@[a-z0-9.-]+");
+              type = lib.types.nonEmptyListOf mailAddress;
               description = "The only addresses the account may send to.";
             };
             allowedIps = lib.mkOption {
@@ -292,7 +369,7 @@ in
       '';
     };
     agentCorrespondents = lib.mkOption {
-      type = lib.types.listOf (lib.types.strMatching "[a-z0-9._+-]+@[a-z0-9.-]+");
+      type = lib.types.listOf mailAddress;
       default = [ ];
       example = [ "someone@example.com" ];
       description = ''
@@ -300,6 +377,21 @@ in
         exchange mail with, besides ${domain} and its subdomains. Agents' mail to anyone else is
         refused at RCPT, or bounced when it reaches the queue another way, such as a Sieve redirect.
         Mail to the agents over port 25 is refused unless it passes DMARC as one of these senders.
+      '';
+    };
+    agentCorrespondentsFor = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.nonEmptyListOf mailAddress);
+      default = { };
+      example = {
+        "${agentLocalPart}+topic@${domain}" = [ "someone@example.com" ];
+      };
+      description = ''
+        More correspondents, by the agent address that alone may exchange mail with them. Over
+        port 25, mail from one reaches only the accounts of the addresses it is listed for, and its
+        To and Cc may name no other agent address, since agent-mail hands a session the mail that
+        names its topic. Stalwart sees only the account a subaddress belongs to, in either
+        direction, so every subaddress of that account may send to them; agent-mail keeps
+        ${agentLocalPart}@${domain}'s topics apart.
       '';
     };
     receiving.enable = lib.mkEnableOption ''
@@ -339,6 +431,15 @@ in
           )
         ) (lib.attrNames cfg.serviceMailboxes);
         message = "bundles.stalwart.serviceMailboxes must be local parts no other account at ${domain} has";
+      }
+      {
+        # the addresses agent-mail sends from
+        assertion = lib.all (
+          agent:
+          builtins.match "(${lib.escapeRegex agentLocalPart}\\+[a-z0-9-]+@${lib.escapeRegex domain}|[a-z0-9._-]+(\\+[a-z0-9-]+)?@${lib.escapeRegex agentDomain})" agent
+          != null
+        ) (lib.attrNames cfg.agentCorrespondentsFor);
+        message = "bundles.stalwart.agentCorrespondentsFor must be keyed by topics of ${agentLocalPart}@${domain} or addresses on ${agentDomain}, in lower case";
       }
     ];
 
