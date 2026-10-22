@@ -15,6 +15,13 @@ I find the good parts of programming to be fun. Concretely:
 - inline comments are distracting and should be used VERY sparingly
   - for context my handwritten (high-quality) codebases I generally have around 1 line of comments to every 100 lines of src code (most of which are TODO, FIXME, or failed attempts or limitations)
 - doc comments are helpful but shouldn't be over done
+<!-- placed by claude from my mail 2026-10-22 (agent+tooling, "Re: transcribe"), my words -->
+- agent written code should be written like code i write:
+  - concise
+  - i can only keep about 10k lines of code in my head at once
+  - i heavily use macros -- very heavily
+  - pure -- keep mutation very local -- this is what lets me keep so much code in my head
+  - I will not accept a project being done if it's more than X number of lines of code, this has turned out to be an incredibly effective gate
 
 I generally read the code that you will write, so it's important that you let me still have fun programming. More specifically:
 - I want ownership of design, so please treat design decisions as mine
