@@ -221,24 +221,24 @@ struct Heading {
 
 impl Heading {
     fn decide(login: &Login, args: &Args, reply: Option<&Reply>) -> Result<Heading> {
-        let recipients = match (reply, args.all) {
-            (Some(reply), true) => {
-                let (to, cc) = reply_all(login, &args.to, &args.cc, &reply.from, &reply.rest)?;
-                Recipients::check(login, to, cc)?
-            }
-            _ => Recipients::check(login, args.to.clone(), args.cc.clone())?,
-        };
-        let subject = match (&args.subject, reply) {
-            (Some(subject), _) => plain(subject),
-            (None, Some(reply)) => reply.subject.clone(),
-            (None, None) => bail!("send needs --subject or --reply"),
-        };
         let from = match (&args.topic, reply.and_then(|r| r.topic.as_deref())) {
             (Some(topic), _) => login.topic_address(topic).parse()?,
             (None, Some(address)) => address.parse()?,
             (None, None) => bare_sender(login).context(
                 "send needs --topic, or --reply to mail sent to one of the login's topic addresses",
             )?,
+        };
+        let recipients = match (reply, args.all) {
+            (Some(reply), true) => {
+                let (to, cc) = reply_all(login, &args.to, &args.cc, &reply.from, &reply.rest)?;
+                Recipients::check(login, &from, to, cc)?
+            }
+            _ => Recipients::check(login, &from, args.to.clone(), args.cc.clone())?,
+        };
+        let subject = match (&args.subject, reply) {
+            (Some(subject), _) => plain(subject),
+            (None, Some(reply)) => reply.subject.clone(),
+            (None, None) => bail!("send needs --subject or --reply"),
         };
         Ok(Heading {
             from,
@@ -287,7 +287,6 @@ impl Heading {
 
 pub async fn run(args: Args) -> Result<()> {
     let config = Config::load()?;
-    Recipients::check(&config.login, args.to.clone(), args.cc.clone())?;
     let (host, me) = (host(), ClaudeSession::own());
     let content = match &args.mime {
         Some(path) => {
@@ -592,6 +591,43 @@ mod tests {
             from("ada@agent.example.org", &args(None), None).unwrap(),
             "ada@agent.example.org"
         );
+    }
+
+    #[test]
+    fn a_reply_may_mail_the_correspondents_of_the_topic_its_parent_reached() {
+        let reply = |topic: &str| Reply {
+            parent: "p".into(),
+            message_id: vec![],
+            references: vec![],
+            subject: "Re: x".into(),
+            topic: Some(topic.into()),
+            from: vec![],
+            rest: vec![],
+        };
+        let answer = |topic: Option<&str>| Args {
+            to: addresses_of(&["colleague@example.com"]),
+            subject: None,
+            ..args(topic)
+        };
+        let unboca = reply("agent+unboca@example.org");
+        assert_eq!(
+            from("agent@example.org", &answer(None), Some(&unboca)).unwrap(),
+            "agent+unboca@example.org"
+        );
+        for refused in [
+            from(
+                "agent@example.org",
+                &answer(None),
+                Some(&reply("agent+tooling@example.org")),
+            ),
+            from("agent@example.org", &answer(Some("tooling")), Some(&unboca)),
+        ] {
+            let refused = refused.unwrap_err();
+            assert!(
+                format!("{refused:#}").contains("agent+tooling@example.org may mail only"),
+                "{refused:#}"
+            );
+        }
     }
 
     fn heading(reply: bool) -> Heading {

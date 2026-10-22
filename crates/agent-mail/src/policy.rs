@@ -1,6 +1,8 @@
 //! What is compiled in: where agent-mail signs in, where it reads mail, and whom each login may mail. The values
 //! come from the build's environment, which package.nix sets from yakery's `lib/ironmoon.nix`.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result, bail};
 
 use crate::{address::Address, identity::Login};
@@ -37,6 +39,13 @@ const CORRESPONDENTS: &str = env!("AGENT_MAIL_CORRESPONDENTS");
 #[cfg(test)]
 const CORRESPONDENTS: &str = "";
 
+/// More of them, each for mail from one topic address alone: the secrets flake's `data.mail.agentCorrespondentsFor`,
+/// a JSON object from that address to its list. Stalwart can't tell the shared login's topics apart; this does.
+#[cfg(not(test))]
+const CORRESPONDENTS_FOR: &str = env!("AGENT_MAIL_CORRESPONDENTS_FOR");
+#[cfg(test)]
+const CORRESPONDENTS_FOR: &str = r#"{"agent+unboca@example.org": ["colleague@example.com"]}"#;
+
 /// `<shared local part>@<domain>`, the login every Claude session shares.
 fn is_shared(login: &Login) -> bool {
     let address = login.address();
@@ -57,30 +66,55 @@ pub fn bare_sender(login: &Login) -> Result<Address> {
     Ok(login.address().clone())
 }
 
-fn correspondents(list: &str) -> Result<Vec<Address>> {
-    list.split(',')
-        .map(str::trim)
-        .filter(|a| !a.is_empty())
-        .map(|a| {
-            a.parse()
-                .with_context(|| format!("compiled-in correspondent \"{a}\""))
-        })
-        .collect()
+fn compiled(a: &str) -> Result<Address> {
+    a.parse()
+        .with_context(|| format!("compiled-in address \"{a}\""))
 }
 
-/// The `To` and `Cc` of a mail; the only way to build one checks them against the login's restriction.
+/// Whom mail from `from` may go to outside the deployment's domains: everyone on `list`, and whoever `by_sender`
+/// lists for `from`. One malformed entry, for any sender, refuses all mail.
+fn correspondents(from: &Address, list: &str, by_sender: &str) -> Result<Vec<Address>> {
+    let mut all = list
+        .split(',')
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .map(compiled)
+        .collect::<Result<Vec<_>>>()?;
+    let by_sender: BTreeMap<String, Vec<String>> =
+        serde_json::from_str(by_sender).context("compiled-in correspondents by sender")?;
+    for (sender, list) in &by_sender {
+        let list = list
+            .iter()
+            .map(|a| compiled(a))
+            .collect::<Result<Vec<_>>>()?;
+        if compiled(sender)? == *from {
+            all.extend(list);
+        }
+    }
+    Ok(all)
+}
+
+/// The `To` and `Cc` of a mail; the only way to build one checks them against the login's restriction on mail from
+/// `from`.
 pub struct Recipients {
     pub to: Vec<Address>,
     pub cc: Vec<Address>,
 }
 
 impl Recipients {
-    pub fn check(login: &Login, to: Vec<Address>, cc: Vec<Address>) -> Result<Recipients> {
-        Self::check_against(login, to, cc, &correspondents(CORRESPONDENTS)?)
+    pub fn check(
+        login: &Login,
+        from: &Address,
+        to: Vec<Address>,
+        cc: Vec<Address>,
+    ) -> Result<Recipients> {
+        let correspondents = correspondents(from, CORRESPONDENTS, CORRESPONDENTS_FOR)?;
+        Self::check_against(login, from, to, cc, &correspondents)
     }
 
     fn check_against(
         login: &Login,
+        from: &Address,
         to: Vec<Address>,
         cc: Vec<Address>,
         correspondents: &[Address],
@@ -101,10 +135,7 @@ impl Recipients {
                 } else {
                     format!("{} and its correspondents", domains.join(", "))
                 };
-                bail!(
-                    "{login} may mail only {allowed}, not {}",
-                    outside.join(", ")
-                );
+                bail!("{from} may mail only {allowed}, not {}", outside.join(", "));
             }
         }
         Ok(Recipients { to, cc })
@@ -115,9 +146,14 @@ impl Recipients {
 mod tests {
     use super::*;
 
+    fn tooling() -> Address {
+        "agent+tooling@example.org".parse().unwrap()
+    }
+
     fn check(login: &str, to: &str) -> Result<Recipients> {
         Recipients::check_against(
             &login.parse().unwrap(),
+            &tooling(),
             vec![to.parse().unwrap()],
             vec![],
             &[],
@@ -167,6 +203,7 @@ mod tests {
         let login = "agent@example.org".parse().unwrap();
         let err = Recipients::check_against(
             &login,
+            &tooling(),
             vec!["owner@example.org".parse().unwrap()],
             vec!["someone@example.com".parse().unwrap()],
             &[],
@@ -175,30 +212,64 @@ mod tests {
         .unwrap();
         assert_eq!(
             err.to_string(),
-            "agent@example.org may mail only example.org and agent.example.org, not someone@example.com"
+            "agent+tooling@example.org may mail only example.org and agent.example.org, not someone@example.com"
         );
     }
 
     #[test]
     fn a_correspondent_is_allowed_and_nobody_else_at_its_domain() {
         let login = "agent@example.org".parse().unwrap();
-        let listed = correspondents(" pen.pal@example.com , other@example.net").unwrap();
-        let to = |a: &str| vec![a.parse().unwrap()];
-        assert!(
-            Recipients::check_against(&login, to("Pen.Pal@Example.com"), vec![], &listed).is_ok()
-        );
-        let err = Recipients::check_against(&login, to("stranger@example.com"), vec![], &listed)
-            .err()
-            .unwrap();
+        let listed =
+            correspondents(&tooling(), " pen.pal@example.com , other@example.net", "{}").unwrap();
+        let check = |a: &str| {
+            Recipients::check_against(
+                &login,
+                &tooling(),
+                vec![a.parse().unwrap()],
+                vec![],
+                &listed,
+            )
+        };
+        assert!(check("Pen.Pal@Example.com").is_ok());
         assert_eq!(
-            err.to_string(),
-            "agent@example.org may mail only example.org, agent.example.org and its correspondents, not stranger@example.com"
+            check("stranger@example.com").err().unwrap().to_string(),
+            "agent+tooling@example.org may mail only example.org, agent.example.org and its correspondents, not stranger@example.com"
+        );
+    }
+
+    #[test]
+    fn a_topic_mails_the_correspondents_granted_to_it_and_no_other_topic_does() {
+        let login = "agent@example.org".parse().unwrap();
+        let check = |from: &str| {
+            Recipients::check(
+                &login,
+                &from.parse().unwrap(),
+                vec!["Colleague@Example.com".parse().unwrap()],
+                vec![],
+            )
+        };
+        assert!(check("agent+unboca@example.org").is_ok());
+        assert!(check("Agent+Unboca@Example.org").is_ok());
+        assert_eq!(
+            check("agent+tooling@example.org")
+                .err()
+                .unwrap()
+                .to_string(),
+            "agent+tooling@example.org may mail only example.org and agent.example.org, not Colleague@Example.com"
         );
     }
 
     #[test]
     fn a_malformed_correspondent_refuses_everything() {
-        assert!(correspondents("ok@example.com,not an address").is_err());
-        assert!(correspondents("").unwrap().is_empty());
+        let from = tooling();
+        assert!(correspondents(&from, "ok@example.com,not an address", "{}").is_err());
+        assert!(correspondents(&from, "", "{}").unwrap().is_empty());
+        for by_sender in [
+            r#"{"agent+x@example.org": ["not an address"]}"#,
+            r#"{"not an address": ["ok@example.com"]}"#,
+            r#"["ok@example.com"]"#,
+        ] {
+            assert!(correspondents(&from, "", by_sender).is_err(), "{by_sender}");
+        }
     }
 }

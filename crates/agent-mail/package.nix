@@ -3,6 +3,7 @@
   rustPlatform,
   deployment,
   correspondents,
+  correspondentsFor,
 }:
 rustPlatform.buildRustPackage {
   pname = "agent-mail";
@@ -17,7 +18,14 @@ rustPlatform.buildRustPackage {
     "-p"
     "agent-mail"
   ];
-  env = import ./deployment-env.nix { inherit lib deployment correspondents; };
+  env = import ./deployment-env.nix {
+    inherit
+      lib
+      deployment
+      correspondents
+      correspondentsFor
+      ;
+  };
   meta = {
     description = "Agent mail through Stalwart's JMAP, signed in with ZITADEL";
     mainProgram = "agent-mail";

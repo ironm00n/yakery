@@ -392,6 +392,7 @@
           inherit lib;
           deployment = my-lib.ironmoon;
           correspondents = inputs.secrets.data.mail.agentCorrespondents;
+          correspondentsFor = inputs.secrets.data.mail.agentCorrespondentsFor;
         };
       };
     });
