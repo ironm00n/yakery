@@ -25,11 +25,7 @@ const STYLES: &[(&str, &str)] = &[
     ),
     ("table", "border-collapse: collapse"),
     (
-        "th",
-        "border: 1px solid rgba(127, 127, 127, 0.5); padding: 4px 8px",
-    ),
-    (
-        "td",
+        "th, td",
         "border: 1px solid rgba(127, 127, 127, 0.5); padding: 4px 8px",
     ),
     (

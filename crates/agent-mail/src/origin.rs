@@ -39,7 +39,6 @@ impl Origin {
             .expect("compiled-in paths stay on their origin")
     }
 
-    /// Parses `url` and refuses it unless it is `https://<host>` on the default port with no user info.
     pub fn check(self, url: &str) -> Result<Pinned> {
         let parsed =
             Url::parse(url).with_context(|| format!("{} is not a URL", url.escape_debug()))?;

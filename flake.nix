@@ -389,6 +389,16 @@
             ${hyprland_lua_stubs}
           '';
         };
+
+      # agent-mail's build-time deployment values only; crates/.envrc takes the Rust toolchain from another shell
+      crates = pkgs.mkShellNoCC {
+        env = import ./crates/agent-mail/deployment-env.nix {
+          inherit lib;
+          deployment = my-lib.ironmoon;
+          correspondents = inputs.secrets.data.mail.agentCorrespondents;
+          correspondentsFor = inputs.secrets.data.mail.agentCorrespondentsFor;
+        };
+      };
     });
   };
 }

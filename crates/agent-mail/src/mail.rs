@@ -12,6 +12,7 @@ use jmap_client::{
         query::Filter,
         request::Request,
         response::{MailboxGetResponse, TaggedMethodResponse, ThreadGetResponse},
+        session::CoreCapabilities,
     },
     email::{self, Email, query},
     event_source::PushNotification,
@@ -63,18 +64,18 @@ impl Session {
 
     /// RFC 8620 lets a server refuse an Email/get for more ids than this.
     pub fn max_objects_in_get(&self) -> usize {
-        self.client
-            .session()
-            .core_capabilities()
-            .map_or(100, |core| core.max_objects_in_get())
-            .max(1)
+        self.core_limit(CoreCapabilities::max_objects_in_get)
     }
 
     pub fn max_objects_in_set(&self) -> usize {
+        self.core_limit(CoreCapabilities::max_objects_in_set)
+    }
+
+    fn core_limit(&self, limit: fn(&CoreCapabilities) -> usize) -> usize {
         self.client
             .session()
             .core_capabilities()
-            .map_or(100, |core| core.max_objects_in_set())
+            .map_or(100, limit)
             .max(1)
     }
 
@@ -99,7 +100,6 @@ impl Session {
             .context("stalwart")
     }
 
-    /// The blob's bytes, or `None` once they pass the byte bound.
     async fn download(&self, blob: &str, bounds: Bounds) -> jmap_client::Result<Option<Vec<u8>>> {
         let url = download_url(
             self.client.session().download_url(),
@@ -202,7 +202,6 @@ pub struct Bounds {
     pub time: Duration,
 }
 
-/// The session's download template filled in, under the same origin check as the template.
 fn download_url(template: &str, account: &str, blob: &str) -> Result<Pinned> {
     let url = template
         .replace("{accountId}", JmapId::new(account)?.as_str())
@@ -403,7 +402,6 @@ impl Mail {
         }
     }
 
-    /// Email/get in chunks of the server's maxObjectsInGet; `configure` sets the method's arguments.
     pub async fn emails(
         &self,
         ids: &[String],
@@ -425,7 +423,6 @@ impl Mail {
         Ok(found)
     }
 
-    /// The email ids of each thread, chunked like `emails`.
     pub async fn threads(&self, thread_ids: &[String]) -> Result<Vec<thread::Thread>> {
         let mut found = vec![];
         for chunk in thread_ids.chunks(self.session().max_objects_in_get()) {
@@ -440,7 +437,6 @@ impl Mail {
         Ok(found)
     }
 
-    /// Adds keywords to emails, in chunks of the server's maxObjectsInSet.
     pub async fn mark(&self, marks: &[(&str, Vec<&str>)]) -> Result<()> {
         for chunk in marks.chunks(self.session().max_objects_in_set()) {
             let mut responses = self.call(|r| set_keywords(r, None, chunk)).await?;
@@ -509,7 +505,6 @@ impl Mail {
         Ok(found.into_iter().collect())
     }
 
-    /// The account's Email state, to follow `Email/changes` from.
     pub async fn email_state(&self) -> Result<String> {
         let mut responses = self
             .call(|r| {
@@ -547,7 +542,6 @@ impl Mail {
         }
     }
 
-    /// Stores a raw message in `mailbox` with `keywords`, as it is; the new email's id.
     pub async fn import(
         &self,
         message: Vec<u8>,

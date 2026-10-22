@@ -42,17 +42,6 @@ pub enum Delivery {
 }
 
 #[derive(Debug)]
-enum Submitted {
-    Created {
-        id: String,
-        delivery: Delivery,
-    },
-    /// No submission was created, so nothing was sent.
-    NotCreated(anyhow::Error),
-}
-
-/// What submitting an email came to.
-#[derive(Debug)]
 pub enum Outcome {
     Submitted {
         id: String,
@@ -63,6 +52,11 @@ pub enum Outcome {
     /// The reply was lost and no submission could be found or ruled out.
     Unknown(anyhow::Error),
 }
+
+const READ_BACK: [email_submission::Property; 2] = [
+    email_submission::Property::DeliveryStatus,
+    email_submission::Property::UndoStatus,
+];
 
 /// Whether a failed call is known to have changed nothing: RFC 8620 request-level errors mean no method ran.
 /// Anything else, a lost or timed-out response included, leaves the outcome unknown.
@@ -114,7 +108,6 @@ impl Outbox {
         })
     }
 
-    /// Adds the submission and the read-back of its delivery status.
     fn submit(&self, r: &mut Request<'_>, email_id: &str, rcpt_to: &[Address]) {
         r.set_email_submission()
             .create_with_id("send")
@@ -124,21 +117,20 @@ impl Outbox {
                 self.identity_email.as_str(),
                 rcpt_to.iter().map(|a| a.to_string()),
             );
-        r.get_email_submission().ids(["#send"]).properties([
-            email_submission::Property::DeliveryStatus,
-            email_submission::Property::UndoStatus,
-        ]);
+        r.get_email_submission()
+            .ids(["#send"])
+            .properties(READ_BACK);
     }
 
     /// Reads what `submit` added. An `Err` means the responses were malformed, so the outcome is unknown.
-    fn read(mut responses: Responses) -> Result<Submitted> {
+    fn read(mut responses: Responses) -> Result<Outcome> {
         let created = match responses
             .next()?
             .unwrap_set_email_submission()?
             .created("send")
         {
             Ok(created) => created,
-            Err(e) => return Ok(Submitted::NotCreated(e.into())),
+            Err(e) => return Ok(Outcome::Unsent(e.into())),
         };
         let id = created.id().unwrap_or_default().to_owned();
         let delivery = match responses
@@ -148,7 +140,7 @@ impl Outbox {
             Ok(mut got) => got.take_list().first().map_or(Delivery::Unknown, delivery),
             Err(_) => Delivery::Unknown,
         };
-        Ok(Submitted::Created { id, delivery })
+        Ok(Outcome::Submitted { id, delivery })
     }
 
     /// Submits `email_id` to exactly `rcpt_to`; when the reply is lost, the submission is looked for.
@@ -158,8 +150,7 @@ impl Outbox {
             .await
             .and_then(Outbox::read);
         match submitted {
-            Ok(Submitted::Created { id, delivery }) => Outcome::Submitted { id, delivery },
-            Ok(Submitted::NotCreated(e)) => Outcome::Unsent(e),
+            Ok(outcome) => outcome,
             Err(e) if not_processed(&e) => Outcome::Unsent(e),
             Err(e) => match self.find(mail, email_id).await {
                 Ok(Some((id, delivery))) => Outcome::Submitted { id, delivery },
@@ -171,7 +162,6 @@ impl Outbox {
         }
     }
 
-    /// The submission of `email_id`, for when the reply to submitting it was lost.
     async fn find(&self, mail: &Mail, email_id: &str) -> Result<Option<(String, Delivery)>> {
         let mut responses = mail
             .call(|r| {
@@ -179,10 +169,7 @@ impl Outbox {
                     .query_email_submission()
                     .filter(email_submission::query::Filter::email_ids([email_id]))
                     .result_reference();
-                r.get_email_submission().ids_ref(ids).properties([
-                    email_submission::Property::DeliveryStatus,
-                    email_submission::Property::UndoStatus,
-                ]);
+                r.get_email_submission().ids_ref(ids).properties(READ_BACK);
             })
             .await?;
         responses.next()?.unwrap_query_email_submission()?;
@@ -212,7 +199,6 @@ impl Outbox {
     }
 }
 
-/// The refusals as one line each, for an error or a warning.
 pub fn describe(refused: &[Refusal]) -> String {
     let lines: Vec<String> = refused
         .iter()
@@ -221,7 +207,6 @@ pub fn describe(refused: &[Refusal]) -> String {
     lines.join("\n")
 }
 
-/// For callers whose submission must reach every recipient.
 pub fn require_all(id: &str, delivery: &Delivery) -> Result<()> {
     if let Delivery::Refused(refused) = delivery {
         bail!(
@@ -238,7 +223,7 @@ mod tests {
 
     use super::*;
 
-    fn read(json: &str) -> Submitted {
+    fn read(json: &str) -> Outcome {
         let r: Response<TaggedMethodResponse> = serde_json::from_str(json).unwrap();
         Outbox::read(Responses::from_vec(r.unwrap_method_responses())).unwrap()
     }
@@ -257,7 +242,7 @@ mod tests {
         let got = read(&created(
             r#"{"nosuch@example.org":{"smtpReply":"550 5.1.2 Mailbox does not exist.","delivered":"no","displayed":"unknown"}}"#,
         ));
-        let Submitted::Created { id, delivery } = got else {
+        let Outcome::Submitted { id, delivery } = got else {
             panic!("{got:?}")
         };
         assert_eq!(id, "S1");
@@ -277,7 +262,7 @@ mod tests {
             r#"{"a@example.org":{"smtpReply":"250 2.1.5 Queued","delivered":"unknown","displayed":"unknown"},
                 "b@example.org":{"smtpReply":"550 no","delivered":"no","displayed":"unknown"}}"#,
         ));
-        let Submitted::Created {
+        let Outcome::Submitted {
             delivery: Delivery::Accepted { refused },
             ..
         } = got
@@ -303,7 +288,7 @@ mod tests {
         assert!(
             matches!(
                 got,
-                Submitted::Created {
+                Outcome::Submitted {
                     delivery: Delivery::Unknown,
                     ..
                 }
@@ -320,6 +305,6 @@ mod tests {
               ["EmailSubmission/get", {"accountId":"a","state":"2","notFound":["#send"],"list":[]}, "s2"]
             ]}"##,
         );
-        assert!(matches!(got, Submitted::NotCreated(_)), "{got:?}");
+        assert!(matches!(got, Outcome::Unsent(_)), "{got:?}");
     }
 }

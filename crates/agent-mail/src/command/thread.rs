@@ -86,7 +86,6 @@ async fn answered_ids(mail: &Mail, receipt: &Email) -> Result<Vec<MessageId>> {
     Ok(answers)
 }
 
-/// The subject with reply and forward prefixes taken off.
 fn base_subject(subject: &str) -> &str {
     let mut rest = subject.trim();
     while let Some((prefix, tail)) = rest.split_once(':') {

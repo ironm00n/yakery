@@ -23,6 +23,7 @@ let
   agent-mail = pkgs.callPackage ../../../../../crates/agent-mail/package.nix {
     deployment = ironmoon;
     correspondents = inputs.secrets.data.mail.agentCorrespondents;
+    correspondentsFor = inputs.secrets.data.mail.agentCorrespondentsFor;
   };
 
   # claude code loads any ~/.claude/skills/<name> holding a .claude-plugin/ as a plugin

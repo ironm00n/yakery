@@ -47,7 +47,6 @@ pub fn is_receipt(m: &Email) -> bool {
     })
 }
 
-/// What a delivered mail's receipt request comes to.
 pub enum Asked {
     Nothing,
     /// Not sent, but `$MDNSent` is still set, as RFC 3503 §3 asks of automatic processing.
@@ -106,9 +105,6 @@ impl Asked {
                 senders.join(", ")
             ));
         }
-        if let Err(e) = Recipients::check(login, vec![requester.clone()], vec![]) {
-            return decline(e.to_string());
-        }
         let reached: Option<Address> = login
             .first_topic_address(addresses(m.to()).chain(addresses(m.cc())))
             .and_then(|a| a.parse().ok());
@@ -120,6 +116,10 @@ impl Asked {
             Ok(address) => address,
             Err(e) => return decline(e.to_string()),
         };
+        if let Err(e) = Recipients::check(login, &final_recipient, vec![requester.clone()], vec![])
+        {
+            return decline(e.to_string());
+        }
         Asked::Send(Receipt {
             to: requester,
             final_recipient,
@@ -378,6 +378,18 @@ mod tests {
         assert!(declined(&outside).contains("may mail only"));
         let vm: Login = "ada@agent.example.org".parse().unwrap();
         assert!(matches!(Asked::of(&vm, &outside), Asked::Send(_)));
+        let granted = |to: &str| {
+            mail(json!({
+                "from": [{ "email": "colleague@example.com" }],
+                "to": [{ "email": to }],
+                "header:Disposition-Notification-To:asAddresses": [{ "email": "colleague@example.com" }],
+            }))
+        };
+        assert!(matches!(
+            Asked::of(&login(), &granted("agent+unboca@example.org")),
+            Asked::Send(_)
+        ));
+        assert!(declined(&granted("agent+pool@example.org")).contains("may mail only"));
     }
 
     #[test]

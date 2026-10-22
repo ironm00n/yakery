@@ -9,6 +9,7 @@ let
   agent-mail = pkgs.callPackage ../../../crates/agent-mail/package.nix {
     deployment = my-lib.ironmoon;
     correspondents = [ ];
+    correspondentsFor = { };
   };
 
   # the retired Python mailtool kept "user:" and "password:" lines here; it read the last line

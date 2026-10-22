@@ -5,6 +5,7 @@ mod auth;
 mod body;
 mod command;
 mod config;
+mod embedded;
 mod entity;
 mod folder;
 mod home;
@@ -46,10 +47,11 @@ enum Command {
         #[arg(value_name = "EMAIL_ID")]
         id: String,
     },
-    /// Save each attachment of an email into <passwd home>/.cache/agent-mail/attachments/<email id>/ and print
-    /// the absolute path of each, one per line; read-only. Names are cut down to [A-Za-z0-9._-]. A file saved by
-    /// an earlier run is printed again, not replaced. Exits 1 if any attachment was skipped, over 50 MiB each or
-    /// 200 MiB in all, or failed; each is named on stderr with why.
+    /// Save each attachment of an email, and each image its HTML embeds, into
+    /// <passwd home>/.cache/agent-mail/attachments/<email id>/ and print the absolute path of each, one per line;
+    /// read-only. Names are cut down to [A-Za-z0-9._-]. A file saved by an earlier run is printed again, not
+    /// replaced. Exits 1 if any attachment was skipped, over 50 MiB each or 200 MiB in all, or failed; each is
+    /// named on stderr with why.
     Attachments {
         #[arg(value_name = "EMAIL_ID")]
         id: String,

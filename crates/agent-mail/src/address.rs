@@ -16,7 +16,6 @@ fn is_dot_atom(s: &str) -> bool {
             .all(|run| !run.is_empty() && run.chars().all(is_atext))
 }
 
-/// Letters, digits and hyphens, one to 63 per label, no hyphen at either end, at least two labels.
 fn is_ldh_domain(s: &str) -> bool {
     let label = |l: &str| {
         (1..=63).contains(&l.len())
