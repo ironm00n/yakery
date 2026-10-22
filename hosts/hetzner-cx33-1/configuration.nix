@@ -34,7 +34,7 @@
       mayMail = [ "ironmoon@ironmoon.dev" ];
       allowedIps = [ "${inputs.secrets.data.ips.oracle-a1-flex-3.ipv4.address}/32" ];
     };
-    inherit (inputs.secrets.data.mail) agentCorrespondents;
+    inherit (inputs.secrets.data.mail) agentCorrespondents agentCorrespondentsFor;
   };
   bundles.bulwark.enable = true;
   bundles.vpn.netbird = {
