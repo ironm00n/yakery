@@ -1,10 +1,8 @@
 { pkgs }:
 let
-  inherit (pkgs) lib;
-  my-lib = import ../../lib { inherit lib; };
-  host = my-lib.ironmoon.auth.host;
+  zitadel = import ./zitadel-server.nix { inherit pkgs; };
+  inherit (zitadel) host secretsDir;
   addr = "192.168.1.1";
-  secretsDir = "/etc/zitadel-test";
   scope = "openid profile urn:zitadel:iam:org:project:id:zitadel:aud";
 in
 pkgs.testers.runNixOSTest {
@@ -12,109 +10,23 @@ pkgs.testers.runNixOSTest {
 
   defaults.virtualisation.graphics = false;
 
-  nodes.machine =
-    { ... }:
-    {
-      imports = [
-        ../../modules/zitadel
-        ../../bundles/zitadel.nix
-        ../../bundles/backup.nix
-        ../../bundles/reverse-proxy.nix
-        # sops-nix stays out of tests; every secret resolves to a plain file under secretsDir
-        {
-          options.sops.secrets = lib.mkOption {
-            type = lib.types.attrsOf (
-              lib.types.submodule (
-                { name, ... }:
-                {
-                  freeformType = lib.types.attrs;
-                  options.path = lib.mkOption { default = "${secretsDir}/${name}"; };
-                }
-              )
-            );
-          };
-        }
-      ];
-      disabledModules = [ "services/web-apps/zitadel.nix" ];
-      _module.args = {
-        inherit my-lib;
-        inputs.secrets = {
-          lib.zitadel = null;
-          data.ips.machine = {
-            ipv4.address = addr;
-            ipv6 = {
-              prefix = "2001:db8:1";
-              prefixLength = 64;
-            };
-          };
-        };
-      };
-
-      virtualisation = {
-        memorySize = 2048;
-        interfaces.enp1s0 = {
-          vlan = 1;
-          assignIP = true;
-        };
-      };
-
-      bundles.zitadel.enable = true;
-      bundles.backup.services.zitadel = {
-        secretsFile = null;
-        passphraseFile = "/dev/null";
-        sshKeyFile = "/dev/null";
-      };
-
-      environment.etc =
-        lib.mapAttrs'
-          (
-            name: text:
-            lib.nameValuePair "zitadel-test/${name}" {
-              inherit text;
-              mode = "0400";
-            }
-          )
-          {
-            zitadel-master_key = "MasterkeyNeedsToHave32Characters";
-            # the shape of the real secret: database credentials the generated config has to override
-            zitadel-settings = ''
-              Database:
-                postgres:
-                  User:
-                    Password: stale
-                  Admin:
-                    Username: postgres
-                    Password: stale
-            '';
-            zitadel-admin_steps = ''
-              FirstInstance:
-                PatPath: /tmp/pat
-                Org:
-                  Machine:
-                    Machine:
-                      Username: probe
-                      Name: probe
-                    Pat:
-                      ExpirationDate: 2030-01-01T00:00:00Z
-            '';
-          };
-    };
+  nodes.machine = {
+    imports = [ zitadel.node ];
+    virtualisation.memorySize = 2048;
+  };
 
   testScript =
     { nodes, ... }:
     let
       dump = nodes.machine.bundles.backup.services.zitadel.dumpCommand;
     in
-    ''
+    zitadel.python
+    + ''
       import base64
-      import json
 
+      zitadel = machine
       https = "curl -fsS -k --resolve ${host}:443:${addr} https://${host}"
       ready = "curl -fsS http://127.0.0.1:${toString nodes.machine.services.zitadel.settings.Port}/debug/ready"
-
-      def api(method, path, token, body=None):
-          data = f"-d '{json.dumps(body)}' -H 'Content-Type: application/json'" if body is not None else ""
-          return json.loads(machine.succeed(f"{https}{path} -X {method} -H 'Authorization: Bearer {token}' {data}"))
 
       machine.wait_for_unit("zitadel.service")
       machine.wait_until_succeeds(ready, timeout=300)
@@ -135,9 +47,7 @@ pkgs.testers.runNixOSTest {
           assert roles == ["zitadel"], roles
 
       with subtest("a client-credentials JWT carries the requested scopes"):
-          pat = machine.succeed("cat /tmp/systemd-private-*-zitadel.service-*/tmp/pat").strip()
-          # the first authenticated call answers 503 until the projections behind it catch up
-          machine.wait_until_succeeds(f"{https}/auth/v1/users/me -H 'Authorization: Bearer {pat}'", timeout=60)
+          pat = admin_pat()
           uid = api("GET", "/auth/v1/users/me", pat)["user"]["id"]
           api("PUT", f"/management/v1/users/{uid}/machine", pat, {"name": "probe", "accessTokenType": "ACCESS_TOKEN_TYPE_JWT"})
           secret = api("PUT", f"/management/v1/users/{uid}/secret", pat, {})
