@@ -1,8 +1,11 @@
 # A Stalwart node on the internal directory, with the recovery admin enabled so a test
 # script can create app passwords, and Python helpers for its JMAP API.
-{ pkgs }:
+{
+  pkgs,
+  domain ? "example.test",
+}:
 rec {
-  domain = "example.test";
+  inherit domain;
   recoveryPassword = "recovery";
 
   account = name: extra: {
