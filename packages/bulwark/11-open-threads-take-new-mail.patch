@@ -50,51 +50,86 @@ index 126daa01..08e61da6 100644
    const toggleMvExpanded = useCallback((target: Email) => {
      emitThreadExpand(target.threadId, [target], !mvExpandedIdsRef.current.has(target.id));
 diff --git a/components/mail/__tests__/conversation-in-reader.test.tsx b/components/mail/__tests__/conversation-in-reader.test.tsx
-index 53f0ccb7..b485ff0c 100644
+index 53f0ccb7..ae25de3d 100644
 --- a/components/mail/__tests__/conversation-in-reader.test.tsx
 +++ b/components/mail/__tests__/conversation-in-reader.test.tsx
-@@ -1,9 +1,9 @@
+@@ -1,9 +1,10 @@
  import React from 'react';
  import { act, fireEvent, render, waitFor } from '@testing-library/react';
  import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 -import type { Email, Mailbox } from '@/lib/jmap/types';
 +import type { CollectionChanges, Email, Mailbox } from '@/lib/jmap/types';
  import { useAuthStore } from '@/stores/auth-store';
--import { useEmailStore } from '@/stores/email-store';
-+import { useEmailStore, type EmailListSync } from '@/stores/email-store';
+ import { useEmailStore } from '@/stores/email-store';
++import { useIdentityStore } from '@/stores/identity-store';
  import { useSettingsStore } from '@/stores/settings-store';
  import { usePluginStore } from '@/stores/plugin-store';
  import { useThemeStore } from '@/stores/theme-store';
-@@ -36,7 +36,11 @@ vi.mock('@/hooks/use-media-query', () => ({
+@@ -36,7 +37,23 @@ vi.mock('@/hooks/use-media-query', () => ({
  }));
  vi.mock('@/lib/push-bindings', () => ({ reconcilePushBindings: () => {}, releasePushBindings: () => {} }));
  vi.mock('@/components/email/email-list', () => ({ EmailList: () => null }));
 -vi.mock('@/components/email/email-viewer', () => ({ EmailViewer: () => null }));
 +// The conversation the reading pane is handed, render by render.
-+const viewer = vi.hoisted(() => ({ shown: [] as (string | undefined)[] }));
++type ViewerProps = { mvConversation?: Email[]; onQuickReply: (body: string) => Promise<void>; onReply: () => Promise<void> };
++const viewer = vi.hoisted(() => ({ shown: [] as (string | undefined)[], props: null as ViewerProps | null }));
 +vi.mock('@/components/email/email-viewer', () => ({
-+  EmailViewer: ({ mvConversation }: { mvConversation?: Email[] }) => { viewer.shown.push(mvConversation?.map((e) => e.id).join()); return null; },
++  EmailViewer: (props: ViewerProps) => { viewer.props = props; viewer.shown.push(props.mvConversation?.map((e) => e.id).join()); return null; },
++}));
++vi.mock('next/dynamic', async () => {
++  const { lazy, Suspense } = await import('react');
++  return { default: (load: () => Promise<React.ComponentType<Record<string, unknown>>>) => {
++    const Component = lazy(async () => ({ default: await load() }));
++    return (props: Record<string, unknown>) => <Suspense fallback={null}><Component {...props} /></Suspense>;
++  } };
++});
++const composer = vi.hoisted(() => ({ onSend: null as ((data: unknown) => Promise<void>) | null }));
++vi.mock('@/components/email/email-composer', () => ({
++  EmailComposer: ({ onSend }: { onSend: (data: unknown) => Promise<void> }) => { composer.onSend = onSend; return null; },
 +}));
  
  const { MailApp } = await import('../mail-app');
  
-@@ -51,9 +55,15 @@ const a2 = mail('a2', 'a', 4);
+@@ -44,16 +61,37 @@ const inbox = { id: 'inbox', name: 'Inbox', role: 'inbox' } as Mailbox;
+ const mail = (id: string, threadId: string, day: number): Email => ({
+   id, threadId, blobId: `blob-${id}`, subject: id, mailboxIds: { inbox: true }, keywords: { $seen: true },
+   size: 10, receivedAt: `2026-01-${String(day).padStart(2, '0')}T00:00:00Z`, from: [{ email: `${id}@example.com` }],
+-  to: [], preview: '', hasAttachment: false,
++  to: [{ email: 'me@example.com' }], preview: '', hasAttachment: false,
+ }) as Email;
+ // Newest first, as the server lists them: thread `a` has a row of two.
+ const a2 = mail('a2', 'a', 4);
  const b = mail('b', 'b', 3);
  const a1 = mail('a1', 'a', 2);
  const c = mail('c', 'c', 1);
 +// Thread mail on the server; a3 is a reply in Sent, which the list does not show.
 +const a3 = { ...mail('a3', 'a', 5), mailboxIds: { sent: true } };
++// The server's mail, and its Email state `s<n>` after n changes.
++type Change = Partial<Pick<CollectionChanges, 'created' | 'updated' | 'destroyed'>>;
 +let server: Email[];
++let log: Change[];
++const serverState = () => `s${log.length}`;
++const commit = (next: Email[], change: Change) => { server = next; log.push(change); };
++const changesSince = (since: string): CollectionChanges => {
++  const later = log.slice(Number(since.slice(1)));
++  const ids = (kind: keyof Change) => later.flatMap((change) => change[kind] ?? []);
++  return { oldState: since, newState: serverState(), hasMoreChanges: false, created: ids('created'), updated: ids('updated'), destroyed: ids('destroyed'), updatedProperties: null };
++};
++const withKeyword = (id: string, keyword: string, on = true) =>
++  commit(server.map((e) => e.id === id ? { ...e, keywords: { ...e.keywords, [keyword]: on } } : e), { updated: [id] });
 +const threadOf = (id: string) => ({ id, emailIds: server.filter((e) => e.threadId === id).map((e) => e.id) });
++const listed = () => [...server, b, c].filter((e) => e.mailboxIds.inbox).sort((x, y) => y.receivedAt.localeCompare(x.receivedAt));
  
  let client: Record<string, ReturnType<typeof vi.fn> | (() => unknown)>;
  beforeEach(() => {
 +  server = [a1, a2];
++  log = [];
 +  viewer.shown = [];
++  composer.onSend = null;
    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected network request')));
    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
    usePluginStore.setState({ initializePlugins: vi.fn().mockResolvedValue(undefined) });
-@@ -61,9 +71,11 @@ beforeEach(() => {
+@@ -61,23 +99,37 @@ beforeEach(() => {
    client = {
      getAccountId: () => 'acc', getUsername: () => 'me@example.com',
      getSieveAccountId: () => null, hasDelayedSend: () => false, getSession: () => null,
@@ -104,61 +139,173 @@ index 53f0ccb7..b485ff0c 100644
 +    getEmail: vi.fn(async (id: string) => [...server, b, c].find((e) => e.id === id) ?? null),
 +    getThread: vi.fn(async (threadId: string) => threadOf(threadId)),
 +    getThreads: vi.fn(async (threadIds: string[]) => threadIds.map(threadOf)),
-+    getEmails: vi.fn(async () => ({ emails: [...server, b, c].filter((e) => e.mailboxIds.inbox).sort((x, y) => y.receivedAt.localeCompare(x.receivedAt)), total: 3 })),
++    getEmails: vi.fn(async () => ({ emails: listed(), total: listed().length, hasMore: false, state: serverState() })),
 +    getSomeEmails: vi.fn(async (ids: string[]) => server.filter((e) => ids.includes(e.id))),
++    getEmailChanges: vi.fn(async (since: string) => changesSince(since)),
      markAsRead: vi.fn().mockResolvedValue(undefined),
++    setKeyword: vi.fn(async (id: string, keyword: string) => withKeyword(id, keyword)),
++    toggleStar: vi.fn(async (id: string, starred: boolean) => withKeyword(id, '$flagged', starred)),
++    // A send creates the reply in Drafts, where a push may report it, and its
++    // submission then files it in Sent.
++    sendEmail: vi.fn(async () => {
++      commit([...server, { ...a3, mailboxIds: { drafts: true }, keywords: { $draft: true } }], { created: ['a3'] });
++      await pushNow();
++      commit(server.map((e) => e.id === 'a3' ? a3 : e), { updated: ['a3'] });
++      return { scheduled: false, emailId: 'a3', emailSubmissionId: 'sub' };
++    }),
    };
    useAuthStore.setState({
-@@ -122,3 +134,36 @@ describe('the default interface reading a thread in its reading pane', () => {
+     isAuthenticated: true, isLoading: false, client: client as never, activeAccountId: 'login', identities: [],
+     getClientForAccount: () => client as never,
+     getAllConnectedClients: () => new Map([['login', client]]) as never,
+   });
++  useIdentityStore.setState({ identities: [{ id: 'me', email: 'me@example.com', name: 'Me' }] as never });
+   useSettingsStore.setState({ enableUnifiedMailbox: false, mailLayout: 'split', interfaceLayout: 'default', disableThreading: false, markAsReadDelay: -1 } as never);
+   useEmailStore.setState({
+     emails: [a2, b, a1, c], selectedEmail: a2, selectedMailbox: inbox.id, mailboxes: [inbox],
+     threadEmailCounts: new Map(), viewingAccountId: null, accountMailboxes: {}, isUnifiedView: false, unifiedRole: null,
+     isScheduledView: false, isLoadingEmail: false, isLoading: false, searchQuery: '',
+     searchFilters: { ...DEFAULT_SEARCH_FILTERS }, searchMailboxId: '', selectedKeyword: null,
+-    selectedEmailKeys: new Set(),
++    selectedEmailKeys: new Set(), emailListSync: null, emailStates: null, listOrder: [],
+     fetchMailboxes: vi.fn().mockResolvedValue(undefined), fetchEmails: vi.fn().mockResolvedValue(undefined),
+     fetchQuota: vi.fn().mockResolvedValue(undefined), fetchTagCounts: vi.fn().mockResolvedValue(undefined),
+     refreshScheduledMetadata: vi.fn().mockResolvedValue(undefined),
+@@ -122,3 +174,84 @@ describe('the default interface reading a thread in its reading pane', () => {
      expect(openId()).toBe('a1');
    });
  });
 +
-+describe('the conversation in the reading pane following pushes', () => {
-+  const synced: EmailListSync = { state: 's1', accountId: 'acc', mailboxId: 'inbox' };
-+  const push = async (emailListSync: EmailListSync | null, changes: Partial<CollectionChanges>) => {
-+    client.getEmailChanges = vi.fn(async () => ({ oldState: 's1', newState: 's2', hasMoreChanges: false, created: [], updated: [], destroyed: [], ...changes }));
-+    useEmailStore.setState({ emailListSync });
-+    await act(() => useEmailStore.getState().handleStateChange({ '@type': 'StateChange', changed: { acc: { Email: 's2' } } }, client as never));
-+  };
-+  const opened = async () => {
-+    useEmailStore.setState({ threadEmailCounts: new Map([['a', 2]]) });
-+    render(<MailApp />);
-+    await waitFor(() => expect(viewer.shown.at(-1)).toBe('a1,a2'));
-+  };
++const pushNow = () => useEmailStore.getState().handleStateChange({ '@type': 'StateChange', changed: { acc: { Email: serverState() } } }, client as never);
++const push = () => act(pushNow);
++const shownConversation = () => viewer.props?.mvConversation ?? [];
++// `heard`: the app knows the server's Email state from the list and a push when the conversation is read.
++const opened = async (heard = true) => {
++  useEmailStore.setState({ threadEmailCounts: new Map([['a', 2]]), emailListSync: heard ? { state: serverState(), accountId: 'acc', mailboxId: 'inbox' } : null });
++  if (heard) await push();
++  render(<MailApp />);
++  await waitFor(() => expect(viewer.shown.at(-1)).toBe('a1,a2'));
++};
 +
-+  it.each([['Email/changes', synced], ['a list re-query without a delta', null]])(
++describe('the conversation in the reading pane following pushes', () => {
++  it.each([['Email/changes', true], ['the thread read again', false]])(
 +    'takes in mail new to the thread and lets go of mail gone from it, in place, told by %s',
-+    async (_, emailListSync) => {
-+      await opened();
-+      server = [a2, a3];
-+      await push(emailListSync, { created: ['a3'], destroyed: ['a1'] });
++    async (_, heard) => {
++      await opened(heard);
++      commit([a2, a3], { created: ['a3'], destroyed: ['a1'] });
++      await push();
 +      await waitFor(() => expect(viewer.shown.at(-1)).toBe('a2,a3'));
 +      expect(viewer.shown.slice(viewer.shown.indexOf('a1,a2'))).not.toContain(undefined);
++      expect(client.getThread).toHaveBeenCalledTimes(heard ? 1 : 2);
 +    },
 +  );
 +
 +  it('opens the copy of the open message that a thread merge re-creates', async () => {
 +    await opened();
-+    server = [{ ...a1, id: 'm1', threadId: 'm' }, { ...a2, id: 'm2', threadId: 'm' }];
-+    await push(synced, { created: ['m1', 'm2'], destroyed: ['a1', 'a2'] });
++    commit([{ ...a1, id: 'm1', threadId: 'm' }, { ...a2, id: 'm2', threadId: 'm' }], { created: ['m1', 'm2'], destroyed: ['a1', 'a2'] });
++    await push();
 +    await waitFor(() => expect(openId()).toBe('m2'));
 +    await waitFor(() => expect(viewer.shown.at(-1)).toBe('m1,m2'));
 +  });
++
++  it('takes in mail whose push arrives while the conversation is read', async () => {
++    let release = () => {};
++    const read = vi.mocked(client.getSomeEmails as (ids: string[]) => Promise<Email[]>);
++    read.mockImplementationOnce(async (ids) => {
++      const held = server.filter((e) => ids.includes(e.id));
++      await new Promise<void>((resolve) => { release = resolve; });
++      return held;
++    });
++    useEmailStore.setState({ threadEmailCounts: new Map([['a', 2]]), emailListSync: { state: serverState(), accountId: 'acc', mailboxId: 'inbox' } });
++    await push();
++    render(<MailApp />);
++    await waitFor(() => expect(read).toHaveBeenCalledWith(['a1', 'a2'], undefined));
++    commit([...server, a3], { created: ['a3'] });
++    await push();
++    await act(async () => release());
++    await waitFor(() => expect(viewer.shown.at(-1)).toBe('a1,a2,a3'));
++  });
++});
++
++// Our own requests read the list again, at a state past the change, before its push arrives.
++describe('the conversation in the reading pane taking in our own changes', () => {
++  const replies: [string, () => Promise<void>][] = [
++    ['the quick reply', () => act(() => viewer.props!.onQuickReply('Thanks'))],
++    ['the composer', async () => {
++      await act(() => viewer.props!.onReply());
++      await waitFor(() => expect(composer.onSend).not.toBeNull());
++      await act(() => composer.onSend!({ to: ['a2@example.com'], cc: [], bcc: [], subject: 'Re: a2', body: 'Thanks' }));
++    }],
++  ];
++  it.each(replies)('takes in a reply sent from %s, and the $answered it sets', async (_, reply) => {
++    await opened();
++    await reply();
++    expect(client.sendEmail).toHaveBeenCalledTimes(1);
++    expect(useEmailStore.getState().emailListSync?.state).toBe(serverState());
++    await push();
++    await waitFor(() => expect(viewer.shown.at(-1)).toBe('a1,a2,a3'));
++    expect(shownConversation().find((e) => e.id === 'a2')?.keywords.$answered).toBe(true);
++  });
++
++  it('takes in a star set from the list, whose order on stars reads the list again', async () => {
++    await opened();
++    useEmailStore.setState({ listOrder: [{ criterion: 'starred', direction: 'desc' }] });
++    await act(() => useEmailStore.getState().toggleStar(client as never, 'a1'));
++    await waitFor(() => expect(useEmailStore.getState().emailListSync?.state).toBe(serverState()));
++    await push();
++    await waitFor(() => expect(shownConversation().find((e) => e.id === 'a1')?.keywords.$flagged).toBe(true));
++  });
 +});
 diff --git a/components/mail/mail-app.tsx b/components/mail/mail-app.tsx
-index 2a193c4c..480712ad 100644
+index 2a193c4c..c8a5944c 100644
 --- a/components/mail/mail-app.tsx
 +++ b/components/mail/mail-app.tsx
+@@ -35,7 +35,7 @@ import type { UnifiedAccountClient } from "@/lib/unified-mailbox";
+ import { connectedAccountsGrew } from "@/lib/unified-mailbox";
+ import { messagePriorityFromHeaders, type MessagePriority } from "@/lib/message-priority";
+ import { KeyboardShortcutsModal } from "@/components/keyboard-shortcuts-modal";
+-import { useEmailStore, pendingInitialData, buildUnifiedAccountClients, invalidateUnifiedMailboxes, captureViewToken, ArchiveMailboxNotFoundError, ensureArchiveMailbox, resolveSelectedEmails, resolveUnstampedEmailAccountId, resolveEmailBlobContext, type EmailBlobContext, emptyFolderMovesToTrash, bulkDeleteIsPermanent, shouldConfirmBulkDelete, removalFolder, canRemoveFromFolder } from "@/stores/email-store";
++import { useEmailStore, pendingInitialData, buildUnifiedAccountClients, invalidateUnifiedMailboxes, captureViewToken, ArchiveMailboxNotFoundError, ensureArchiveMailbox, resolveSelectedEmails, resolveUnstampedEmailAccountId, resolveEmailBlobContext, type EmailBlobContext, emailStateOf, emptyFolderMovesToTrash, bulkDeleteIsPermanent, shouldConfirmBulkDelete, removalFolder, canRemoveFromFolder } from "@/stores/email-store";
+ import { useRemoveFromFolder } from "@/hooks/use-remove-from-folder";
+ import { groupSearchScopeFolders, SEARCH_SCOPE_ALL_FOLDERS } from "@/lib/search-scope-folders";
+ import { toast } from "@/stores/toast-store";
 @@ -101,6 +101,7 @@ import { useSidebarApps } from "@/hooks/use-sidebar-apps";
  import { useIdentitySync } from "@/hooks/use-identity-sync";
  import { useIsEmbedded } from "@/hooks/use-is-embedded";
  import { useConversationInReader } from "@/hooks/use-conversation-in-reader";
-+import { conversationAfter, readConversation } from "@/lib/conversation";
++import { conversationAfter, conversationChangeSince, readConversation } from "@/lib/conversation";
  import { useProTabStore } from "@/stores/pro-tab-store";
  import { useProMultiAccountMailboxes } from "@/hooks/use-pro-multi-account-mailboxes";
  import { Input } from "@/components/ui/input";
-@@ -3964,23 +3965,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+@@ -246,15 +247,16 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+   }, [showComposer]);
+   const handleMvPopOut = useCallback(() => setMvReplyPoppedOut(true), []);
+   // Mountain View: the open message's whole conversation, light properties only.
++  // `state`: an Email state the mail is at least as new as, if known.
+   const [mvConversationResult, setMvConversationResult] = useState<{
+-    emails: Email[]; source: EmailBlobContext; threadId: string;
++    emails: Email[]; state: string | null; source: EmailBlobContext; threadId: string;
+   } | null>(null);
+   // The thread whose conversation is being fetched, so the viewer waits for it
+   // instead of showing the message alone first. (#1223)
+   const [mvConversationLoading, setMvConversationLoading] = useState<string | null>(null);
+   const mvConversationLoadRef = useRef<{
+     client: NonNullable<EmailBlobContext['client']>; accountId?: string;
+-    threadId: string; emailId: string; startedAt: number; promise: Promise<Email[] | null>;
++    threadId: string; emailId: string; startedAt: number; promise: Promise<{ emails: Email[]; state: string | null } | null>;
+   } | null>(null);
+   const mvConversationOpenSeqRef = useRef(0);
+   const [conversationEmails, setConversationEmails] = useState<Email[]>([]);
+@@ -3956,7 +3958,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+   // Fetches the conversation around `ref`, oldest first. Opening a message
+   // starts this next to the message fetch, and the effect below picks up that
+   // same request rather than sending a second one.
+-  const loadMvConversation = (ref: Email, fallback: NonNullable<typeof client>): Promise<Email[] | null> => {
++  const loadMvConversation = (ref: Email, fallback: NonNullable<typeof client>): Promise<{ emails: Email[]; state: string | null } | null> => {
+     const { threadClient, accountId } = mvConversationRoute(ref, fallback);
+     if (!threadClient) return Promise.resolve(null);
+     const pending = mvConversationLoadRef.current;
+@@ -3964,23 +3966,8 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
      if (pending?.client === threadClient && pending.accountId === accountId
        && pending.threadId === ref.threadId && pending.emailId === ref.id
        && Date.now() - pending.startedAt < 10_000) return pending.promise;
@@ -179,57 +326,65 @@ index 2a193c4c..480712ad 100644
 -        .filter((e) => e.id === ref.id || !e.keywords?.$draft)
 -        .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
 -    })().catch(() => null);
-+    const promise = readConversation(threadClient, ref, accountId).catch(() => null);
++    const state = emailStateOf(useEmailStore.getState().emailStates, threadClient, accountId) ?? null;
++    const promise = readConversation(threadClient, ref, accountId).then((emails) => emails && { emails, state }).catch(() => null);
      mvConversationLoadRef.current = { client: threadClient, accountId, threadId: ref.threadId, emailId: ref.id, startedAt: Date.now(), promise };
      return promise;
    };
-@@ -4006,10 +3991,37 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
-     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the open message, not on every list refresh
-   }, [mvConversationThreadId, mvConversationRef?.id, mvBlobSource.client, mvBlobSource.accountId, client]);
+@@ -3997,9 +3984,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+     setMvConversationLoading(mvConversationThreadId);
+     void loadMvConversation(mvConversationRef, client).then((conversation) => {
+       if (cancelled) return;
+-      setMvConversationResult(conversation ? {
+-        emails: conversation, source: mvBlobSource, threadId: mvConversationThreadId,
+-      } : null);
++      setMvConversationResult(conversation && { ...conversation, source: mvBlobSource, threadId: mvConversationThreadId });
+       setMvConversationLoading(null);
+     });
+     return () => { cancelled = true; ++mvConversationOpenSeqRef.current; };
+@@ -4011,6 +3996,25 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+       ...prev, emails: prev.emails.map(e => e.id === id ? patch(e) : e),
+     } : null);
  
-+  const reviseMvConversation = (revise: (emails: Email[]) => Email[]) => setMvConversationResult((prev) => {
-+    const emails = prev && revise(prev.emails);
-+    return prev && emails && emails !== prev.emails ? { ...prev, emails } : prev;
-+  });
-   const patchMvConversation = (id: string, patch: (e: Email) => Email) =>
--    setMvConversationResult(prev => prev ? {
--      ...prev, emails: prev.emails.map(e => e.id === id ? patch(e) : e),
--    } : null);
-+    reviseMvConversation((emails) => emails.map((e) => e.id === id ? patch(e) : e));
-+
 +  // A push changes the open conversation in place, so its folds and scroll
-+  // stay: with what Email/changes reported, else with the thread read again.
-+  const emailChange = useEmailStore((state) => state.emailChange);
++  // stay. It catches up from its own Email state, never the list's: reading
++  // the list again after a send moves that past the reply before its push.
++  const mvPushedState = useEmailStore((state) => mvBlobSource.client ? emailStateOf(state.emailStates, mvBlobSource.client, mvBlobSource.accountId) : undefined);
++  const mvHeldState = mvConversation && mvConversationResult ? mvConversationResult.state : undefined;
 +  useEffect(() => {
 +    const ref = mvConversationRef;
-+    if (!emailChange || !ref || !client || !mvConversation) return;
-+    const { threadClient, accountId } = mvConversationRoute(ref, client);
-+    if (emailChange.client !== threadClient || !emailChange.accountIds.includes(accountId ?? threadClient.getAccountId())) return;
-+    const openSeq = mvConversationOpenSeqRef.current;
-+    const follow = (fresh: Email[], gone: (id: string) => boolean) => {
-+      if (openSeq === mvConversationOpenSeqRef.current) reviseMvConversation((emails) => conversationAfter(emails, ref, fresh, gone));
-+    };
-+    const { delta } = emailChange;
-+    if (!delta) {
-+      void readConversation(threadClient, ref, accountId).catch(() => null)
-+        .then((thread) => thread && follow(thread, (id) => !thread.some((e) => e.id === id)));
-+      return;
-+    }
-+    // A thread merge re-creates the mail it moves under new ids (RFC 8621 §3).
-+    const merged = delta.destroyed.includes(ref.id) && delta.fresh.find((e) => e.blobId === ref.blobId && e.threadId !== ref.threadId);
-+    if (merged) void handleEmailSelect(merged);
-+    else follow(delta.fresh, (id) => delta.destroyed.includes(id));
-+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per change
-+  }, [emailChange]);
- 
++    const threadClient = mvBlobSource.client;
++    if (!ref || !threadClient || mvHeldState === undefined || !mvPushedState || mvPushedState === mvHeldState) return;
++    let cancelled = false;
++    void conversationChangeSince(threadClient, ref, mvBlobSource.accountId, mvHeldState).then((change) => {
++      if (cancelled || !change) return;
++      if (change.merged) void handleEmailSelect(change.merged);
++      else setMvConversationResult((prev) => prev && { ...prev, state: mvPushedState, emails: conversationAfter(prev.emails, ref, change.fresh, change.gone) });
++    }, () => {});
++    return () => { cancelled = true; };
++    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the states, not on every render
++  }, [mvPushedState, mvHeldState, mvConversationRef?.id]);
++
    // An unfolded conversation message needs its body: the thread fetch above
    // only carries list properties.
+   const handleLoadConversationEmail = async (target: Email): Promise<Email | null> => {
+@@ -4250,9 +4254,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+             new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), MV_CONVERSATION_WAIT_MS)),
+           ]);
+           if (openSeq !== emailOpenSeqRef.current) return;
+-          if (conversation !== undefined) setMvConversationResult(conversation ? {
+-            emails: conversation, source, threadId: fullEmail.threadId,
+-          } : null);
++          if (conversation !== undefined) setMvConversationResult(conversation && { ...conversation, source, threadId: fullEmail.threadId });
+         }
+         // One write: the message, and the end of its loading state.
+         finishOpenEmail(fullEmail);
 diff --git a/lib/conversation.ts b/lib/conversation.ts
 new file mode 100644
-index 00000000..cfa0504b
+index 00000000..fdb26551
 --- /dev/null
 +++ b/lib/conversation.ts
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,61 @@
 +import type { IJMAPClient } from "@/lib/jmap/client-interface";
 +import type { Email } from "@/lib/jmap/types";
 +
@@ -270,67 +425,57 @@ index 00000000..cfa0504b
 +  const unchanged = joined.length === 0 && kept.length === held.length && kept.every((e, i) => e === held[i]);
 +  return unchanged ? held : [...kept, ...joined].sort(oldestFirst);
 +}
++
++// Past this many changes, reading the thread again costs less than resolving them.
++const MAX_CHANGES = 50;
++
++/**
++ * How `ref`'s thread changed after Email state `since`: the mail Email/changes
++ * reports, as it now is, or with no usable `since` the thread read again (null
++ * when it is no conversation now). `merged` is the copy of `ref` that a thread
++ * merge re-created under a new id (RFC 8621 §3).
++ */
++export async function conversationChangeSince(client: IJMAPClient, ref: Email, accountId: string | undefined, since: string | null):
++  Promise<{ fresh: Email[]; gone: (id: string) => boolean; merged?: Email } | null> {
++  const delta = since ? await client.getEmailChanges?.(since, accountId, MAX_CHANGES) : null;
++  if (!delta || delta.hasMoreChanges) {
++    const thread = await readConversation(client, ref, accountId);
++    return thread && { fresh: thread, gone: (id) => !thread.some((e) => e.id === id) };
++  }
++  const fresh = await client.getSomeEmails([...delta.created, ...delta.updated], accountId);
++  const gone = (id: string) => delta.destroyed.includes(id);
++  return { fresh, gone, merged: gone(ref.id) ? fresh.find((e) => e.blobId === ref.blobId && e.threadId !== ref.threadId) : undefined };
++}
 diff --git a/stores/email-store.ts b/stores/email-store.ts
-index fc4cf1a3..63fd1670 100644
+index fc4cf1a3..b5beb961 100644
 --- a/stores/email-store.ts
 +++ b/stores/email-store.ts
 @@ -157,6 +157,8 @@ interface EmailStore {
    // category tab, unified/cross view). A push is then resolved with
    // Email/changes against this state instead of re-querying the first page.
    emailListSync: EmailListSync | null;
-+  /** The last push's Email change, for the mail held outside the list. */
-+  emailChange: EmailChange | null;
++  /** The Email state per account that pushes last reported, whatever the list was synced at. */
++  emailStates: EmailStates | null;
    // Mailbox collection state per JMAP account the sidebar list was last
    // synced at, so a Mailbox push can be resolved with Mailbox/changes.
    mailboxSyncStates: Record<string, string>;
-@@ -443,8 +445,9 @@ interface EmailStore {
-    * destroyed rows, re-fetch and patch updated ones in place, and only fall
-    * back to a full first-page refresh (returns false) when mail entered the
-    * view, the delta is too large, or the view is not a plain folder list.
-+   * `onResolved` hears what changed once the delta is read.
-    */
--  applyEmailDelta: (client: IJMAPClient, newState: string) => Promise<boolean>;
-+  applyEmailDelta: (client: IJMAPClient, newState: string, onResolved?: (change: EmailChange) => void) => Promise<boolean>;
-   /**
-    * Resolve a Mailbox push with Mailbox/changes: re-fetch only the folders
-    * reported as updated (typically just their counters) and patch them into
-@@ -705,6 +708,16 @@ export interface EmailListSync {
+@@ -705,6 +707,15 @@ export interface EmailListSync {
    mailboxId: string;
  }
  
-+/**
-+ * Mail of `accountIds` changed: `delta` holds the created and updated mail as
-+ * it now is and the ids destroyed, or is null when no Email/changes was read.
-+ */
-+export interface EmailChange {
++export interface EmailStates {
 +  client: IJMAPClient;
-+  accountIds: string[];
-+  delta: { fresh: Email[]; destroyed: string[] } | null;
++  states: Record<string, string>;
 +}
++
++/** The Email state of `accountId`, the client's own by default, that the last push for `client` reported. */
++export const emailStateOf = (emailStates: EmailStates | null, client: IJMAPClient, accountId?: string): string | undefined =>
++  emailStates?.client === client ? emailStates.states[accountId ?? client.getAccountId()] : undefined;
 +
  // Upper bound on the ids one Email/changes delta may report before the list
  // is re-queried instead: past this a first-page fetch is cheaper than
  // resolving every id. Also passed as `maxChanges`, so the server signals
-@@ -795,7 +808,7 @@ function refetchExpandedThreads(client: IJMAPClient, threadKeys: Iterable<string
-   }
- }
- 
--async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null, get: StoreGet, set: StoreSet): Promise<boolean> {
-+async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null, get: StoreGet, set: StoreSet, onResolved = (_: EmailChange) => {}): Promise<boolean> {
-   const s = get();
-   const sync = s.emailListSync;
-   if (!sync) return false;
-@@ -836,15 +849,20 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
-   // notification fires as before.
-   const candidates = [...delta.created, ...delta.updated.filter((id) => !listIds.has(id))];
-   if (candidates.length > EMAIL_DELTA_MAX_CANDIDATES) return false;
--  const arrived = candidates.length > 0 ? await effectiveClient.getSomeEmails(candidates, accountArg) : [];
-+  const changedIds = [...candidates, ...updatedInList];
-+  const changed = changedIds.length > 0 ? await effectiveClient.getSomeEmails(changedIds, accountArg) : [];
-+  onResolved({ client: effectiveClient, accountIds: [accountArg ?? effectiveClient.getAccountId()], delta: { fresh: changed, destroyed: delta.destroyed } });
-+  const arrived = changed.filter((e) => !listIds.has(e.id));
-   if (arrived.some((e) => e.mailboxIds?.[sync.mailboxId])) return false;
-   // Mail outside the folder still belongs to its thread: a reply the user
+@@ -842,6 +853,8 @@ async function applyEmailDeltaNow(client: IJMAPClient, newState: string | null,
    // sends lands in Sent, and an expanded thread should show it.
    const arrivedThreadIds = new Set(arrived.map((e) => e.threadId));
    const arrivedThreadKeys = [...get().expandedThreadIds].filter((key) => arrivedThreadIds.has(threadIdFromKey(key)));
@@ -338,45 +483,21 @@ index fc4cf1a3..63fd1670 100644
 +  if (destroyedInList.length > 0 || s.emails.some((e) => arrivedThreadIds.has(e.threadId))) void get().fetchThreadEmailCounts(client);
  
    const removed = new Set(destroyedInList);
--  const updatedEmails = updatedInList.length > 0 ? await effectiveClient.getSomeEmails(updatedInList, accountArg) : [];
-+  const updatedEmails = changed.filter((e) => listIds.has(e.id));
-   const updatedById = new Map(updatedEmails.map((e) => [e.id, e]));
-   // Another client changed the read/star/tag state a keyword order (#718)
-   // sorts on: the row may now belong past the loaded part of the list and an
-@@ -2334,6 +2352,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+   const updatedEmails = updatedInList.length > 0 ? await effectiveClient.getSomeEmails(updatedInList, accountArg) : [];
+@@ -2334,6 +2347,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
    isPushConnected: false,
    lastPushUpdate: null,
    emailListSync: null,
-+  emailChange: null,
++  emailStates: null,
    mailboxSyncStates: {},
    newEmailNotification: null,
  
-@@ -5435,10 +5454,11 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
-     set({ isPushConnected: connected });
-   },
+@@ -5499,6 +5513,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
+     try {
+       // Update last push update timestamp
+       set({ lastPushUpdate: Date.now() });
++      const pushed = Object.entries(change.changed).flatMap(([id, types]) => types?.Email ? [[id, types.Email] as const] : []);
++      if (pushed.length > 0) set(({ emailStates }) => ({ emailStates: { client, states: { ...(emailStates?.client === client ? emailStates.states : {}), ...Object.fromEntries(pushed) } } }));
  
--  applyEmailDelta: (client, newState) => {
-+  applyEmailDelta: (client, newState, onResolved) => {
-     // Serialise deltas: two pushes in quick succession must apply in order,
-     // each against the sync state the previous one advanced to.
--    const run = emailDeltaQueue.then(() => applyEmailDeltaNow(client, newState, get, set), () => applyEmailDeltaNow(client, newState, get, set));
-+    const apply = () => applyEmailDeltaNow(client, newState, get, set, onResolved);
-+    const run = emailDeltaQueue.then(apply, apply);
-     emailDeltaQueue = run.then(() => undefined, () => undefined);
-     return run;
-   },
-@@ -5538,10 +5558,13 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
-       const unscopedSearchChanged = isUnscopedSearchActive(get()) && anyEmailChanged;
-       if (accountChanges?.Email || syncedAccountEmailState || tagViewChanged || unscopedSearchChanged) {
-         // A delta that could not be read falls back to the full refresh.
-+        let resolved = false;
-+        const publish = (emailChange: EmailChange) => { resolved = true; set({ emailChange }); };
-         const applied = syncedAccountEmailState
--          ? await get().applyEmailDelta(client, syncedAccountEmailState).catch(() => false)
-+          ? await get().applyEmailDelta(client, syncedAccountEmailState, publish).catch(() => false)
-           : false;
-         if (!applied) {
-+          if (!resolved) publish({ client, accountIds: Object.keys(change.changed).filter((id) => change.changed[id]?.Email), delta: null });
-           await get().refreshCurrentMailbox(client);
-         }
-         if (anyEmailChanged) {
+       // Get the current account ID from the client (assuming primary account)
+       const accountId = client.getAccountId();
