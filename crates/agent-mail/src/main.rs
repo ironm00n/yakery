@@ -1,31 +1,85 @@
-//! Agent mail through Stalwart's JMAP, signed in with ZITADEL's device flow.
-
 mod address;
 mod auth;
-mod body;
-mod command;
-mod config;
-mod embedded;
-mod entity;
-mod folder;
-mod home;
-mod identity;
+mod cmd;
+mod jmap;
 mod mail;
-mod mdn;
-mod mime;
-mod origin;
-mod outbox;
+mod out;
 mod policy;
-mod random;
-mod secret;
+mod prelude;
+mod private;
 mod show;
-mod signature;
+mod store;
+mod web;
 
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use cmd::{read, send, wait};
+use show::note;
 
-use command::wait::Waited;
+macro_rules! deployment {
+    ($($name:ident = $var:literal | $fixture:literal $(| $empty:literal)?;)*) => {$(
+        #[cfg(not(test))]
+        pub const $name: &str = env!($var);
+        #[cfg(test)]
+        pub const $name: &str = $fixture;
+        const _: () = assert!(!$name.is_empty() $(|| $empty)?, concat!($var, " is empty"));
+    )*};
+}
+
+deployment! {
+    AUTH_HOST = "AGENT_MAIL_AUTH_HOST" | "auth.example.org";
+    CLIENT_ID = "AGENT_MAIL_CLIENT_ID" | "agent-mail-test";
+    JMAP_HOST = "AGENT_MAIL_JMAP_HOST" | "mail.example.org";
+    DOMAIN = "AGENT_MAIL_DOMAIN" | "example.org";
+    AGENT_DOMAIN = "AGENT_MAIL_AGENT_DOMAIN" | "agent.example.org";
+    SHARED_LOCAL_PART = "AGENT_MAIL_SHARED_LOCAL_PART" | "agent";
+    CORRESPONDENTS = "AGENT_MAIL_CORRESPONDENTS" | "" | true;
+    CORRESPONDENTS_FOR = "AGENT_MAIL_CORRESPONDENTS_FOR"
+        | r#"{"agent+unboca@example.org": ["colleague@example.com"]}"#;
+}
+
+/// What went wrong, as far as retries and outcomes care; only the edges tag, and anything untagged is transient.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+    Config,
+    PasswordRefused,
+    TokenRefused,
+    Busy,
+    Unprocessed,
+    Transient,
+    Idle,
+    Dropped,
+}
+
+#[derive(Debug)]
+struct Tagged(Failure, String);
+
+impl std::fmt::Display for Tagged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.1)
+    }
+}
+
+impl std::error::Error for Tagged {}
+
+impl Failure {
+    pub fn with(self, message: impl Into<String>) -> anyhow::Error {
+        Tagged(self, message.into()).into()
+    }
+
+    pub fn of(e: &anyhow::Error) -> Failure {
+        e.chain().find_map(|c| c.downcast_ref::<Tagged>()).map_or(Failure::Transient, |t| t.0)
+    }
+
+    pub fn permanent(self) -> bool {
+        matches!(self, Failure::Config | Failure::PasswordRefused)
+    }
+
+    pub fn nothing_ran(self) -> bool {
+        matches!(self, Failure::TokenRefused | Failure::Busy | Failure::Unprocessed)
+    }
+}
 
 /// Agent mail through Stalwart, signed in with ZITADEL.
 #[derive(Parser)]
@@ -35,77 +89,47 @@ struct Cli {
     command: Command,
 }
 
-#[derive(Subcommand)]
-enum Command {
+macro_rules! commands {
+    ($($(#[$doc:meta])* $name:ident($args:ty) => $run:path,)*) => {
+        #[derive(Subcommand)]
+        enum Command { $($(#[$doc])* $name($args),)* }
+
+        impl Command {
+            async fn run(self) -> anyhow::Result<ExitCode> {
+                match self { $(Command::$name(args) => $run(args).await,)* }
+            }
+        }
+    };
+}
+
+commands! {
     /// Send the Markdown on stdin, asking for a read receipt.
-    Send(command::send::Args),
+    Send(send::Args) => send::run,
     /// List recent inbox mail; `*` marks unread; read-only.
-    Inbox(command::inbox::Args),
+    Inbox(read::Inbox) => read::inbox,
     /// Print the thread of an email, oldest first, with read receipts as a line under the mail they answer;
     /// read-only.
-    Thread {
-        #[arg(value_name = "EMAIL_ID")]
-        id: String,
-    },
-    /// Save each attachment of an email, and each image its HTML embeds, into
-    /// <passwd home>/.cache/agent-mail/attachments/<email id>/ and print the absolute path of each, one per line;
-    /// read-only. Names are cut down to [A-Za-z0-9._-]. A file saved by an earlier run is printed again, not
-    /// replaced. Exits 1 if any attachment was skipped, over 50 MiB each or 200 MiB in all, or failed; each is
-    /// named on stderr with why.
-    Attachments {
-        #[arg(value_name = "EMAIL_ID")]
-        id: String,
-    },
+    Thread(read::One) => read::thread,
+    #[command(about = read::ATTACHMENTS_HELP)]
+    Attachments(read::One) => read::attachments,
     /// Wait for watched mail from others that is unseen, unanswered and not done; claim it as seen, print it, and
     /// send any read receipt it asks for. Exits 2 at --timeout. Seen mail still unanswered is listed on stderr.
-    Wait(command::wait::Args),
+    Wait(wait::Args) => wait::run,
     /// Mark mail handled, so wait neither delivers it nor lists it again.
-    Done {
-        #[arg(value_name = "EMAIL_ID", required = true)]
-        ids: Vec<String>,
-    },
+    Done(read::Many) => read::done,
     /// Sign in if needed and show when the access token expires.
-    Login,
+    Login(read::Nothing) => read::login,
     /// Rotate the login's password.
-    Password {
-        #[command(subcommand)]
-        action: Password,
-    },
+    Password(read::Password) => read::rotate,
 }
-
-#[derive(Subcommand)]
-enum Password {
-    /// Replace the password with a random one and store it in the password file.
-    Rotate,
-}
-
-/// TLS roots and key logging that the caller's environment could redirect: with these gone, rustls-platform-verifier
-/// (through rustls-native-certs and openssl-probe) reads the system store, so a proxy can only relay a tunnel.
-const TRUST_FROM_ENVIRONMENT: [&str; 4] = [
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NIX_SSL_CERT_FILE",
-    "SSLKEYLOGFILE",
-];
 
 fn main() -> ExitCode {
-    for name in TRUST_FROM_ENVIRONMENT {
+    // With these gone, rustls-platform-verifier reads the system store, so a proxy can only relay a tunnel.
+    for name in ["SSL_CERT_FILE", "SSL_CERT_DIR", "NIX_SSL_CERT_FILE", "SSLKEYLOGFILE"] {
         // SAFETY: no other thread exists yet; the runtime is built below.
         unsafe { std::env::remove_var(name) };
     }
-    match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime.block_on(run()),
-        Err(e) => {
-            show::warn(&format!("starting the runtime: {e}"));
-            ExitCode::FAILURE
-        }
-    }
-}
-
-async fn run() -> ExitCode {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => {
@@ -113,26 +137,15 @@ async fn run() -> ExitCode {
             return ExitCode::from(u8::from(e.use_stderr()));
         }
     };
-    let ran = match cli.command {
-        Command::Send(args) => command::send::run(args).await,
-        Command::Inbox(args) => command::inbox::run(args).await,
-        Command::Thread { id } => command::thread::run(id).await,
-        Command::Attachments { id } => command::attachments::run(id).await,
-        Command::Wait(args) => match command::wait::run(args).await {
-            Ok(Waited::TimedOut) => return ExitCode::from(2),
-            waited => waited.map(drop),
-        },
-        Command::Done { ids } => command::done::run(ids).await,
-        Command::Login => command::login().await,
-        Command::Password {
-            action: Password::Rotate,
-        } => command::rotate_password().await,
-    };
-    match ran {
-        Ok(()) => ExitCode::SUCCESS,
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
+    match runtime.map_err(anyhow::Error::from).and_then(|r| r.block_on(cli.command.run())) {
+        Ok(code) => code,
         Err(e) => {
-            show::warn(&format!("{e:#}"));
+            note!("{e:#}");
             ExitCode::FAILURE
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,8 +1,11 @@
 ---------------------------- MODULE AgentMail ----------------------------
 (* The mail-state protocol of agent-mail's wait, reply and done, against
    Stalwart as observed in its 0.16.26 source:
-   - Email/set's ifInState is checked against state read at request start,
-     so it doesn't serialise claims; only the host-local lock does.
+   - Email/set writes each mail under an assertion on what it read, and an
+     update that finds the keywords already set writes nothing and leaves the
+     state; so a claim that marks each mail by a call of its own, and keeps
+     only what its call wrote, is exclusive on any host. Other hosts' claims
+     are serialised by that, the host's own sessions also by its lock.
    - Threads merge asynchronously; a thread watch follows its start email's
      current thread.
    - A submission exists even when every recipient refused it.
@@ -17,7 +20,7 @@
    maps the old ids of a merged thread to the current one before it claims. *)
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Sessions, Hosts, HostOf, Mails, Threads, InitThread, Watch, MaxCrashes
+CONSTANTS Sessions, Hosts, HostOf, Mails, Threads, InitThread, Watch, MaxCrashes, LostReplies
 
 Keywords == {"seen", "answered", "handled", "mdnsent"}
 \* A refused or unknown outcome changes nothing, so it is a stutter.
@@ -123,24 +126,28 @@ Get(s) ==
     /\ pc' = [pc EXCEPT ![s] = "got"]
     /\ UNCHANGED <<arrived, thread, replied, othered, reused, receipts, lock, printed, reminded, crashes>>
 
-Marked(s) == [m \in Mails |-> IF m \in snap[s] THEN kw[m] \cup {"seen", "mdnsent"} ELSE kw[m]]
+Marked(s) == [m \in Mails |-> IF m \in snap[s] THEN kw[m] \cup {"seen"} ELSE kw[m]]
 
-\* Marks what it read and releases the lock: another host's claim in between goes unnoticed.
+\* Marks what it read, keeps what its marks wrote, and releases the lock: what another host claimed in
+\* between it marks again, which writes nothing.
 Claim(s) ==
     /\ pc[s] = "got"
     /\ kw' = Marked(s)
+    /\ snap' = [snap EXCEPT ![s] = {m \in @ : "seen" \notin kw[m]}]
     /\ lock' = [lock EXCEPT ![HostOf[s]] = None]
     /\ pc' = [pc EXCEPT ![s] = "claimed"]
-    /\ UNCHANGED <<arrived, thread, replied, othered, reused, receipts, snap, printed, reminded, crashes>>
+    /\ UNCHANGED <<arrived, thread, replied, othered, reused, receipts, printed, reminded, crashes>>
 
 \* The mark lands but its reply is lost; the lock is still held.
 ClaimLost(s) ==
+    /\ LostReplies
     /\ pc[s] = "got"
     /\ kw' = Marked(s)
     /\ pc' = [pc EXCEPT ![s] = "lost"]
     /\ UNCHANGED <<arrived, thread, replied, othered, reused, receipts, snap, lock, printed, reminded, crashes>>
 
-\* Still under the lock, the session reads the mail again: what now carries `$seen` it takes as claimed.
+\* Still under the lock, the session reads the mail again: what now carries `$seen` it takes as claimed,
+\* though another host may have marked it.
 Reget(s) ==
     /\ pc[s] = "lost"
     /\ snap' = [snap EXCEPT ![s] = {m \in @ : "seen" \in kw[m]}]
@@ -156,14 +163,17 @@ RegetFailed(s) ==
     /\ pc' = [pc EXCEPT ![s] = "idle"]
     /\ UNCHANGED <<mail, printed, reminded, crashes>>
 
-\* Prints what it claimed, then sends the receipts its snapshot said were unsent.
+\* Reads what it claimed again and lets go of what was closed since, marks `$mdnsent` on the rest, prints it, and
+\* sends a receipt for each whose `$mdnsent` it wrote.
 Deliver(s) ==
+    LET taken == {m \in snap[s] : Open(m)} IN
     /\ pc[s] = "claimed"
-    /\ printed' = [printed EXCEPT ![s] = @ \cup snap[s]]
-    /\ receipts' = [m \in Mails |-> IF m \in snap[s] THEN receipts[m] + 1 ELSE receipts[m]]
+    /\ kw' = [m \in Mails |-> IF m \in taken THEN kw[m] \cup {"mdnsent"} ELSE kw[m]]
+    /\ printed' = [printed EXCEPT ![s] = @ \cup taken]
+    /\ receipts' = [m \in Mails |-> IF m \in taken /\ "mdnsent" \notin kw[m] THEN receipts[m] + 1 ELSE receipts[m]]
     /\ snap' = [snap EXCEPT ![s] = {}]
     /\ pc' = [pc EXCEPT ![s] = "idle"]
-    /\ UNCHANGED <<arrived, thread, kw, replied, othered, reused, lock, reminded, crashes>>
+    /\ UNCHANGED <<arrived, thread, replied, othered, reused, lock, reminded, crashes>>
 
 Crash(s) ==
     /\ pc[s] # "idle"

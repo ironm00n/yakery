@@ -1,6 +1,7 @@
 {
   lib,
   rustPlatform,
+  cacert,
   deployment,
   correspondents,
   correspondentsFor,
@@ -18,6 +19,8 @@ rustPlatform.buildRustPackage {
     "-p"
     "agent-mail"
   ];
+  # the tests build real HTTP clients, which load the system's roots though they never connect
+  nativeCheckInputs = [ cacert ];
   env = import ./deployment-env.nix {
     inherit
       lib
