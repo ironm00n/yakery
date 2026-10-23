@@ -39,6 +39,7 @@ buildNpmPackage (finalAttrs: {
     ./08-identities-stay-with-their-login.patch
     ./09-senders-are-addresses.patch
     ./10-mail-keeps-its-math.patch
+    ./11-open-threads-take-new-mail.patch
   ];
 
   configurePhase = ''
