@@ -292,6 +292,7 @@
         borg-hop = import ./nix/tests/borg-hop.nix { pkgs = pkgs-map.${system}; };
         backup = import ./nix/tests/backup.nix { pkgs = pkgs-map.${system}; };
         zitadel = import ./nix/tests/zitadel.nix { pkgs = pkgs-map.${system}; };
+        agent-mail = import ./nix/tests/agent-mail.nix { pkgs = pkgs-map.${system}; };
         initrd-network = import ./nix/tests/initrd-network.nix { pkgs = pkgs-map.${system}; };
         bulwark = import ./nix/tests/bulwark.nix { pkgs = pkgs-map.${system}; };
         agentd = import ./nix/tests/agentd.nix { pkgs = pkgs-map.${system}; };
