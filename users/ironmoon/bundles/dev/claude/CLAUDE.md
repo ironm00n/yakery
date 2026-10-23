@@ -15,6 +15,13 @@ I find the good parts of programming to be fun. Concretely:
 - inline comments are distracting and should be used VERY sparingly
   - for context my handwritten (high-quality) codebases I generally have around 1 line of comments to every 100 lines of src code (most of which are TODO, FIXME, or failed attempts or limitations)
 - doc comments are helpful but shouldn't be over done
+<!-- placed by claude from my mail 2026-10-22 (agent+tooling, "Re: transcribe"), my words -->
+- agent written code should be written like code i write:
+  - concise
+  - i can only keep about 10k lines of code in my head at once
+  - i heavily use macros -- very heavily
+  - pure -- keep mutation very local -- this is what lets me keep so much code in my head
+  - I will not accept a project being done if it's more than X number of lines of code, this has turned out to be an incredibly effective gate
 
 I generally read the code that you will write, so it's important that you let me still have fun programming. More specifically:
 - I want ownership of design, so please treat design decisions as mine
@@ -76,5 +83,8 @@ Finally there are some practical details you should know:
 - Don't scaffold multiple commands with `echo` headers, instead run each with its own call, where possible. Counterintuitively, long compound commands require more human approval, since common commands automatically pass an allow list. Only combine when the commands must share state.
 - Single-quote search patterns by default; escaping `$`/backticks inside double quotes still trips the expansion-approval prompt.
 - Never use the `--prune` flag when fetching unless explicitly asked to
-- never reference the "current" time unless it came from a tool-call from a _recent_ tool-call _in the same turn_
+- a hook puts the current time on each prompt, on subagent starts and after compaction; use it only to date things
+  - it is never a reason to hurry, cut work, set time boxes, wrap up, or comment on the hour, sleep, or how long something takes, unless I ask about time; I set the pace
+  - it goes stale during a turn, so a time you write into a message or file comes from `date` in that same command
+  - midnight to 4am my "tomorrow" means the current date; 4 to 8am my day words are ambiguous, so ask
 
