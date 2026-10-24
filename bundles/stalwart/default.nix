@@ -21,7 +21,8 @@ let
   inherit (my-lib.ironmoon) domain;
   agentDomain = my-lib.ironmoon.mail.agents.domain;
   hostname = my-lib.ironmoon.mail.host;
-  httpPort = 8080;
+  inherit (my-lib.ironmoon.mail) loopback;
+  httpPort = loopback.port;
   ips = inputs.secrets.data.ips.${config.networking.hostName};
   address = "${ips.ipv6.prefix}::2";
   hostnameAddresses = [
@@ -117,11 +118,11 @@ let
   # RCPT-stage scripts see only the recipient being added
   unreceivable =
     let
-      inherit (accountOf config.services.stalwart.backup.account) local host;
+      unreceiving = lib.attrNames (lib.filterAttrs (_: account: !account.receivesMail) cfg.programAccounts);
     in
     ''
       require ["envelope", "reject"];
-      if envelope :all :matches "to" ["${local}@${host}", "${local}+*@${host}"] {
+      if envelope :all :matches "to" ${sieveList (lib.concatMap serviceAddresses unreceiving)} {
         reject "550 5.1.1 mailbox unavailable";
       }
     '';
@@ -406,6 +407,38 @@ in
         recipients, for every message the queue finishes. Webhooks not listed here are removed.
       '';
     };
+    programAccounts = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            permissions = lib.mkOption {
+              type = lib.types.uniq (lib.types.listOf (lib.types.enum (lib.attrValues package.permissions)));
+              description = "All the account may do: it has no role.";
+            };
+            allowedIps = lib.mkOption {
+              type = lib.types.nonEmptyListOf lib.types.str;
+              default = [
+                "127.0.0.1/32"
+                "::1/128"
+              ];
+              description = "Networks its app password may be used from.";
+            };
+            receivesMail = lib.mkEnableOption "mail to the account, which is otherwise refused at RCPT";
+            description = lib.mkOption {
+              type = lib.types.str;
+              default = "program account";
+              description = "Its app password's description.";
+            };
+          };
+        }
+      );
+      default = { };
+      description = ''
+        Accounts at ${domain}, by local part, each signed in to by one program with the app password
+        applying the plan leaves in {option}`services.stalwart.appPasswords.<name>.file`. Removing
+        one leaves its account and app password in Stalwart.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -422,15 +455,14 @@ in
             [
               "postmaster"
               "root"
-              "backup"
               agentLocalPart
             ]
             # the plan's ids for accounts are their local parts, and a domain's id would clash
             ++ lib.attrNames domains
             ++ cfg.sharedMailboxes
           )
-        ) (lib.attrNames cfg.serviceMailboxes);
-        message = "bundles.stalwart.serviceMailboxes must be local parts no other account at ${domain} has";
+        ) (lib.attrNames cfg.programAccounts);
+        message = "bundles.stalwart.programAccounts must be local parts no other account at ${domain} has";
       }
       {
         # the addresses agent-mail sends from
@@ -444,6 +476,16 @@ in
     ];
 
     sops.secrets = stalwart-secrets.secrets;
+
+    bundles.stalwart.programAccounts = {
+      backup.permissions = config.services.stalwart.backup.permissions;
+    }
+    // lib.mapAttrs (_: mailbox: {
+      permissions = serviceMailboxPermissions;
+      inherit (mailbox) allowedIps;
+      receivesMail = true;
+      description = "service mailbox";
+    }) cfg.serviceMailboxes;
 
     services.stalwart = {
       enable = true;
@@ -473,16 +515,16 @@ in
         enable = true;
         package = pkgs.callPackage ../../packages/vandelay { };
         account = "backup@${domain}";
-        url = "http://127.0.0.1:${toString httpPort}";
+        url = "http://${loopback.address}:${toString httpPort}";
       };
 
+      # by default, so a module that makes an account's app password itself, as backup's does, rules
       appPasswords = lib.mapAttrs' (
-        name: mailbox:
-        lib.nameValuePair "${name}@${domain}" {
-          inherit (mailbox) allowedIps;
-          description = "service mailbox";
-        }
-      ) cfg.serviceMailboxes;
+        name: account:
+        lib.nameValuePair "${name}@${domain}" (
+          lib.mapAttrs (_: lib.mkDefault) { inherit (account) allowedIps description; }
+        )
+      ) cfg.programAccounts;
 
       plan = {
         enableDefaultPlan = true;
@@ -491,7 +533,7 @@ in
             http = {
               name = "http";
               bind = toSet [
-                "127.0.0.1:${toString httpPort}"
+                "${loopback.address}:${toString httpPort}"
                 "[::1]:${toString httpPort}"
               ];
               protocol = "http";
@@ -637,12 +679,7 @@ in
               (lib.genAttrs ([ "postmaster" ] ++ cfg.sharedMailboxes) lib.id)
           ))
           (upsertOn "Account" [ "name" "domainId" ] (
-            lib.mapAttrs programAccount (
-              {
-                backup = config.services.stalwart.backup.permissions;
-              }
-              // lib.mapAttrs (_: _: serviceMailboxPermissions) cfg.serviceMailboxes
-            )
+            lib.mapAttrs (name: account: programAccount name account.permissions) cfg.programAccounts
           ))
 
           (update "MtaOutboundStrategy" {

@@ -1,0 +1,31 @@
+From 134e4e0d297aebca0cf0ea18268f09211ad2c51f Mon Sep 17 00:00:00 2001
+From: PhialsBasement <PhialsBasement@users.noreply.github.com>
+Date: Sun, 31 May 2026 17:11:52 +1000
+Subject: [PATCH] msvcrt: Avoid NULL dereference in _FindAndUnlinkFrame on an
+ empty frame list.
+
+When data->frame_info_head is NULL (no registered frames) and the frame
+being unlinked is not the head, the lookup loop dereferenced a NULL
+pointer via cur->next. Photoshop 2021's C++ exception handling triggers
+__CxxUnregisterExceptionObject with an empty frame list, faulting on a
+read at offset 8. Guard the loop against a NULL current frame so it falls
+through to the existing "frame not found" path instead of crashing.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ dlls/msvcrt/except.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/dlls/msvcrt/except.c b/dlls/msvcrt/except.c
+index 8be9ab7c785..3ebdcdb0bb3 100644
+--- a/dlls/msvcrt/except.c
++++ b/dlls/msvcrt/except.c
+@@ -919,7 +919,7 @@ void CDECL _FindAndUnlinkFrame(frame_info *fi)
+         return;
+     }
+ 
+-    for (; cur->next; cur = cur->next)
++    for (; cur && cur->next; cur = cur->next)
+     {
+         if (cur->next == fi)
+         {

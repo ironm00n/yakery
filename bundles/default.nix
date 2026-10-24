@@ -23,8 +23,10 @@
     ./borg-hop.nix
     ./backup.nix
     ./zitadel.nix
+    ./claude-code.nix
     ./stalwart
     ./bulwark.nix
+    ./scheduler.nix
 
     ./displaylink
   ];
