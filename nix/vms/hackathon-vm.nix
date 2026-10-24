@@ -368,14 +368,20 @@ inputs.nixpkgs.lib.nixosSystem {
 
         # Serial console, so a headless boot test sees the journal rather than six lines of getty
         # banner. The GTK window stays the real console for interactive use.
-        boot.kernelParams = [ "console=ttyS0,115200" "console=tty0" ];
+        boot.kernelParams = [
+          "console=ttyS0,115200"
+          "console=tty0"
+        ];
 
         # Self-report instead of logging in over the serial line to check by hand: writes into the
         # share, which also proves it works in the direction that matters (the host can read it).
         systemd.services.hackathon-selftest = {
           description = "report whether this guest is actually usable";
           wantedBy = [ "multi-user.target" ];
-          after = [ "home-hacker-share.mount" "getty@tty1.service" ];
+          after = [
+            "home-hacker-share.mount"
+            "getty@tty1.service"
+          ];
           serviceConfig.Type = "oneshot";
           path = with pkgs; [
             util-linux

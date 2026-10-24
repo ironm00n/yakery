@@ -23,7 +23,11 @@ in
           "/home/${config.home.username}/documents" = {
             id = "documents";
             label = "documents";
-            devices = [ "desktop" "fw13" "fw12" ];
+            devices = [
+              "desktop"
+              "fw13"
+              "fw12"
+            ];
           };
         };
 

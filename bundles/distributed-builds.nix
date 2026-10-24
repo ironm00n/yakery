@@ -21,7 +21,12 @@ let
       system = "x86_64-linux";
       maxJobs = 8;
       speedFactor = 4;
-      features = [ "nixos-test" "benchmark" "big-parallel" "kvm" ];
+      features = [
+        "nixos-test"
+        "benchmark"
+        "big-parallel"
+        "kvm"
+      ];
       publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGvouuDpNF1MtGJSyIcHzScPkcNtoOMDxbPqX1GuxkTy";
     }
     {

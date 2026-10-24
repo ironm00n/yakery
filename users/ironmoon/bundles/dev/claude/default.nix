@@ -27,9 +27,9 @@ let
   };
 
   # claude code loads any ~/.claude/skills/<name> holding a .claude-plugin/ as a plugin
-  mods = mapAttrs' (name: _: nameValuePair ".claude/skills/${name}" { source = symlink (./mods + "/${name}"); }) (
-    filterAttrs (_: type: type == "directory") (builtins.readDir ./mods)
-  );
+  mods = mapAttrs' (
+    name: _: nameValuePair ".claude/skills/${name}" { source = symlink (./mods + "/${name}"); }
+  ) (filterAttrs (_: type: type == "directory") (builtins.readDir ./mods));
 in
 {
   options.bundles.dev.claude = {
