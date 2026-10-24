@@ -27,6 +27,7 @@
     ./agent-slack.nix
     ./stalwart
     ./bulwark.nix
+    ./scheduler.nix
 
     ./displaylink
   ];
