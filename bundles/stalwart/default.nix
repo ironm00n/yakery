@@ -21,7 +21,8 @@ let
   inherit (my-lib.ironmoon) domain;
   agentDomain = my-lib.ironmoon.mail.agents.domain;
   hostname = my-lib.ironmoon.mail.host;
-  httpPort = 8080;
+  inherit (my-lib.ironmoon.mail) loopback;
+  httpPort = loopback.port;
   ips = inputs.secrets.data.ips.${config.networking.hostName};
   address = "${ips.ipv6.prefix}::2";
   hostnameAddresses = [
@@ -473,7 +474,7 @@ in
         enable = true;
         package = pkgs.callPackage ../../packages/vandelay { };
         account = "backup@${domain}";
-        url = "http://127.0.0.1:${toString httpPort}";
+        url = "http://${loopback.address}:${toString httpPort}";
       };
 
       appPasswords = lib.mapAttrs' (
@@ -491,7 +492,7 @@ in
             http = {
               name = "http";
               bind = toSet [
-                "127.0.0.1:${toString httpPort}"
+                "${loopback.address}:${toString httpPort}"
                 "[::1]:${toString httpPort}"
               ];
               protocol = "http";
