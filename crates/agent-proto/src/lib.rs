@@ -1,41 +1,29 @@
-//! What the host and the VM's root daemon say to each other over vsock. A
-//! control connection carries one [`Request`], then [`Reply`] lines until the
-//! daemon closes it.
-//!
-//! Every process on the host, and anything in the VM that gets past agentd's
-//! socket filters, can reach the other side's vsock ports, and any of them can
-//! bind a free port to pose as a service. So each end proves it holds the
-//! [`Key`] before a connection counts ([`prove`], [`challenge`]): the opener
-//! sends a nonce, the acceptor answers with its own and a tag of the opener's
-//! nonce and the [`Service`] it is, and the opener answers that with its claim
-//! and a tag of the acceptor's nonce and the claim (`<claim> <tag>\n`). The
-//! gateway, in another repository, is the acceptor of [`Service::Gateway`] and
-//! [`Service::Ca`].
+//! What the host and the VM's root daemon say over vsock: a control connection carries one [`Request`], then
+//! [`Reply`] lines. Any process on either side can reach the other's ports or bind a free one to pose as a service,
+//! so each end proves it holds the [`Key`] first ([`prove`], [`challenge`]). The gateway, in workspace/claude, is
+//! the acceptor of [`Service::Gateway`] and [`Service::Ca`].
 
-use std::io::Read;
-use std::path::Path;
-use std::time::Duration;
+use std::{collections::HashMap, io::Read, path::Path, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use tokio::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+    Lines, ReadHalf,
 };
+use tokio_vsock::{VsockAddr, VsockStream};
+use yakery_log::warn;
 
 pub const HOST_CID: u32 = 2;
 pub const CONTROL_PORT: u32 = 6000;
 
-/// Shared by the host and the VM's root daemon, and readable by nothing else in
-/// the VM.
 pub type Key = [u8; blake3::KEY_LEN];
 pub const NONCE_LEN: usize = 32;
 /// What a control connection claims; a gateway connection claims `uid <n>`.
 pub const WAKE: &str = "wake";
-/// What a CA fetch claims.
 pub const CA: &str = "ca";
 const MAX_PROOF: usize = "uid 4294967295 ".len() + 2 * blake3::OUT_LEN + 1;
-/// How long either end waits for the other's half of the handshake.
 const HANDSHAKE: Duration = Duration::from_secs(10);
 const ACCEPT_PAUSE: Duration = Duration::from_millis(100);
 
@@ -47,8 +35,7 @@ pub enum Service {
 }
 
 impl Service {
-    /// What the acceptor proves, distinct per service so that one service's
-    /// answer can't be passed off as another's.
+    /// Distinct per service, so that one service's answer can't be passed off as another's.
     fn accepted(self) -> &'static str {
         match self {
             Service::Control => "accepted control",
@@ -58,8 +45,7 @@ impl Service {
     }
 }
 
-/// The key's first bytes of `path`, a file on the host and a block device in
-/// the VM.
+/// The first bytes of `path`, which is a file on the host and a block device in the VM.
 pub fn read_key(path: &Path) -> Result<Key> {
     let mut key = [0; blake3::KEY_LEN];
     std::fs::File::open(path)
@@ -68,20 +54,21 @@ pub fn read_key(path: &Path) -> Result<Key> {
     Ok(key)
 }
 
+pub fn read_agents(path: &Path) -> Result<HashMap<String, u32>> {
+    let read = std::fs::read(path).map_err(anyhow::Error::from);
+    read.and_then(|json| Ok(serde_json::from_slice(&json)?))
+        .with_context(|| format!("read {}", path.display()))
+}
+
 pub fn tag(key: &Key, nonce: &[u8; NONCE_LEN], claim: &str) -> blake3::Hash {
-    blake3::Hasher::new_keyed(key)
-        .update(nonce)
-        .update(claim.as_bytes())
-        .finalize()
+    blake3::Hasher::new_keyed(key).update(nonce).update(claim.as_bytes()).finalize()
 }
 
 fn nonce() -> Result<[u8; NONCE_LEN]> {
     let mut nonce = [0; NONCE_LEN];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut nonce)?;
+    private::random::fill(&mut nonce)?;
     Ok(nonce)
 }
-
-/// The opening end: checks that `service` holds the key, then proves `claim`.
 pub async fn prove(
     stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
     key: &Key,
@@ -102,9 +89,7 @@ pub async fn prove(
         stream.write_all(proof.as_bytes()).await?;
         Ok(())
     };
-    tokio::time::timeout(HANDSHAKE, handshake)
-        .await
-        .context("the handshake timed out")?
+    tokio::time::timeout(HANDSHAKE, handshake).await.context("the handshake timed out")?
 }
 
 /// The accepting end of `service`: proves it holds the key, then returns the
@@ -119,14 +104,9 @@ pub async fn challenge(
         stream.read_exact(&mut theirs).await?;
         let ours = nonce()?;
         stream.write_all(&ours).await?;
-        stream
-            .write_all(tag(key, &theirs, service.accepted()).as_bytes())
-            .await?;
+        stream.write_all(tag(key, &theirs, service.accepted()).as_bytes()).await?;
         let mut line = Vec::with_capacity(MAX_PROOF);
-        (&mut *stream)
-            .take(MAX_PROOF as u64)
-            .read_until(b'\n', &mut line)
-            .await?;
+        (&mut *stream).take(MAX_PROOF as u64).read_until(b'\n', &mut line).await?;
         let (claim, hex) = std::str::from_utf8(&line)?
             .strip_suffix('\n')
             .and_then(|line| line.rsplit_once(' '))
@@ -139,20 +119,17 @@ pub async fn challenge(
         }
         Ok(claim.to_owned())
     };
-    tokio::time::timeout(HANDSHAKE, handshake)
-        .await
-        .context("the handshake timed out")?
+    tokio::time::timeout(HANDSHAKE, handshake).await.context("the handshake timed out")?
 }
 
-/// The next connection `accepting` takes, outliving the errors it returns
-/// instead, such as running out of descriptors; the pause keeps a shortage from
-/// spinning.
+/// The next connection `accepting` takes; the pause after an error, such as running out of descriptors, keeps it
+/// from spinning.
 pub async fn accept<T>(mut accepting: impl AsyncFnMut() -> std::io::Result<T>) -> T {
     loop {
         match accepting().await {
             Ok(accepted) => return accepted,
             Err(e) => {
-                eprintln!("accept: {e}");
+                warn!("accept: {e}");
                 tokio::time::sleep(ACCEPT_PAUSE).await;
             }
         }
@@ -172,14 +149,9 @@ pub enum Request {
 pub enum Reply {
     Started,
     Injected,
-    Refused {
-        reason: String,
-    },
-    /// One stream-json line from the session, as the client wrote it.
+    Refused { reason: String },
     Event(Box<RawValue>),
-    Exited {
-        code: Option<i32>,
-    },
+    Exited { code: Option<i32> },
 }
 
 impl Reply {
@@ -188,6 +160,18 @@ impl Reply {
         line.push('\n');
         line
     }
+}
+
+pub async fn wake(
+    cid: u32,
+    key: &Key,
+    request: &Request,
+) -> Result<Lines<BufReader<ReadHalf<VsockStream>>>> {
+    let mut stream = VsockStream::connect(VsockAddr::new(cid, CONTROL_PORT)).await?;
+    prove(&mut stream, key, Service::Control, WAKE).await?;
+    let (read, mut write) = tokio::io::split(stream);
+    write.write_all(format!("{}\n", serde_json::to_string(request)?).as_bytes()).await?;
+    Ok(BufReader::new(read).lines())
 }
 
 #[cfg(test)]
@@ -208,9 +192,7 @@ mod tests {
             "0b346bc239a5621e087194715abb7698e6e72161480cbb0a962272c42ed80984",
         );
         assert_eq!(
-            tag(&KEY, &[9; NONCE_LEN], Service::Gateway.accepted())
-                .to_hex()
-                .as_str(),
+            tag(&KEY, &[9; NONCE_LEN], Service::Gateway.accepted()).to_hex().as_str(),
             "9a86f6875380db50f0168a833724b6b4441386f2056d9cceedfaa79f5862e980",
         );
     }
@@ -250,8 +232,6 @@ mod tests {
         assert!(proved.is_err());
     }
 
-    /// agentd's own control port answers with the key too, but as a different
-    /// service, so it can't stand in for the gateway.
     #[tokio::test]
     async fn an_acceptor_of_another_service_is_refused() {
         let (proved, _) = exchange(KEY, Service::Gateway, KEY, Service::Control, "uid 2001").await;
@@ -260,14 +240,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_opener_claiming_to_be_an_acceptor_is_refused() {
-        let (_, claim) = exchange(
-            KEY,
-            Service::Control,
-            KEY,
-            Service::Control,
-            "accepted control",
-        )
-        .await;
+        let (_, claim) =
+            exchange(KEY, Service::Control, KEY, Service::Control, "accepted control").await;
         assert!(claim.is_err());
     }
 
@@ -275,10 +249,6 @@ mod tests {
     async fn a_silent_peer_times_out() {
         let (accepting, _opening) = duplex(1024);
         let mut accepting = BufReader::new(accepting);
-        assert!(
-            challenge(&mut accepting, &KEY, Service::Control)
-                .await
-                .is_err()
-        );
+        assert!(challenge(&mut accepting, &KEY, Service::Control).await.is_err());
     }
 }

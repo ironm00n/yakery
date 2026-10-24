@@ -19,9 +19,9 @@ let
     ) (throw "the agent VM has no key volume") guest.volumes).image;
   # The host's copy of the key agentd holds: the gateway and agentctl run as Owen
   keyFile = "/var/lib/agents/control.key";
-  agentd = pkgs.callPackage ../../packages/agentd/package.nix { };
+  agent-host = pkgs.callPackage ../../crates/rust.nix { crate = "agent-host"; };
   agentctl = pkgs.writeShellScriptBin "agentctl" ''
-    exec ${lib.getExe' agentd "agentctl"} --key ${keyFile} "$@"
+    exec ${lib.getExe' agent-host "agentctl"} --key ${keyFile} "$@"
   '';
   dispatchPort = 7310;
 in
@@ -89,7 +89,7 @@ in
     after = [ "agents-key.service" ];
     serviceConfig = {
       ExecStart = lib.escapeShellArgs [
-        (lib.getExe' agentd "agent-dispatch")
+        (lib.getExe' agent-host "agent-dispatch")
         "--listen"
         "[::]:${toString dispatchPort}"
         "--allow-from"

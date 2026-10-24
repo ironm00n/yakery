@@ -1,25 +1,23 @@
-//! The agent VM's root daemon. Claude Code reaches the host's gateway through
-//! it, over the API socket or at the address the VM's hosts file gives
-//! api.anthropic.com, each connection tagged with the uid it came from, and the
-//! host's wakes run as transient units in the agent's slice.
+//! The agent VM's root daemon: Claude Code reaches the host's gateway through it, each connection tagged with the
+//! uid it came from, and the host's wakes run as transient units in the agent's slice.
 
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::fs::Permissions;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{ExitCode, Stdio};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-use agentd::{
+use agent_proto::{
     CA, CONTROL_PORT, HOST_CID, Key, Reply, Request, Service, WAKE, accept, challenge, prove,
-    read_key,
+    read_agents, read_key,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
+use private::{Dir, Mode, Replace, listen_fds, now};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use tokio::io::{
@@ -30,12 +28,12 @@ use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio_vsock::{VsockAddr, VsockListener, VsockStream};
+use yakery_log::{note, warn};
 
 /// How long a session stays open after a turn ends. A message injected while
 /// the turn was closing starts the next one inside this window.
 const QUIET: Duration = Duration::from_secs(5);
 
-/// The longest wake request read from the host.
 const MAX_REQUEST: u64 = 1 << 20;
 
 #[derive(Parser)]
@@ -55,10 +53,6 @@ struct Args {
     quota_device: PathBuf,
     #[arg(long, default_value = "/run/agentd")]
     run_dir: PathBuf,
-    /// Where the VM's hosts file sends api.anthropic.com, for what Claude Code
-    /// fetches there instead of over the API socket.
-    #[arg(long)]
-    api_address: SocketAddrV4,
     #[arg(long, default_value_t = 5000)]
     gateway_port: u32,
     #[arg(long, default_value_t = 5001)]
@@ -96,6 +90,7 @@ enum Woken {
 
 struct State {
     args: Args,
+    api: PathBuf,
     key: Key,
     agents: HashMap<String, u32>,
     sessions: Mutex<HashMap<String, Session>>,
@@ -104,21 +99,11 @@ struct State {
 
 impl State {
     fn agent_of(&self, uid: u32) -> Option<&str> {
-        self.agents
-            .iter()
-            .find(|&(_, &u)| u == uid)
-            .map(|(name, _)| name.as_str())
-    }
-
-    fn ca(&self) -> PathBuf {
-        self.args.run_dir.join("ca.pem")
+        self.agents.iter().find(|&(_, &u)| u == uid).map(|(name, _)| name.as_str())
     }
 
     async fn wake(self: &Arc<Self>, agent: &str, message: &str) -> Result<Woken> {
-        let &uid = self
-            .agents
-            .get(agent)
-            .with_context(|| format!("no agent named {agent}"))?;
+        let &uid = self.agents.get(agent).with_context(|| format!("no agent named {agent}"))?;
         if let Some(session) = self.sessions.lock().await.get_mut(agent) {
             session.send(message).await?;
             return Ok(Woken::Injected);
@@ -135,18 +120,13 @@ impl State {
         }
         self.refresh_ca().await.context("fetch the gateway's CA")?;
         let mut child = self.spawn(agent, uid)?;
-        let mut session = Session {
-            stdin: child.stdin.take().expect("piped"),
-            injected: Instant::now(),
-        };
+        let mut session =
+            Session { stdin: child.stdin.take().expect("piped"), injected: Instant::now() };
         session.send(message).await?;
         sessions.insert(agent.to_owned(), session);
         let stdout = child.stdout.take().expect("piped");
         let (tx, rx) = mpsc::unbounded_channel();
-        tokio::spawn(
-            self.clone()
-                .drive(agent.to_owned(), child, stdout, tx, slot),
-        );
+        tokio::spawn(self.clone().drive(agent.to_owned(), child, stdout, tx, slot));
         Ok(Woken::Started(rx))
     }
 
@@ -155,11 +135,9 @@ impl State {
         prove(&mut gateway, &self.key, Service::Ca, CA).await?;
         let mut pem = Vec::new();
         gateway.read_to_end(&mut pem).await?;
-        let staged = self.ca().with_extension("new");
-        tokio::fs::write(&staged, &pem).await?;
-        tokio::fs::set_permissions(&staged, Permissions::from_mode(0o644)).await?;
-        tokio::fs::rename(&staged, self.ca()).await?;
-        Ok(())
+        let dir = Dir::open(&self.args.run_dir, &[])?;
+        dir.drop_stale_partials()?;
+        dir.write("ca.pem", &pem, Mode::Readable, Replace::Yes).map(drop)
     }
 
     fn spawn(&self, agent: &str, uid: u32) -> Result<Child> {
@@ -172,18 +150,15 @@ impl State {
         );
         let env = [
             ("PATH", path),
-            (
-                "ANTHROPIC_UNIX_SOCKET",
-                self.args.run_dir.join("api.sock").display().to_string(),
-            ),
+            ("ANTHROPIC_UNIX_SOCKET", self.api.display().to_string()),
             ("CLAUDE_CODE_OAUTH_TOKEN", "ssh-placeholder".into()),
-            ("NODE_EXTRA_CA_CERTS", self.ca().display().to_string()),
+            ("NODE_EXTRA_CA_CERTS", self.args.run_dir.join("ca.pem").display().to_string()),
             ("CLAUDE_CONFIG_DIR", config.display().to_string()),
             ("CLAUDE_CODE_PROJECT_DIR_NAME", agent.into()),
             ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1".into()),
             ("TMPDIR", tmp.display().to_string()),
         ];
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let stamp = now();
         Command::new("systemd-run")
             .args(["--quiet", "--pipe", "--wait", "--collect"])
             .arg(format!("--unit=agent-{agent}-{stamp}"))
@@ -202,27 +177,17 @@ impl State {
             // Only agentd reaches the host over vsock, so the uid it sends
             // the gateway is one it checked.
             .arg("--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK")
-            .args(
-                env.iter()
-                    .map(|(name, value)| format!("--setenv={name}={value}")),
-            )
+            .args(env.iter().map(|(name, value)| format!("--setenv={name}={value}")))
             .arg("--")
             .arg(&self.args.claude)
             .args(["-p", "--verbose", "--dangerously-skip-permissions"])
-            .args([
-                "--input-format",
-                "stream-json",
-                "--output-format",
-                "stream-json",
-            ])
+            .args(["--input-format", "stream-json", "--output-format", "stream-json"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
             .context("start systemd-run")
     }
 
-    /// Relay the session's output until it exits, closing its stdin once a
-    /// turn has ended and nothing was injected after it.
     async fn drive(
         self: Arc<Self>,
         agent: String,
@@ -267,23 +232,19 @@ impl State {
         }
         self.sessions.lock().await.remove(&agent);
         let code = child.wait().await.ok().and_then(|status| status.code());
-        eprintln!("{agent}: session exited with {code:?}");
+        note!("{agent}: session exited with {code:?}");
         let _ = tx.send(Reply::Exited { code });
     }
 }
 
+#[allow(unsafe_code)]
 fn has_quota(device: &Path, uid: u32) -> Result<bool> {
     let device = CString::new(device.as_os_str().as_bytes())?;
     let mut quota: libc::dqblk = unsafe { std::mem::zeroed() };
     let command = libc::QCMD(libc::Q_GETQUOTA, libc::USRQUOTA);
     // SAFETY: `device` is a NUL-terminated path and `quota` the dqblk Q_GETQUOTA fills.
     let status = unsafe {
-        libc::quotactl(
-            command,
-            device.as_ptr(),
-            uid as libc::c_int,
-            (&raw mut quota).cast(),
-        )
+        libc::quotactl(command, device.as_ptr(), uid as libc::c_int, (&raw mut quota).cast())
     };
     if status != 0 {
         return Err(std::io::Error::last_os_error()).context("quotactl Q_GETQUOTA");
@@ -291,8 +252,6 @@ fn has_quota(device: &Path, uid: u32) -> Result<bool> {
     Ok(quota.dqb_bhardlimit != 0)
 }
 
-/// A listener for processes on this machine, which can name the uid of
-/// whoever opened a connection.
 trait Local {
     type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;
 
@@ -358,7 +317,7 @@ async fn relay<L: Local>(listener: L, state: Arc<State>) {
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(e) = tunnel::<L>(client, &state).await {
-                eprintln!("api tunnel: {e:#}");
+                warn!("api tunnel: {e:#}");
             }
         });
     }
@@ -371,13 +330,7 @@ async fn tunnel<L: Local>(mut client: L::Stream, state: &State) -> Result<()> {
     }
     let mut gateway =
         VsockStream::connect(VsockAddr::new(HOST_CID, state.args.gateway_port)).await?;
-    prove(
-        &mut gateway,
-        &state.key,
-        Service::Gateway,
-        &format!("uid {uid}"),
-    )
-    .await?;
+    prove(&mut gateway, &state.key, Service::Gateway, &format!("uid {uid}")).await?;
     copy_bidirectional(&mut client, &mut gateway).await?;
     Ok(())
 }
@@ -391,7 +344,7 @@ async fn serve(listener: VsockListener, state: Arc<State>) {
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(e) = control(stream, state).await {
-                eprintln!("control: {e:#}");
+                warn!("control: {e:#}");
             }
         });
     }
@@ -404,16 +357,13 @@ async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
         bail!("a control connection claimed {claim:?}");
     }
     let mut request = String::new();
-    (&mut stream)
-        .take(MAX_REQUEST)
-        .read_line(&mut request)
-        .await?;
+    (&mut stream).take(MAX_REQUEST).read_line(&mut request).await?;
     let Request::Wake { agent, message } = serde_json::from_str(&request)?;
     let mut write = stream.into_inner();
     match state.wake(&agent, &message).await {
         Ok(Woken::Injected) => write.write_all(Reply::Injected.line().as_bytes()).await?,
         Ok(Woken::Started(mut replies)) => {
-            eprintln!("{agent}: session started");
+            note!("{agent}: session started");
             write.write_all(Reply::Started.line().as_bytes()).await?;
             while let Some(reply) = replies.recv().await {
                 // A host that hung up stops listening; the session runs on.
@@ -425,37 +375,64 @@ async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
         }
         Err(e) => {
             let reason = format!("{e:#}");
-            write
-                .write_all(Reply::Refused { reason }.line().as_bytes())
-                .await?;
+            write.write_all(Reply::Refused { reason }.line().as_bytes()).await?;
         }
     }
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// systemd binds the sockets (agentd's socket units), so their modes are in Nix and connections queue while agentd
+/// restarts; it passes them by name before any thread starts, as `listen_fds` requires.
+fn main() -> ExitCode {
     let args = Args::parse();
-    let agents = serde_json::from_slice(&std::fs::read(&args.agents)?)
-        .with_context(|| format!("read {}", args.agents.display()))?;
-    let socket = args.run_dir.join("api.sock");
-    let _ = std::fs::remove_file(&socket);
-    let api = UnixListener::bind(&socket)?;
-    std::fs::set_permissions(&socket, Permissions::from_mode(0o666))?;
-    let direct = TcpListener::bind(args.api_address).await?;
-    let control = VsockListener::bind(VsockAddr::new(libc::VMADDR_CID_ANY, CONTROL_PORT))?;
+    let started = listen_fds().and_then(|passed| {
+        let mut named = HashMap::new();
+        for (name, socket) in passed {
+            ensure!(
+                named.insert(name.clone(), socket).is_none(),
+                "systemd passed two sockets named {name}"
+            );
+        }
+        let mut take = |name: &str| {
+            let socket = named.remove(name);
+            socket.with_context(|| {
+                format!("systemd passed no socket named {name}; agentd runs from its socket units")
+            })
+        };
+        let (api, direct, control) = (take("api")?, take("direct")?, take("control")?);
+        ensure!(
+            named.is_empty(),
+            "systemd passed sockets agentd does not know: {:?}",
+            named.keys()
+        );
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(run(args, api, direct, control))
+    });
+    yakery_log::exit_code(started.map(|()| ExitCode::SUCCESS))
+}
+
+async fn run(args: Args, api: OwnedFd, direct: OwnedFd, control: OwnedFd) -> Result<()> {
+    let (api, direct) =
+        (std::os::unix::net::UnixListener::from(api), std::net::TcpListener::from(direct));
+    api.set_nonblocking(true)?;
+    direct.set_nonblocking(true)?;
     let state = Arc::new(State {
+        api: api.local_addr()?.as_pathname().context("the api socket has no path")?.into(),
         slots: Arc::new(Semaphore::new(args.sessions)),
         key: read_key(&args.key)?,
+        agents: read_agents(&args.agents)?,
         args,
-        agents,
         sessions: Mutex::default(),
     });
-    tokio::join!(
-        relay(api, state.clone()),
-        relay(direct, state.clone()),
-        serve(control, state)
-    );
+    // SAFETY: the fd is open, and the listener becomes its one owner.
+    #[allow(unsafe_code)]
+    let control = unsafe { VsockListener::from_raw_fd(control.into_raw_fd()) };
+    let port = control.local_addr()?.port();
+    ensure!(port == CONTROL_PORT, "the control socket is on port {port}, not {CONTROL_PORT}");
+    let (api, direct) = (UnixListener::from_std(api)?, TcpListener::from_std(direct)?);
+    tokio::join!(relay(api, state.clone()), relay(direct, state.clone()), serve(control, state));
     Ok(())
 }
 
@@ -472,16 +449,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unsafe_code)]
     async fn a_loopback_client_is_its_owner() {
-        let listener = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 9), 0))
-            .await
-            .unwrap();
-        let _client = TcpStream::connect(listener.local_addr().unwrap())
-            .await
-            .unwrap();
+        let listener = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 9), 0)).await.unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
         let server = listener.next().await.unwrap();
-        assert_eq!(TcpListener::uid(&server).unwrap(), unsafe {
-            libc::getuid()
-        });
+        assert_eq!(TcpListener::uid(&server).unwrap(), unsafe { libc::getuid() });
     }
 }
