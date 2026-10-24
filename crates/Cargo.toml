@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["agent-mail", "slurm-ci", "lib/text", "lib/private", "lib/say"]
+members = ["agent-mail", "slurm-ci", "lib/text", "lib/private", "lib/log"]
 
 [workspace.package]
 edition = "2024"
@@ -21,4 +21,4 @@ tempfile = "3"
 
 text = { path = "lib/text" }
 private = { path = "lib/private" }
-say = { path = "lib/say" }
+yakery-log = { path = "lib/log" }

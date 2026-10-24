@@ -1,5 +1,5 @@
 [package]
-name = "say"
+name = "yakery-log"
 version = "0.1.0"
 description = "warn!, note! and fail! on stderr, with syslog priorities when stderr is the journal"
 edition.workspace = true
