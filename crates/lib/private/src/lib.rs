@@ -1,10 +1,12 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod dir;
+mod listen;
 pub mod random;
 mod secret;
 
 pub use dir::{Dir, Mode, PARTIAL_EXPIRY, Replace};
+pub use listen::listen_fds;
 pub use secret::Secret;
 
 pub mod hex {
