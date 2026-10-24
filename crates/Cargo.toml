@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["agent-mail", "slurm-ci", "lib/text"]
+members = ["agent-mail", "slurm-ci", "lib/text", "lib/private"]
 
 [workspace.package]
 edition = "2024"
@@ -11,7 +11,13 @@ unsafe_code = "deny"
 
 [workspace.dependencies]
 anyhow = "1"
+base16ct = { version = "1", features = ["alloc"] }
+getrandom = { version = "0.4", features = ["std"] }
+rustix = { version = "1", features = ["fs", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+subtle = { version = "2.6", default-features = false }
+tempfile = "3"
 
 text = { path = "lib/text" }
+private = { path = "lib/private" }
