@@ -15,8 +15,9 @@ dependencies = [
  "hyper-util",
  "serde",
  "serde_json",
+ "text",
  "tokio",
- "tokio-vsock",
+ "yakery-log",
 ]
 
 [[package]]
@@ -49,9 +50,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake3",
+ "private",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-vsock",
+ "yakery-log",
 ]
 
 [[package]]
@@ -62,10 +66,12 @@ dependencies = [
  "anyhow",
  "clap",
  "libc",
+ "private",
  "serde",
  "serde_json",
  "tokio",
  "tokio-vsock",
+ "yakery-log",
 ]
 
 [[package]]

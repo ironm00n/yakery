@@ -5,6 +5,9 @@ description = "The host's end of the agent VM: agentctl, and the mail server's w
 edition.workspace = true
 rust-version.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "agentctl"
 path = "src/bin/agentctl.rs"
@@ -23,8 +26,9 @@ hyper.workspace = true
 hyper-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
-tokio-vsock.workspace = true
+text.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
+yakery-log.workspace = true
 
 [lints]
 workspace = true

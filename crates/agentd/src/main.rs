@@ -1,7 +1,5 @@
-//! The agent VM's root daemon. Claude Code reaches the host's gateway through
-//! it, over the API socket or at the address the VM's hosts file gives
-//! api.anthropic.com, each connection tagged with the uid it came from, and the
-//! host's wakes run as transient units in the agent's slice.
+//! The agent VM's root daemon: Claude Code reaches the host's gateway through it, each connection tagged with the
+//! uid it came from, and the host's wakes run as transient units in the agent's slice.
 
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -12,14 +10,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use agent_proto::{
     CA, CONTROL_PORT, HOST_CID, Key, Reply, Request, Service, WAKE, accept, challenge, prove,
-    read_key,
+    read_agents, read_key,
 };
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use private::{Dir, Mode, Replace, now};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use tokio::io::{
@@ -30,12 +29,12 @@ use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio_vsock::{VsockAddr, VsockListener, VsockStream};
+use yakery_log::{note, warn};
 
 /// How long a session stays open after a turn ends. A message injected while
 /// the turn was closing starts the next one inside this window.
 const QUIET: Duration = Duration::from_secs(5);
 
-/// The longest wake request read from the host.
 const MAX_REQUEST: u64 = 1 << 20;
 
 #[derive(Parser)]
@@ -107,10 +106,6 @@ impl State {
         self.agents.iter().find(|&(_, &u)| u == uid).map(|(name, _)| name.as_str())
     }
 
-    fn ca(&self) -> PathBuf {
-        self.args.run_dir.join("ca.pem")
-    }
-
     async fn wake(self: &Arc<Self>, agent: &str, message: &str) -> Result<Woken> {
         let &uid = self.agents.get(agent).with_context(|| format!("no agent named {agent}"))?;
         if let Some(session) = self.sessions.lock().await.get_mut(agent) {
@@ -144,11 +139,9 @@ impl State {
         prove(&mut gateway, &self.key, Service::Ca, CA).await?;
         let mut pem = Vec::new();
         gateway.read_to_end(&mut pem).await?;
-        let staged = self.ca().with_extension("new");
-        tokio::fs::write(&staged, &pem).await?;
-        tokio::fs::set_permissions(&staged, Permissions::from_mode(0o644)).await?;
-        tokio::fs::rename(&staged, self.ca()).await?;
-        Ok(())
+        let dir = Dir::open(&self.args.run_dir, &[])?;
+        dir.drop_stale_partials()?;
+        dir.write("ca.pem", &pem, Mode::Readable, Replace::Yes).map(drop)
     }
 
     fn spawn(&self, agent: &str, uid: u32) -> Result<Child> {
@@ -163,13 +156,13 @@ impl State {
             ("PATH", path),
             ("ANTHROPIC_UNIX_SOCKET", self.args.run_dir.join("api.sock").display().to_string()),
             ("CLAUDE_CODE_OAUTH_TOKEN", "ssh-placeholder".into()),
-            ("NODE_EXTRA_CA_CERTS", self.ca().display().to_string()),
+            ("NODE_EXTRA_CA_CERTS", self.args.run_dir.join("ca.pem").display().to_string()),
             ("CLAUDE_CONFIG_DIR", config.display().to_string()),
             ("CLAUDE_CODE_PROJECT_DIR_NAME", agent.into()),
             ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1".into()),
             ("TMPDIR", tmp.display().to_string()),
         ];
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let stamp = now();
         Command::new("systemd-run")
             .args(["--quiet", "--pipe", "--wait", "--collect"])
             .arg(format!("--unit=agent-{agent}-{stamp}"))
@@ -199,8 +192,6 @@ impl State {
             .context("start systemd-run")
     }
 
-    /// Relay the session's output until it exits, closing its stdin once a
-    /// turn has ended and nothing was injected after it.
     async fn drive(
         self: Arc<Self>,
         agent: String,
@@ -245,7 +236,7 @@ impl State {
         }
         self.sessions.lock().await.remove(&agent);
         let code = child.wait().await.ok().and_then(|status| status.code());
-        eprintln!("{agent}: session exited with {code:?}");
+        note!("{agent}: session exited with {code:?}");
         let _ = tx.send(Reply::Exited { code });
     }
 }
@@ -265,8 +256,6 @@ fn has_quota(device: &Path, uid: u32) -> Result<bool> {
     Ok(quota.dqb_bhardlimit != 0)
 }
 
-/// A listener for processes on this machine, which can name the uid of
-/// whoever opened a connection.
 trait Local {
     type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;
 
@@ -332,7 +321,7 @@ async fn relay<L: Local>(listener: L, state: Arc<State>) {
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(e) = tunnel::<L>(client, &state).await {
-                eprintln!("api tunnel: {e:#}");
+                warn!("api tunnel: {e:#}");
             }
         });
     }
@@ -359,7 +348,7 @@ async fn serve(listener: VsockListener, state: Arc<State>) {
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(e) = control(stream, state).await {
-                eprintln!("control: {e:#}");
+                warn!("control: {e:#}");
             }
         });
     }
@@ -378,7 +367,7 @@ async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
     match state.wake(&agent, &message).await {
         Ok(Woken::Injected) => write.write_all(Reply::Injected.line().as_bytes()).await?,
         Ok(Woken::Started(mut replies)) => {
-            eprintln!("{agent}: session started");
+            note!("{agent}: session started");
             write.write_all(Reply::Started.line().as_bytes()).await?;
             while let Some(reply) = replies.recv().await {
                 // A host that hung up stops listening; the session runs on.
@@ -399,8 +388,7 @@ async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let agents = serde_json::from_slice(&std::fs::read(&args.agents)?)
-        .with_context(|| format!("read {}", args.agents.display()))?;
+    let agents = read_agents(&args.agents)?;
     let socket = args.run_dir.join("api.sock");
     let _ = std::fs::remove_file(&socket);
     let api = UnixListener::bind(&socket)?;

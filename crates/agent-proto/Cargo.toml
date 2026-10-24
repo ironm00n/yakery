@@ -11,9 +11,12 @@ path = "src/lib.rs"
 [dependencies]
 anyhow.workspace = true
 blake3.workspace = true
+private.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tokio = { workspace = true, features = ["io-util", "time"] }
+tokio-vsock.workspace = true
+yakery-log.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

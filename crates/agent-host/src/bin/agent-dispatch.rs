@@ -1,16 +1,17 @@
-//! Wakes an agent whenever the mail server reports a delivery to it. Stalwart
-//! posts its `delivery.completed` events here as a webhook; every recipient on
-//! the agent domain whose name is on the agent list gets a wake.
+//! Wakes an agent whenever the mail server reports a delivery to it: Stalwart posts its `delivery.completed` events
+//! here as a webhook, and every recipient on the agent domain whose name is on the agent list gets a wake.
 
 use std::collections::{BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_proto::{CONTROL_PORT, Key, Request, Service, WAKE, accept, prove, read_key};
-use anyhow::{Context, Result, bail};
+use agent_host::Vm;
+use agent_proto::{Key, Request, accept, read_agents};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
 use http_body_util::{BodyExt, Empty, Limited};
@@ -20,9 +21,9 @@ use hyper::{Method, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use text::Address;
 use tokio::net::TcpListener;
-use tokio_vsock::{VsockAddr, VsockStream};
+use yakery_log::{fail, note, warn};
 
 const BODY_LIMIT: usize = 1 << 20;
 const MESSAGE: &str = "New mail arrived for you.";
@@ -44,12 +45,8 @@ struct Args {
     agents: PathBuf,
     #[arg(long)]
     domain: String,
-    /// The agent VM's vsock CID.
-    #[arg(long, default_value_t = 4)]
-    cid: u32,
-    /// The key shared with the VM's daemon.
-    #[arg(long)]
-    key: PathBuf,
+    #[command(flatten)]
+    vm: Vm,
 }
 
 #[derive(Deserialize)]
@@ -72,7 +69,7 @@ struct Dispatch {
 }
 
 impl Dispatch {
-    fn recipients<'a>(&self, batch: &'a Batch) -> BTreeSet<&'a str> {
+    fn recipients(&self, batch: &Batch) -> BTreeSet<String> {
         batch
             .events
             .iter()
@@ -83,25 +80,18 @@ impl Dispatch {
                 Value::String(address) => vec![address.as_str()],
                 _ => vec![],
             })
-            .filter_map(|address| {
-                let (name, domain) = address.split_once('@')?;
-                (domain.eq_ignore_ascii_case(&self.domain) && self.agents.contains(name))
-                    .then_some(name)
+            .filter_map(|address| address.parse::<Address>().ok())
+            .filter(|a| {
+                a.domain().eq_ignore_ascii_case(&self.domain) && self.agents.contains(a.local())
             })
+            .map(|a| a.local().to_owned())
             .collect()
     }
 
     async fn wake(&self, agent: &str) -> Result<String> {
-        let mut stream = VsockStream::connect(VsockAddr::new(self.cid, CONTROL_PORT)).await?;
-        prove(&mut stream, &self.key, Service::Control, WAKE).await?;
-        let (read, mut write) = tokio::io::split(stream);
         let request = Request::Wake { agent: agent.to_owned(), message: MESSAGE.to_owned() };
-        write.write_all(format!("{}\n", serde_json::to_string(&request)?).as_bytes()).await?;
-        let mut reply = String::new();
-        if BufReader::new(read).read_line(&mut reply).await? == 0 {
-            bail!("the daemon hung up without replying");
-        }
-        Ok(reply.trim_end().to_owned())
+        let mut replies = agent_proto::wake(self.cid, &self.key, &request).await?;
+        replies.next_line().await?.context("the daemon hung up without replying")
     }
 
     async fn wake_until_answered(&self, agent: &str) -> Result<String> {
@@ -109,7 +99,7 @@ impl Dispatch {
         loop {
             match self.wake(agent).await {
                 Err(e) if attempt < ATTEMPTS => {
-                    eprintln!("{agent}: wake attempt {attempt} failed, retrying: {e:#}");
+                    warn!("{agent}: wake attempt {attempt} failed, retrying: {e:#}");
                     attempt += 1;
                     tokio::time::sleep(RETRY_EVERY).await;
                 }
@@ -131,11 +121,10 @@ async fn handle(
                 Ok(batch) => {
                     for agent in dispatch.recipients(&batch) {
                         let dispatch = dispatch.clone();
-                        let agent = agent.to_owned();
                         tokio::spawn(async move {
                             match dispatch.wake_until_answered(&agent).await {
-                                Ok(reply) => eprintln!("{agent}: {reply}"),
-                                Err(e) => eprintln!("{agent}: wake failed: {e:#}"),
+                                Ok(reply) => note!("{agent}: {reply}"),
+                                Err(e) => fail!("{agent}: wake failed: {e:#}"),
                             }
                         });
                     }
@@ -151,22 +140,23 @@ async fn handle(
     response
 }
 
+fn main() -> ExitCode {
+    yakery_log::exit_code(serve(Args::parse()).map(|()| ExitCode::SUCCESS))
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
-    let args = Args::parse();
-    let agents: HashMap<String, u32> = serde_json::from_slice(&std::fs::read(&args.agents)?)
-        .with_context(|| format!("read {}", args.agents.display()))?;
+async fn serve(args: Args) -> Result<()> {
     let dispatch = Arc::new(Dispatch {
-        agents: agents.into_keys().collect(),
+        agents: read_agents(&args.agents)?.into_keys().collect(),
         domain: args.domain,
-        cid: args.cid,
-        key: read_key(&args.key)?,
+        cid: args.vm.cid,
+        key: args.vm.key()?,
     });
     let listener = TcpListener::bind(args.listen).await?;
     loop {
         let (stream, peer) = accept(async || listener.accept().await).await;
         if !args.allow_from.contains(&peer.ip().to_canonical()) {
-            eprintln!("refused a connection from {peer}");
+            warn!("refused a connection from {peer}");
             continue;
         }
         let dispatch = dispatch.clone();
@@ -203,6 +193,9 @@ mod tests {
             { "type": "message-ingest.ham", "data": { "to": ["beta@agent.ironmoon.dev"] } },
         ] }))
         .unwrap();
-        assert_eq!(dispatch.recipients(&batch), BTreeSet::from(["alpha", "beta"]));
+        assert_eq!(
+            dispatch.recipients(&batch),
+            BTreeSet::from(["alpha", "beta"].map(String::from))
+        );
     }
 }
