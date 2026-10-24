@@ -1,0 +1,12 @@
+[package]
+name = "say"
+version = "0.1.0"
+description = "warn!, note! and fail! on stderr, with syslog priorities when stderr is the journal"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
