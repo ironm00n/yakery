@@ -1,10 +1,12 @@
 use std::{
     fs::{self, File, Permissions},
+    io::Read,
     os::unix::fs::{PermissionsExt, symlink},
     path::Path,
     time::{Duration, SystemTime},
 };
 
+use rustix::io::Errno;
 use tempfile::TempDir;
 
 use crate::{Dir, Mode, PARTIAL_EXPIRY, Replace, Secret, hex, random, secret::PASSWORD_CLASSES};
@@ -138,4 +140,58 @@ fn draws_stay_in_range() {
     assert!(random::below(0).is_err());
     let word = random::chars(b"ab", 64).unwrap();
     assert!(word.len() == 64 && word.contains('a') && word.contains('b') && !word.contains('c'));
+}
+
+#[test]
+fn where_rename_takes_no_flags_a_link_keeps_replace_no() {
+    let home = TempDir::new().unwrap();
+    let dir = Dir::open(home.path(), &NAMES).unwrap();
+    let at = home.path().join(".cache/app/files");
+    let nfs = |_: &str, _: &str| Err(Errno::INVAL);
+    assert!(dir.write_with("a", b"one", Mode::Readable, Replace::No, nfs).unwrap());
+    assert!(!dir.write_with("a", b"two", Mode::Private, Replace::No, nfs).unwrap());
+    assert_eq!((fs::read(at.join("a")).unwrap(), mode(&at.join("a"))), (b"one".to_vec(), 0o644));
+    let refused = |_: &str, _: &str| Err(Errno::ACCESS);
+    assert!(dir.write_with("b", b"one", Mode::Private, Replace::No, refused).is_err());
+    assert_eq!(entries(&at), ["a"], "no partial file stays behind");
+}
+
+#[test]
+fn a_dir_made_here_is_new_and_private_and_appends_and_opens_stay_inside_it() {
+    let home = TempDir::new().unwrap();
+    let dir = Dir::open(home.path(), &[]).unwrap();
+    let run = dir.create_dir("run-1").unwrap().unwrap();
+    assert_eq!(mode(&home.path().join("run-1")), 0o700);
+    assert!(dir.create_dir("run-1").unwrap().is_none(), "a name is never reused");
+    symlink(home.path(), home.path().join("elsewhere")).unwrap();
+    fs::write(home.path().join("file"), "").unwrap();
+    assert!(dir.create_dir("elsewhere").is_err() && dir.create_dir("file").is_err());
+    run.append("log.jsonl", b"{}\n").unwrap();
+    run.append("log.jsonl", b"[]\n").unwrap();
+    let log = home.path().join("run-1/log.jsonl");
+    assert_eq!((fs::read_to_string(&log).unwrap(), mode(&log)), ("{}\n[]\n".into(), 0o600));
+    let mut text = String::new();
+    run.open_file("log.jsonl").unwrap().read_to_string(&mut text).unwrap();
+    assert_eq!(text, "{}\n[]\n");
+    assert!(run.open_file("absent").is_err() && !home.path().join("run-1/absent").exists());
+    symlink(&log, home.path().join("run-1/link")).unwrap();
+    assert!(run.open_file("link").is_err() && run.append("link", b"x").is_err());
+    assert_eq!(fs::read_to_string(&log).unwrap(), "{}\n[]\n");
+}
+
+#[test]
+fn a_subdir_is_opened_with_opens_checks_and_never_made() {
+    let home = TempDir::new().unwrap();
+    let dir = Dir::open(home.path(), &[]).unwrap();
+    assert!(dir.subdir("run").unwrap().is_none() && !home.path().join("run").exists());
+    fs::create_dir(home.path().join("run")).unwrap();
+    fs::set_permissions(home.path().join("run"), Permissions::from_mode(0o700)).unwrap();
+    dir.subdir("run").unwrap().unwrap().write("a", b"one", Mode::Private, Replace::No).unwrap();
+    assert_eq!(fs::read(home.path().join("run/a")).unwrap(), b"one");
+    fs::set_permissions(home.path().join("run"), Permissions::from_mode(0o770)).unwrap();
+    let shared = format!("{:#}", dir.subdir("run").err().unwrap());
+    assert!(shared.ends_with("run: others may write to it (mode 770)"), "{shared}");
+    symlink(home.path().join("run"), home.path().join("link")).unwrap();
+    let linked = format!("{:#}", dir.subdir("link").err().unwrap());
+    assert!(linked.ends_with("link: not a directory, or a symlink"), "{linked}");
 }

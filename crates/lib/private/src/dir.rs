@@ -9,8 +9,8 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use rustix::{
     fs::{
-        AtFlags, CWD, FileType, Mode as RawMode, OFlags, RenameFlags, fchmod, fstat, fsync,
-        mkdirat, openat, renameat_with, statat, unlinkat,
+        AtFlags, CWD, FileType, Mode as RawMode, OFlags, RenameFlags, fchmod, fstat, fsync, linkat,
+        mkdirat, openat, renameat, renameat_with, statat, unlinkat,
     },
     io::Errno,
     process::getuid,
@@ -51,35 +51,41 @@ pub struct Dir(OwnedFd, PathBuf);
 
 impl Dir {
     pub fn open(base: &Path, names: &[&str]) -> Result<Dir> {
-        let flags = OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC;
         let at = || base.display().to_string();
         DirBuilder::new().recursive(true).mode(0o700).create(base).with_context(at)?;
+        let flags = OFlags::DIRECTORY | OFlags::RDONLY | OFlags::CLOEXEC;
         let mut dir =
             Dir(openat(CWD, base, flags, RawMode::empty()).with_context(at)?, base.into());
         for name in names {
-            dir.1.push(name);
-            let path = dir.1.display().to_string();
+            let path = || dir.path(name).display().to_string();
             match mkdirat(&dir.0, *name, RawMode::RWXU) {
                 Ok(()) | Err(Errno::EXIST) => {}
-                Err(e) => return Err(anyhow!(e).context(path)),
+                Err(e) => return Err(anyhow!(e).context(path())),
             }
-            let fd =
-                openat(&dir.0, *name, flags | OFlags::NOFOLLOW, RawMode::empty()).map_err(|e| {
-                    match e {
-                        Errno::LOOP | Errno::NOTDIR => {
-                            anyhow!("{path}: not a directory, or a symlink")
-                        }
-                        e => anyhow!(e).context(path.clone()),
-                    }
-                })?;
-            let stat = fstat(&fd)?;
-            let uid = stat.st_uid;
-            ensure!(uid == getuid().as_raw(), "{path}: owned by uid {uid}, not this user");
-            let mode = stat.st_mode & 0o777;
-            ensure!(mode & 0o022 == 0, "{path}: others may write to it (mode {mode:o})");
-            dir.0 = fd;
+            let next =
+                dir.subdir(name)?.with_context(|| format!("{}: gone as it was made", path()))?;
+            dir = next;
         }
         Ok(dir)
+    }
+
+    /// The directory `name` if it is there, opened from this one as `open` opens each of its names.
+    pub fn subdir(&self, name: &str) -> Result<Option<Dir>> {
+        let path = self.path(name);
+        let shown = path.display().to_string();
+        let flags = OFlags::DIRECTORY | OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let fd = match openat(&self.0, name, flags, RawMode::empty()) {
+            Ok(fd) => fd,
+            Err(Errno::NOENT) => return Ok(None),
+            Err(Errno::LOOP | Errno::NOTDIR) => bail!("{shown}: not a directory, or a symlink"),
+            Err(e) => return Err(anyhow!(e).context(shown)),
+        };
+        let stat = fstat(&fd)?;
+        let uid = stat.st_uid;
+        ensure!(uid == getuid().as_raw(), "{shown}: owned by uid {uid}, not this user");
+        let mode = stat.st_mode & 0o777;
+        ensure!(mode & 0o022 == 0, "{shown}: others may write to it (mode {mode:o})");
+        Ok(Some(Dir(fd, path)))
     }
 
     pub fn path(&self, name: &str) -> PathBuf {
@@ -97,6 +103,11 @@ impl Dir {
             .with_context(|| self.path(name).display().to_string())
     }
 
+    /// `name` open to read, never through a link.
+    pub fn open_file(&self, name: &str) -> Result<File> {
+        self.at(name, OFlags::RDONLY).with_context(|| self.path(name).display().to_string())
+    }
+
     pub fn read(&self, name: &str) -> Result<Option<Vec<u8>>> {
         let path = || self.path(name).display().to_string();
         let mut file = match self.at(name, OFlags::RDONLY) {
@@ -111,26 +122,64 @@ impl Dir {
     /// Whole or not at all: through a partial file, synced with the directory, renamed over `name` only if
     /// `replace`. False if `name` was there and not replaced.
     pub fn write(&self, name: &str, bytes: &[u8], mode: Mode, replace: Replace) -> Result<bool> {
+        self.write_with(name, bytes, mode, replace, |from, to| {
+            renameat_with(&self.0, from, &self.0, to, RenameFlags::NOREPLACE)
+        })
+    }
+
+    /// NFS refuses renameat2's flags with EINVAL; a hard link, which fails on an existing name, stands in for
+    /// RENAME_NOREPLACE there. Tests pass their own `noreplace`.
+    pub(crate) fn write_with(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        mode: Mode,
+        replace: Replace,
+        noreplace: impl FnOnce(&str, &str) -> rustix::io::Result<()>,
+    ) -> Result<bool> {
         let partial = format!("{PARTIAL}{}", random::chars(random::ALPHANUMERIC, 16)?);
         let mut file = self.at(&partial, OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY)?;
-        let flags = match replace {
-            Replace::Yes => RenameFlags::empty(),
-            Replace::No => RenameFlags::NOREPLACE,
-        };
         let written = fchmod(&file, mode.bits()).map_err(std::io::Error::from);
-        let renamed =
+        let placed =
             match written.and_then(|()| file.write_all(bytes)).and_then(|()| file.sync_all()) {
-                Ok(()) => renameat_with(&self.0, &partial, &self.0, name, flags),
                 Err(e) => Err(Errno::from_io_error(&e).unwrap_or(Errno::IO)),
+                Ok(()) if replace == Replace::Yes => renameat(&self.0, &partial, &self.0, name),
+                Ok(()) => match noreplace(&partial, name) {
+                    Err(Errno::INVAL) => linkat(&self.0, &partial, &self.0, name, AtFlags::empty())
+                        .map(|()| {
+                            let _ = unlinkat(&self.0, &partial, AtFlags::empty());
+                        }),
+                    renamed => renamed,
+                },
             };
-        if renamed.is_err() {
+        if placed.is_err() {
             let _ = unlinkat(&self.0, &partial, AtFlags::empty());
         }
-        match renamed.and_then(|()| fsync(&self.0)) {
+        match placed.and_then(|()| fsync(&self.0)) {
             Ok(()) => Ok(true),
             Err(Errno::EXIST) if replace == Replace::No => Ok(false),
             Err(e) => Err(anyhow!(e).context(self.path(name).display().to_string())),
         }
+    }
+
+    /// `bytes` at the end of `name`, which is created private if missing; synced.
+    pub fn append(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        let path = || self.path(name).display().to_string();
+        let mut file =
+            self.at(name, OFlags::CREATE | OFlags::WRONLY | OFlags::APPEND).with_context(path)?;
+        file.write_all(bytes).and_then(|()| file.sync_data()).with_context(path)
+    }
+
+    /// `name`, made here private, or `None` if a directory has the name already.
+    pub fn create_dir(&self, name: &str) -> Result<Option<Dir>> {
+        let path = || self.path(name).display().to_string();
+        match mkdirat(&self.0, name, RawMode::RWXU) {
+            Ok(()) => {}
+            Err(Errno::EXIST) => return self.subdir(name).map(|_| None),
+            Err(e) => return Err(anyhow!(e).context(path())),
+        }
+        fsync(&self.0).with_context(path)?;
+        self.subdir(name)?.with_context(|| format!("{}: gone as it was made", path())).map(Some)
     }
 
     pub fn load<T: DeserializeOwned + Default>(&self, name: &str) -> Result<T> {
