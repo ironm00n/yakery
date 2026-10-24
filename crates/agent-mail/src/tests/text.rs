@@ -16,14 +16,6 @@ const TOOLING: &str = "agent+tooling@example.org";
 
 #[test]
 fn parsers_take_only_text_a_header_can_carry() {
-    rows!(parsed::<Address>;
-        "a@b.dev" => "a@b.dev"; "o'neil.x@sub.example-1.com" => "o'neil.x@sub.example-1.com";
-        "A@Example.ORG" => "A@Example.ORG"; "agent+tooling@example.org" => TOOLING;
-        "evil@example.com>,<x@example.org", "\"a@b\"@example.org", "a@b@example.org",
-        "a b@example.org", "<a@example.org>", "a@example.org\r\nBcc: x@y.z", "a,b@example.org",
-        ".a@example.org", "a..b@example.org", "a@-example.org", "a@example", "a@example.org.",
-        "a@[127.0.0.1]", "ä@example.org", "a@exämple.org", "@example.org", "a@" => "refused";
-    );
     rows!(parsed::<Topic>;
         "agent-mail-test" => "agent-mail-test"; "Tooling2" => "Tooling2";
         "", "a+b", "a b", "a_b", "a@b", "é" => "refused";
@@ -41,11 +33,8 @@ fn parsers_take_only_text_a_header_can_carry() {
         "", "m", "1x", "1.5h", "-1m", "1mm", "31d", "99999999999999999999d",
         "18446744073709551615m" => "refused";
     );
-    let spaced = "a b@example.org".parse::<Address>();
-    assert_eq!(shown(spaced), "error: a b@example.org is not a plain email address");
     let ids = MessageId::all(&["good@x.dev".into(), "bad\r@x.dev".into()]);
     assert_eq!(ids, ["good@x.dev".parse().unwrap()]);
-    assert_eq!(address("Agent@Example.org"), address("agent@example.org"));
 }
 
 #[test]
@@ -79,7 +68,7 @@ fn ours_is_the_login_or_its_topic_subaddresses() {
     rows!(|a| me.first_topic([a]).map(|a| a.to_string());
         TOOLING => Some(TOOLING.into()); "agent@example.org", "owner+tooling@example.org" => None;
     );
-    rows!(|n: usize| me.address().topic(&"t".repeat(n).parse().unwrap()).is_ok();
+    rows!(|n: usize| me.address().subaddress(&"t".repeat(n).parse::<Topic>().unwrap()).is_ok();
         7, 236 => true; 237 => false;
     );
     rows!(|l| login(l).bare_sender().is_ok();
@@ -502,7 +491,6 @@ fn receipts_go_under_the_mail_they_answer() {
     assert_eq!(read::read_by(&receipt), by);
 }
 
-/// Inbox mail `id` of thread `thread`, from `from`, received at second `at` past midnight.
 fn mail(id: &str, thread: &str, at: u32, from: &str, keywords: &[&str]) -> Value {
     let keywords: Map<String, Value> =
         keywords.iter().map(|k| (k.to_string(), json!(true))).collect();
@@ -512,7 +500,6 @@ fn mail(id: &str, thread: &str, at: u32, from: &str, keywords: &[&str]) -> Value
     email(id, fields)
 }
 
-/// A mail of ours in Sent, replying to `answers`.
 fn sent(id: &str, thread: &str, answers: &str, with: Value) -> Value {
     let mut m = mail(id, thread, 30, POOL, &["$seen"]);
     let answers = [format!("{answers}@example.org")];

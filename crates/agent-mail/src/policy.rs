@@ -1,6 +1,7 @@
+use text::{Address, text};
+
 use crate::{
-    AGENT_DOMAIN, CORRESPONDENTS, CORRESPONDENTS_FOR, DOMAIN, SHARED_LOCAL_PART,
-    address::{Address, Topic, text},
+    AGENT_DOMAIN, CORRESPONDENTS, CORRESPONDENTS_FOR, DOMAIN, SHARED_LOCAL_PART, address::Topic,
     prelude::*,
 };
 
@@ -74,7 +75,6 @@ pub fn correspondents(from: &Address, list: &str, by_sender: &str) -> Result<Vec
     Ok(all)
 }
 
-/// A mail's sender, To and Cc; only `check` builds one, and both its header fields and its envelope come from it.
 pub struct Recipients(Envelope);
 
 pub struct Envelope {

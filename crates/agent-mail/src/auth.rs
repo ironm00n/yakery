@@ -1,11 +1,11 @@
 use lol_html::{RewriteStrSettings, element, rewrite_str};
+use private::{Secret, now};
 use reqwest::Method;
 
 use crate::{
     CLIENT_ID,
     policy::Login,
     prelude::*,
-    private::{Secret, now},
     store::{Access, Config, Held, PasswordFile, Store, Tokens},
     web::{Body, Origin, Page, Pinned, Web},
 };
@@ -129,7 +129,7 @@ impl<Z: Zitadel> Auth<Z> {
         match (with_new, with_old) {
             (Ok((tokens, new)), _) => {
                 self.password.promote(&new, held)?;
-                note!("changing the password reported {put:#}, but the new password works");
+                warn!("changing the password reported {put:#}, but the new password works");
                 self.store.save(tokens, held)
             }
             (_, Some(Ok((tokens, _)))) => {

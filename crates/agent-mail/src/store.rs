@@ -1,16 +1,46 @@
 use std::{
+    env,
+    ffi::{CStr, OsStr},
     fs::{File, TryLockError},
     io::ErrorKind,
-    os::unix::fs::MetadataExt,
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
 };
 
-use rustix::fs::OFlags;
+use private::{Dir, Mode, Replace, Secret};
 
-use crate::{
-    policy::Login,
-    prelude::*,
-    private::{Dir, Secret, home, xdg},
-};
+use crate::{policy::Login, prelude::*};
+
+pub fn home() -> Result<PathBuf> {
+    env::var_os("HOME").map(PathBuf::from).context("HOME is not set")
+}
+
+pub fn passwd_home() -> Result<PathBuf> {
+    let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let (mut buf, mut found) = (vec![0 as libc::c_char; 16 * 1024], std::ptr::null_mut());
+    // SAFETY: every pointer refers to storage that outlives the call, and `buf.len()` is its size.
+    #[allow(unsafe_code)]
+    let status = unsafe {
+        libc::getpwuid_r(
+            libc::getuid(),
+            entry.as_mut_ptr(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut found,
+        )
+    };
+    ensure!(status == 0 && !found.is_null(), "no passwd entry for this user");
+    // SAFETY: getpwuid_r succeeded, so `entry` is filled in and `pw_dir` points into `buf`.
+    #[allow(unsafe_code)]
+    let dir = unsafe { CStr::from_ptr(entry.assume_init().pw_dir) };
+    Ok(PathBuf::from(OsStr::from_bytes(dir.to_bytes())))
+}
+
+pub fn xdg(var: &str, fallback: &str) -> Result<PathBuf> {
+    match env::var_os(var).map(PathBuf::from) {
+        Some(dir) if dir.is_absolute() => Ok(dir),
+        _ => Ok(home()?.join(fallback)),
+    }
+}
 
 pub struct Config {
     pub login: Login,
@@ -42,7 +72,7 @@ impl Config {
         };
         let login = login.parse().map_err(|e| Failure::Config.with(format!("{path}: {e:#}")))?;
         let file = match file.strip_prefix("~/") {
-            Some(rest) => home(false)?.join(rest),
+            Some(rest) => home()?.join(rest),
             None => PathBuf::from(file),
         };
         Ok(Config { login, password: PasswordFile(file) })
@@ -95,7 +125,7 @@ impl PasswordFile {
         let name = staged.file_name().and_then(|n| n.to_str()).context("no file name")?;
         let dir = Dir::open(parent, &[])?;
         dir.drop_stale_partials()?;
-        dir.write(name, password.expose().as_bytes(), true).map(drop)
+        dir.write(name, password.expose().as_bytes(), Mode::Private, Replace::Yes).map(drop)
     }
 
     pub fn promote(&self, expected: &Secret, _: &Held) -> Result<()> {
@@ -180,7 +210,7 @@ pub struct Store {
 impl Store {
     pub fn new(login: &Login) -> Result<Store> {
         let (state, locks) =
-            (xdg("XDG_STATE_HOME", ".local/state")?, home(true)?.join(".local/state"));
+            (xdg("XDG_STATE_HOME", ".local/state")?, passwd_home()?.join(".local/state"));
         Ok(Store { state, locks, login: login.clone() })
     }
 
@@ -198,7 +228,7 @@ impl Store {
     pub async fn lock(&self, name: &str) -> Result<File> {
         let dir = self.dir(true)?;
         let path = dir.path(name).display().to_string();
-        let file = dir.file(name, OFlags::CREATE | OFlags::WRONLY).context(path.clone())?;
+        let file = dir.file(name)?;
         for _ in 0..600 {
             match file.try_lock() {
                 Ok(()) => return Ok(file),

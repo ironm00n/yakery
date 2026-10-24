@@ -9,4 +9,6 @@ pub use anyhow::{Context, Result, anyhow, bail, ensure};
 pub use serde::{Deserialize, Serialize, de::DeserializeOwned};
 pub use serde_json::{Map, Value, json};
 
-pub(crate) use crate::{Failure, show::note};
+pub use yakery_log::{note, warn};
+
+pub(crate) use crate::Failure;

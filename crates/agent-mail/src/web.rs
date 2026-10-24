@@ -7,13 +7,12 @@ use std::{
 
 use bytes::Bytes;
 use http_body::Frame;
+use private::Secret;
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode, Url, header, redirect};
 use tokio::time::Instant;
 
-use crate::{AUTH_HOST, JMAP_HOST, prelude::*, private::Secret};
+use crate::{AUTH_HOST, JMAP_HOST, prelude::*};
 
-/// How long anything sent to either origin waits on the other end: connecting, a whole API call, the headers of a
-/// stream or transfer, and each piece of a transfer after them.
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,7 +21,6 @@ pub enum Origin {
     Mail,
 }
 
-/// A URL on one of the two origins; only `Origin::check` builds one, and every request takes one.
 #[derive(Clone, Debug)]
 pub struct Pinned(Origin, Url);
 
@@ -207,7 +205,6 @@ impl Web {
     }
 }
 
-/// A body handed over in pieces, stamping the time each is taken.
 struct Paced(Bytes, Arc<Mutex<Instant>>);
 
 impl http_body::Body for Paced {

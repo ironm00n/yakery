@@ -6,7 +6,6 @@ mod mail;
 mod out;
 mod policy;
 mod prelude;
-mod private;
 mod show;
 mod store;
 mod web;
@@ -15,7 +14,6 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use cmd::{read, send, wait};
-use show::note;
 
 macro_rules! deployment {
     ($($name:ident = $var:literal | $fixture:literal $(| $empty:literal)?;)*) => {$(
@@ -125,6 +123,7 @@ commands! {
 
 fn main() -> ExitCode {
     // With these gone, rustls-platform-verifier reads the system store, so a proxy can only relay a tunnel.
+    #[allow(unsafe_code)]
     for name in ["SSL_CERT_FILE", "SSL_CERT_DIR", "NIX_SSL_CERT_FILE", "SSLKEYLOGFILE"] {
         // SAFETY: no other thread exists yet; the runtime is built below.
         unsafe { std::env::remove_var(name) };
@@ -138,13 +137,9 @@ fn main() -> ExitCode {
         }
     };
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
-    match runtime.map_err(anyhow::Error::from).and_then(|r| r.block_on(cli.command.run())) {
-        Ok(code) => code,
-        Err(e) => {
-            note!("{e:#}");
-            ExitCode::FAILURE
-        }
-    }
+    yakery_log::exit_code(
+        runtime.map_err(anyhow::Error::from).and_then(|r| r.block_on(cli.command.run())),
+    )
 }
 
 #[cfg(test)]

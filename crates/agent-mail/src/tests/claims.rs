@@ -35,7 +35,6 @@ async fn claimed(mail: &Mail, server: &Shared) -> Vec<String> {
     ids
 }
 
-/// How many marks reached Stalwart, and the keywords of `id`.
 fn marked(server: &Shared, id: &str) -> (usize, Vec<String>) {
     let s = server.borrow();
     let sets = s.log.iter().filter(|l| l.contains("Email/set")).count();

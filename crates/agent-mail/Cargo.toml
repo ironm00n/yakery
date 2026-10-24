@@ -1,26 +1,36 @@
 [package]
 name = "agent-mail"
 version = "0.1.0"
-edition = "2024"
+description = "Agent mail through Stalwart's JMAP, signed in with ZITADEL"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "agent-mail"
+path = "src/main.rs"
 
 [dependencies]
-anyhow = "1"
-base64 = "0.23"
-bytes = "1"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-clap = { version = "4", features = ["derive"] }
-comrak = { version = "0.56", default-features = false }
-getrandom = { version = "0.4", features = ["std"] }
-http-body = "1"
-libc = "0.2"
-lol_html = "3"
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "cookies", "json", "form"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rustix = { version = "1", features = ["fs", "process"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt", "time"] }
+anyhow.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+clap.workspace = true
+comrak.workspace = true
+http-body.workspace = true
+libc.workspace = true
+lol_html.workspace = true
+private.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+text.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+yakery-log.workspace = true
 
 [dev-dependencies]
-http = "1"
-tokio = { version = "1", features = ["test-util"] }
+http.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

@@ -1,16 +1,22 @@
+use private::{now, random};
+use text::Address;
+
 use crate::{
-    address::{Address, MessageId},
+    address::MessageId,
     mail::{
         Current, Email, IMPORT, Identity, Keyword, Mail, SUBMISSIONS, SUBMIT, Status, Submission,
         keywords,
     },
     policy::{Login, Recipients},
     prelude::*,
-    private::{now, token},
     show::plain,
 };
 
 const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub fn fresh_id() -> Result<String> {
+    random::chars(random::ALPHANUMERIC, 24)
+}
 
 pub fn base64(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -68,8 +74,6 @@ fn list<T: ToString>(items: &[T], by: &str) -> String {
     items.iter().map(T::to_string).collect::<Vec<_>>().join(by)
 }
 
-/// The header fields of every mail agent-mail sends, each safe to write as is: addresses and ids by their types,
-/// free text through `text`, and From, To and Cc from checked recipients alone.
 pub struct Head(Vec<(&'static str, String)>);
 
 impl Head {
@@ -203,8 +207,6 @@ pub fn describe(refused: &[(String, String)]) -> String {
 
 pub type Submitted = (String, Delivery);
 
-/// What a caller says of its copy when delivery fails: when the submission's fate is unknown, once the copy is
-/// removed, and when removing it failed.
 pub struct Leftover {
     pub unknown: String,
     pub removed: String,
@@ -411,7 +413,7 @@ impl Receipt {
     }
 
     pub async fn send(&self, outbox: &Outbox<'_>) -> Result<()> {
-        let message = self.message(now(), &token(24)?);
+        let message = self.message(now(), &fresh_id()?);
         let set = [Keyword::Seen, Keyword::MdnSent, Keyword::AgentMail];
         let copy = outbox.import(&message, &outbox.sent, &set).await?;
         let id = copy.as_str();

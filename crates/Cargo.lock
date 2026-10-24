@@ -12,17 +12,18 @@ dependencies = [
  "chrono",
  "clap",
  "comrak",
- "getrandom 0.4.3",
  "http",
  "http-body",
  "libc",
  "lol_html",
+ "private",
  "reqwest",
- "rustix",
  "rustls",
  "serde",
  "serde_json",
+ "text",
  "tokio",
+ "yakery-log",
 ]
 
 [[package]]

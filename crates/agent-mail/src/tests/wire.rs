@@ -10,6 +10,7 @@ use std::{
 
 use bytes::Bytes;
 use http_body::Frame;
+use private::{Secret, now};
 use reqwest::{Method, Request, Response};
 use tokio::time::Instant;
 
@@ -20,7 +21,6 @@ use crate::{
     mail::{Conn, Current, Email, Keyword, Mail},
     out::{Leftover, Outbox},
     policy::Recipients,
-    private::{Secret, now},
     store::{Access, PasswordFile, Store, Tokens},
     web::{Body, Origin, Web},
 };
@@ -39,7 +39,6 @@ pub fn wire(request: &Request) -> Option<Response> {
     Some(answered.unwrap_or_else(|| reply(599, "no wire in this test")).into())
 }
 
-/// Answers this thread's requests until dropped.
 pub struct Wired;
 
 fn wired(answer: impl FnMut(&Request) -> Reply + 'static) -> Wired {
@@ -104,7 +103,6 @@ fn stream(events: &[&'static str]) -> Reply {
     open(events, true)
 }
 
-/// A download sending `n` pieces of 1 KiB, each `gap` after the last.
 struct Trickle(usize, Duration, Pin<Box<tokio::time::Sleep>>);
 
 impl http_body::Body for Trickle {
@@ -364,7 +362,6 @@ impl Stalwart {
     }
 }
 
-/// A mail client signed in as `agent@example.org` with the token `t1`, over `stalwart`.
 pub async fn mail(dir: &Scratch, stalwart: Stalwart) -> (Wired, Shared, Result<Mail>) {
     let (wired, server) = stalwart.wire();
     let login = login("agent@example.org");

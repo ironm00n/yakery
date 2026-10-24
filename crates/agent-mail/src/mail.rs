@@ -1,5 +1,6 @@
 use std::{cell::RefCell, fs::File};
 
+use private::{Secret, random::below};
 use reqwest::{Method, Response, header};
 
 use crate::{
@@ -7,7 +8,6 @@ use crate::{
     jmap::{Call, View, jmap_id, keywords, wire},
     policy::Login,
     prelude::*,
-    private::{Secret, below},
     store::Config,
     web::{self, Origin, Pinned, TIMEOUT, Web},
 };
@@ -108,7 +108,6 @@ impl Current {
 
 pub type Mark = (Current, &'static [Keyword]);
 
-/// The ping interval asked of Stalwart, which pings no more often; a stream silent past it and a margin is gone.
 const PING: Duration = Duration::from_secs(30);
 const SILENCE: Duration = Duration::from_secs(PING.as_secs() + 5);
 
@@ -233,7 +232,6 @@ impl Mail {
         self.answers(locked, &[(call, args)]).await?.remove(0)
     }
 
-    /// Each call in one request, answered on its own.
     async fn answers(
         &self,
         locked: bool,
@@ -331,8 +329,7 @@ impl Mail {
         }
     }
 
-    /// Stalwart refuses an id outside its own alphabet as an argument of Email/query, where Email/get finds no such
-    /// email.
+    /// Stalwart refuses an id outside its alphabet in Email/query; Email/get just finds no such email.
     pub async fn current(&self, id: &str) -> Result<Option<Current>> {
         const FIND: Call = Call("Email/query", Some("invalidArguments"));
         if jmap_id(id).is_err() {
@@ -399,7 +396,6 @@ impl Mail {
         Ok(uploaded["blobId"].as_str().context("stalwart's upload reply names no blob")?.into())
     }
 
-    /// The blob's bytes, `None` past `most`; it fails only once a piece is [`TIMEOUT`] late, however long it takes.
     pub async fn download(&self, blob: &str, most: usize) -> Result<Option<Vec<u8>>> {
         let ids = [("accountId", jmap_id(&self.account)?), ("blobId", jmap_id(blob)?)];
         let fixed = [("name", "attachment"), ("type", "application%2Foctet-stream")];
@@ -462,9 +458,6 @@ impl Mail {
         self.limits[2]
     }
 
-    /// Each mark by an Email/set of its own, all in one request, and whether each call wrote. Stalwart writes an email
-    /// under an assertion on what it read and moves the state only when it wrote, so of calls from any client racing
-    /// to set one keyword on one mail, one writes; the rest get `forbidden` or an update that changed nothing.
     pub async fn each(&self, locked: bool, marks: &[Mark]) -> Result<Vec<Result<bool>>> {
         let set = |mark: &Mark| (SET, json!({ "update": patches(std::slice::from_ref(mark)) }));
         let answers = self.answers(locked, &marks.iter().map(set).collect::<Vec<_>>()).await?;
