@@ -1,9 +1,10 @@
 use std::cell::RefCell;
 
+use private::{Secret, now};
+
 use super::*;
 use crate::{
     auth::{ADMIN_SCOPE, Auth, Form, SCOPE, Zitadel},
-    private::{Secret, now},
     store::{Access, PasswordFile, Store, Tokens},
     web::Origin,
 };
@@ -73,7 +74,6 @@ enum Change {
     ChangedElsewhere,
 }
 
-/// ZITADEL with one account, whose password is `password`.
 #[derive(Default)]
 struct Fake {
     password: RefCell<String>,

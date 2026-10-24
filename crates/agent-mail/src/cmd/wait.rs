@@ -4,12 +4,14 @@ use clap::ArgGroup;
 use tokio::time::Instant;
 
 use super::claim::{Cursor, Scan, answered_in_sent, claim, open};
+use private::{now, random::below};
+use text::Address;
+
 use crate::{
-    address::{Address, Topic},
+    address::Topic,
     mail::{Body, Email, Keyword, Mail, Mark},
     out::{Asked, Outbox, is_receipt},
     prelude::*,
-    private::{below, now},
     show::{message, out, reminder, utc},
 };
 
@@ -197,12 +199,12 @@ impl Watch<'_> {
                     continue;
                 }
                 Failure::Dropped => {
-                    note!("{e:#}; reopening the push stream");
+                    warn!("{e:#}; reopening the push stream");
                     Duration::from_secs(1)
                 }
                 Failure::Config | Failure::PasswordRefused => return Err(e),
                 Failure::Busy => {
-                    note!("stalwart stays over its request limit; checking again in 30s");
+                    warn!("stalwart stays over its request limit; checking again in 30s");
                     Duration::from_secs(30)
                 }
                 kind @ (Failure::TokenRefused | Failure::Unprocessed | Failure::Transient) => {
@@ -210,7 +212,7 @@ impl Watch<'_> {
                         Failure::TokenRefused => "the access token expired".into(),
                         _ => format!("{e:#}"),
                     };
-                    note!("{why}; signing in again in {}s", backoff.as_secs());
+                    warn!("{why}; signing in again in {}s", backoff.as_secs());
                     let pause = backoff;
                     backoff = (backoff * 2).min(Duration::from_secs(300));
                     if !self.pause(pause).await {
@@ -218,7 +220,7 @@ impl Watch<'_> {
                     }
                     match self.mail.reconnect().await {
                         Err(e) if Failure::of(&e).permanent() => return Err(e),
-                        Err(e) => note!("{e:#}"),
+                        Err(e) => warn!("{e:#}"),
                         Ok(()) => note!("signed in again; waiting"),
                     }
                     continue;
@@ -236,7 +238,7 @@ pub async fn run(args: Args) -> Result<ExitCode> {
 }
 
 pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
-    let topics = args.topic.iter().map(|t| mail.login().address().topic(t));
+    let topics = args.topic.iter().map(|t| mail.login().address().subaddress(t));
     let topics = topics.collect::<Result<Vec<Address>>>()?;
     let deadline =
         args.timeout.map(|t| Instant::now().checked_add(t).context("timeout too far ahead"));
@@ -276,7 +278,7 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
                 };
                 match receipt.send(outbox).await {
                     Ok(()) => note!("sent a receipt for {} to {}", m.id, receipt.to.to[0]),
-                    Err(e) => note!("the receipt for {} failed: {e:#}", m.id),
+                    Err(e) => warn!("the receipt for {} failed: {e:#}", m.id),
                 }
             }
         }

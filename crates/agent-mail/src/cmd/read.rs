@@ -4,7 +4,9 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, SecondsFormat, TimeDelta};
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 
-use super::say;
+use private::{Dir, Mode, Replace};
+
+use super::succeed;
 use crate::{
     address::{MessageId, Topic},
     auth::Auth,
@@ -12,9 +14,8 @@ use crate::{
     mail::{Body, Email, Keyword, Mail, Part, QUERY, Text},
     out::is_receipt,
     prelude::*,
-    private::{Dir, home},
     show::{emails, inbox_line, message, out, plain, utc},
-    store::Config,
+    store::{Config, passwd_home},
 };
 
 macro_rules! attachments {
@@ -44,7 +45,6 @@ wire! {
     objects {}
 }
 
-/// What a file is saved from: a part of the mail, or an image its HTML carries itself, as a media type and bytes.
 pub enum Source<'a> {
     Part(&'a Part),
     Embedded(Result<(String, Vec<u8>)>),
@@ -78,7 +78,6 @@ pub fn sources(files: &Files) -> Vec<Source<'_>> {
     parts.map(Source::Part).chain(embedded.map(Source::Embedded)).collect()
 }
 
-/// Each `<img>` with a `data:` source, in document order; one that isn't base64 media is an error in its place.
 pub fn embedded(html: &str) -> Vec<Result<(String, Vec<u8>)>> {
     let mut sources = vec![];
     let images = element!(r#"img[src^="data:"]"#, |el| {
@@ -138,7 +137,7 @@ enum Rotation {
 pub async fn inbox(args: Inbox) -> Result<ExitCode> {
     let mail = Mail::open().await?;
     let mut filter = json!({ "inMailbox": mail.mailbox("inbox")? });
-    let topics = args.topic.iter().map(|t| mail.login().address().topic(t));
+    let topics = args.topic.iter().map(|t| mail.login().address().subaddress(t));
     let topics = topics.map(|a| a.map(|a| a.to_string())).collect::<Result<Vec<_>>>()?;
     let addressed: Vec<_> =
         topics.iter().flat_map(|a| [json!({ "to": a }), json!({ "cc": a })]).collect();
@@ -288,7 +287,7 @@ pub async fn attachments(args: One) -> Result<ExitCode> {
     let (current, files) = mail.email(&args.id).await?;
     let sources = sources(&files);
     ensure!(!sources.is_empty(), "{} has no attachments", plain(&args.id));
-    let dir = folder(&home(true)?, current.as_str()).context("the attachments folder")?;
+    let dir = folder(&passwd_home()?, current.as_str()).context("the attachments folder")?;
     let (mut taken, mut left, mut failed, count) = (HashSet::new(), MAX_TOTAL, 0, sources.len());
     for (n, source) in sources.into_iter().enumerate() {
         let name = file_name(&mut taken, &source.name(n + 1), n + 1);
@@ -311,7 +310,7 @@ pub async fn attachments(args: One) -> Result<ExitCode> {
                 Source::Embedded(image) => image?.1,
             };
             ensure!(bytes.len() <= most, "{} bytes, over {}", bytes.len(), limit(most));
-            Ok(dir.write(&name, &bytes, false)?.then_some(bytes.len()))
+            Ok(dir.write(&name, &bytes, Mode::Private, Replace::No)?.then_some(bytes.len()))
         }
         .await;
         match saved {
@@ -323,7 +322,7 @@ pub async fn attachments(args: One) -> Result<ExitCode> {
                 out(&dir.path(&name).display().to_string())?;
             }
             Err(e) => {
-                note!("skipped {name}: {e:#}");
+                warn!("skipped {name}: {e:#}");
                 failed += 1;
             }
         }
@@ -346,17 +345,17 @@ pub async fn done(args: Many) -> Result<ExitCode> {
     ensure!(missing.is_empty(), "no email {}", missing.join(", "));
     mail.mark(&found.into_iter().map(|id| (id, &[Keyword::Handled][..])).collect::<Vec<_>>())
         .await?;
-    say!("handled {}", args.ids.join(", "))
+    succeed!("handled {}", args.ids.join(", "))
 }
 
 pub async fn login(_: Nothing) -> Result<ExitCode> {
     let auth = Auth::new(Config::load()?)?;
     let access = auth.access().await?;
-    say!("signed in as {}; the access token expires at {}", auth.login, utc(access.expires_at))
+    succeed!("signed in as {}; the access token expires at {}", auth.login, utc(access.expires_at))
 }
 
 pub async fn rotate(_: Password) -> Result<ExitCode> {
     let auth = Auth::new(Config::load()?)?;
     auth.rotate_password().await?;
-    say!("rotated the password of {}", auth.login)
+    succeed!("rotated the password of {}", auth.login)
 }

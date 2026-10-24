@@ -78,15 +78,6 @@ pub fn reminder(m: &Email) -> String {
     )
 }
 
-pub fn warn(text: &str) {
-    let _ = writeln!(std::io::stderr().lock(), "agent-mail: {text}");
-}
-
-macro_rules! note {
-    ($($arg:tt)*) => { $crate::show::warn(&format!($($arg)*)) };
-}
-pub(crate) use note;
-
 pub fn out(text: &str) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{text}").and_then(|()| stdout.flush()).context("writing to stdout")

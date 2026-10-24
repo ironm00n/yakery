@@ -11,7 +11,6 @@ pub fn nullable<'de, D: serde::Deserializer<'de>, T: Default + Deserialize<'de>>
 pub trait View: DeserializeOwned {
     const GET: &str;
     const PROPERTIES: &[&str];
-    /// The bodies whose values Email/get sends, and how many bytes of each.
     const VALUES: Option<(&str, usize)> = None;
 }
 

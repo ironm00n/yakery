@@ -4,14 +4,16 @@ use clap::ArgGroup;
 use comrak::{Options, markdown_to_html};
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 
-use super::say;
+use private::now;
+use text::Address;
+
+use super::succeed;
 use crate::{
-    address::{Address, MessageId, Topic},
+    address::{MessageId, Topic},
     mail::{Addr, Current, Email, Keyword, Mail, keywords},
-    out::{Delivery, Entity, Head, Leftover, Outbox, describe},
+    out::{Delivery, Entity, Head, Leftover, Outbox, describe, fresh_id},
     policy::{Login, Recipients},
     prelude::*,
-    private::{now, token},
     show::{emails, plain, preview},
     store::Config,
 };
@@ -176,7 +178,7 @@ pub fn reply_all(
     let others = |given: &[Address], on: Vec<&Addr>, without: &[Address]| {
         let theirs = on.into_iter().filter(|a| !login.owns(&a.email));
         let theirs = theirs.filter_map(|a| {
-            a.email.parse().map_err(|e| note!("leaving out {}: {e:#}", plain(&a.email))).ok()
+            a.email.parse().map_err(|e| warn!("leaving out {}: {e:#}", plain(&a.email))).ok()
         });
         let mut kept: Vec<Address> = vec![];
         for a in given.iter().cloned().chain(theirs) {
@@ -200,7 +202,7 @@ pub fn sender(login: &Login, topic: Option<&Topic>, parent: Option<&Email>) -> R
         login.first_topic(p.from.iter().chain(&p.to).chain(&p.cc).map(|a| a.email.as_str()))
     });
     match (topic, reached) {
-        (Some(topic), _) => login.address().topic(topic),
+        (Some(topic), _) => login.address().subaddress(topic),
         (None, Some(address)) => Ok(address),
         (None, None) => login.bare_sender().context(
             "send needs --topic, or --reply to mail sent to one of the login's topic addresses",
@@ -272,7 +274,7 @@ pub async fn run(args: Args) -> Result<ExitCode> {
     };
     let to = Recipients::check(login, from, to, cc)?;
     let reply = parent.as_ref().map(|p| &p.1);
-    let (subject, head) = head(&to, args.subject.as_deref(), reply, now(), &token(24)?)?;
+    let (subject, head) = head(&to, args.subject.as_deref(), reply, now(), &fresh_id()?)?;
     let draft = match content {
         Content::Mime(entity) => outbox.import(&entity.message(&head), &outbox.drafts, DRAFT).await,
         Content::Markdown(rendered, attached) => {
@@ -288,29 +290,29 @@ pub async fn run(args: Args) -> Result<ExitCode> {
     };
     let (submission, delivery) = outbox.deliver(&draft, &to, left).await?;
     if let Err(e) = outbox.file(&draft).await {
-        note!(
+        warn!(
             "sent (submission {submission}), but filing {} into Sent failed: {e:#}",
             draft.as_str()
         );
     }
     match &delivery {
         Delivery::Accepted(refused) if !refused.is_empty() => {
-            note!("submission {submission}: some recipients were refused\n{}", describe(refused))
+            warn!("submission {submission}: some recipients were refused\n{}", describe(refused))
         }
         Delivery::Unknown => {
-            note!("submission {submission} was created, but its delivery status did not come back")
+            warn!("submission {submission} was created, but its delivery status did not come back")
         }
         _ => {
             if let Some((answered, _)) = &parent
                 && let Err(e) = mail.mark(&[(answered.clone(), &[Keyword::Answered][..])]).await
             {
                 let id = answered.as_str();
-                note!("sent, but marking {id} answered failed, so wait will remind of it: {e:#}");
+                warn!("sent, but marking {id} answered failed, so wait will remind of it: {e:#}");
             }
         }
     }
     let everyone: Vec<String> = to.everyone().map(Address::to_string).collect();
-    say!(
+    succeed!(
         "sent {} \"{subject}\" from {} to {} (submission {submission})",
         draft.as_str(),
         &to.from,

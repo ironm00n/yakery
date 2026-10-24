@@ -6,7 +6,9 @@ mod wire;
 
 pub use wire::wire;
 
-use crate::{address::Address, policy::Login, prelude::*};
+use ::text::Address;
+
+use crate::{policy::Login, prelude::*};
 
 /// `rows!(f; a, b => x; c => y)`: `f(a)` and `f(b)` must give `x`, and `f(c)` must give `y`.
 macro_rules! rows {
@@ -24,7 +26,6 @@ pub(crate) use rows;
 pub const HIM: &str = "owner@example.org";
 pub const POOL: &str = "agent+pool@example.org";
 
-/// A value as shown, or `error: ` and its message.
 pub fn shown<T: std::fmt::Display>(r: Result<T>) -> String {
     r.map_or_else(|e| format!("error: {e:#}"), |v| v.to_string())
 }
@@ -64,7 +65,6 @@ pub fn view<V: DeserializeOwned>(value: Value) -> V {
     serde_json::from_value(value).unwrap()
 }
 
-/// A fresh directory, removed again on drop.
 pub struct Scratch(pub PathBuf);
 
 impl Scratch {

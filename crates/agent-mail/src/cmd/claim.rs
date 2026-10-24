@@ -65,8 +65,6 @@ pub async fn claim(
 
 type Claimed = Vec<(Email, Current)>;
 
-/// What `locked` took, less mail closed since its snapshot, with `$mdnsent` marked on mail asking for a receipt and
-/// set here on any whose mark did not write, so that no receipt goes out for it.
 async fn taken(server: &Mail, login: &Login, claimed: Claimed) -> Vec<Email> {
     let ids: Vec<&Current> = claimed.iter().map(|(_, id)| id).collect();
     let now = server.get::<Email>(&ids).await.unwrap_or_default();
@@ -85,7 +83,7 @@ async fn taken(server: &Mail, login: &Login, claimed: Claimed) -> Vec<Email> {
             match wrote {
                 Ok(true) => continue,
                 Ok(false) => {}
-                Err(e) => note!("marking {} $mdnsent failed, so it gets no receipt: {e:#}", m.id),
+                Err(e) => warn!("marking {} $mdnsent failed, so it gets no receipt: {e:#}", m.id),
             }
             m.keywords.insert(Keyword::MdnSent.name().into(), true);
         }
@@ -136,7 +134,7 @@ async fn locked(server: &Mail, login: &Login, ids: &[Current]) -> Result<Option<
             failed = Some(e);
             break;
         }
-        note!(
+        warn!(
             "claiming reported {e:#}, but {} mail now carry $seen; delivering them",
             landed.len()
         );
@@ -145,7 +143,7 @@ async fn locked(server: &Mail, login: &Login, ids: &[Current]) -> Result<Option<
     match (failed, claimed.is_empty()) {
         (Some(e), true) => Err(e),
         (Some(e), false) => {
-            note!("claiming failed for some mail ({e:#}); delivering what was claimed");
+            warn!("claiming failed for some mail ({e:#}); delivering what was claimed");
             Ok(Some(claimed))
         }
         (None, empty) => Ok((!empty).then_some(claimed)),
