@@ -13,6 +13,7 @@
     deadnix.enable = false;
     nixfmt.enable = true;
     jsonfmt.enable = true;
+    rustfmt.enable = true;
     # mdformat.enable = true;
   };
 }
