@@ -4,12 +4,12 @@
 
 use std::ffi::CString;
 use std::fs;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
-use nix::mount::{mount, umount2, MntFlags, MsFlags};
-use nix::sched::{unshare, CloneFlags};
+use anyhow::{Context, Result, bail};
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
+use nix::sched::{CloneFlags, unshare};
 use nix::sys::statvfs::statvfs;
 use nix::unistd::{chdir, getgid, getuid, pivot_root};
 
@@ -23,14 +23,8 @@ pub fn enter_userns(uid: u32, gid: u32) -> Result<()> {
     fs::write("/proc/self/uid_map", format!("{uid} {outer_uid} 1\n")).context("write uid_map")?;
     fs::write("/proc/self/setgroups", "deny\n").context("write setgroups")?;
     fs::write("/proc/self/gid_map", format!("{gid} {outer_gid} 1\n")).context("write gid_map")?;
-    mount(
-        None::<&str>,
-        "/",
-        None::<&str>,
-        MsFlags::MS_REC | MsFlags::MS_PRIVATE,
-        None::<&str>,
-    )
-    .context("make / rprivate")?;
+    mount(None::<&str>, "/", None::<&str>, MsFlags::MS_REC | MsFlags::MS_PRIVATE, None::<&str>)
+        .context("make / rprivate")?;
     Ok(())
 }
 
@@ -67,17 +61,9 @@ pub struct Rootfs {
 impl Rootfs {
     pub fn new(root: &Path) -> Result<Self> {
         fs::create_dir_all(root)?;
-        mount(
-            Some("tmpfs"),
-            root,
-            Some("tmpfs"),
-            MsFlags::MS_NOSUID,
-            Some("mode=755"),
-        )
-        .with_context(|| format!("mount rootfs tmpfs at {}", root.display()))?;
-        Ok(Rootfs {
-            root: root.to_owned(),
-        })
+        mount(Some("tmpfs"), root, Some("tmpfs"), MsFlags::MS_NOSUID, Some("mode=755"))
+            .with_context(|| format!("mount rootfs tmpfs at {}", root.display()))?;
+        Ok(Rootfs { root: root.to_owned() })
     }
 
     fn at(&self, target: &str) -> PathBuf {
@@ -140,14 +126,8 @@ impl Rootfs {
             upper.display(),
             work.display()
         );
-        mount(
-            Some("overlay"),
-            &dest,
-            Some("overlay"),
-            MsFlags::empty(),
-            Some(opts.as_str()),
-        )
-        .with_context(|| format!("mount overlay at {target} ({opts})"))
+        mount(Some("overlay"), &dest, Some("overlay"), MsFlags::empty(), Some(opts.as_str()))
+            .with_context(|| format!("mount overlay at {target} ({opts})"))
     }
 
     /// Mounted before `pivot_root`, while the host's procfs is still visible
@@ -162,11 +142,7 @@ impl Rootfs {
 
     pub fn devices(&self) -> Result<()> {
         for name in ["null", "zero", "full", "random", "urandom", "tty"] {
-            self.bind(
-                &Path::new("/dev").join(name),
-                &format!("/dev/{name}"),
-                false,
-            )?;
+            self.bind(&Path::new("/dev").join(name), &format!("/dev/{name}"), false)?;
         }
         self.tmpfs("/dev/shm", "mode=1777")?;
         if Path::new("/dev/pts").is_dir() {
@@ -210,10 +186,7 @@ impl Rootfs {
             &format!("root:x:0:0:root:/root:/bin/sh\nci:x:{uid}:{gid}:ci:/tmp/home:/bin/sh\n"),
         )?;
         self.write("/etc/group", &format!("root:x:0:\nci:x:{gid}:\n"))?;
-        self.write(
-            "/etc/nsswitch.conf",
-            "passwd: files\ngroup: files\nhosts: files dns\n",
-        )?;
+        self.write("/etc/nsswitch.conf", "passwd: files\ngroup: files\nhosts: files dns\n")?;
         self.write("/etc/hosts", "127.0.0.1 localhost\n::1 localhost\n")?;
         self.write("/etc/resolv.conf", resolv_conf)?;
         Ok(())
@@ -276,6 +249,7 @@ pub fn supports_user_xattr(dir: &Path) -> Result<bool> {
     fs::write(&probe, b"")?;
     let path = CString::new(probe.as_os_str().as_encoded_bytes())?;
     let name = CString::new("user.slurm-ci")?;
+    #[allow(unsafe_code)]
     let rc =
         unsafe { nix::libc::setxattr(path.as_ptr(), name.as_ptr(), b"1".as_ptr().cast(), 1, 0) };
     let _ = fs::remove_file(&probe);

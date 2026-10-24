@@ -65,11 +65,7 @@ impl Verdict {
     }
 
     pub fn exit_status(&self) -> i32 {
-        if self.is_green() {
-            0
-        } else {
-            1
-        }
+        if self.is_green() { 0 } else { 1 }
     }
 }
 
@@ -111,19 +107,11 @@ mod tests {
             Verdict::from_sacct(&rec("FAILED", "76:0", Some("76:0"))),
             Some(Verdict::GreenPushFailed)
         );
-        assert!(!Verdict::from_sacct(&rec("FAILED", "1:0", Some("1:0")))
-            .unwrap()
-            .is_green());
-        assert!(!Verdict::from_sacct(&rec("FAILED", "77:0", Some("77:0")))
-            .unwrap()
-            .is_green());
+        assert!(!Verdict::from_sacct(&rec("FAILED", "1:0", Some("1:0"))).unwrap().is_green());
+        assert!(!Verdict::from_sacct(&rec("FAILED", "77:0", Some("77:0"))).unwrap().is_green());
         // job 9442675: the allocation row's 0:0 must not read green
-        assert!(!Verdict::from_sacct(&rec("TIMEOUT", "0:0", Some("0:15")))
-            .unwrap()
-            .is_green());
-        assert!(!Verdict::from_sacct(&rec("CANCELLED", "0:0", Some("0:15")))
-            .unwrap()
-            .is_green());
+        assert!(!Verdict::from_sacct(&rec("TIMEOUT", "0:0", Some("0:15"))).unwrap().is_green());
+        assert!(!Verdict::from_sacct(&rec("CANCELLED", "0:0", Some("0:15"))).unwrap().is_green());
         assert_eq!(Verdict::from_sacct(&rec("RUNNING", "0:0", None)), None);
         assert_eq!(Verdict::from_sacct(&rec("PENDING", "0:0", None)), None);
     }

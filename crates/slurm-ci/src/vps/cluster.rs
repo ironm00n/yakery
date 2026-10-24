@@ -5,13 +5,13 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::ids::{RunId, Token};
-use crate::proc::{env_or, env_var, Exec};
+use crate::proc::{Exec, env_or, env_var};
 use crate::report::EffRecord;
 use crate::sacct::SacctRecord;
-use crate::verbs::{JobId, Submit, Verb, REFUSED};
+use crate::verbs::{JobId, REFUSED, Submit, Verb};
 
 pub struct Cluster {
     user: String,
@@ -79,46 +79,23 @@ impl Cluster {
     }
 
     pub fn status(&self, job: &JobId, run: &RunId) -> Result<Option<SacctRecord>> {
-        let out = self.call(
-            &Verb::Status {
-                job: job.clone(),
-                run: run.clone(),
-            },
-            None,
-        )?;
+        let out = self.call(&Verb::Status { job: job.clone(), run: run.clone() }, None)?;
         parse_optional_json(&out)
     }
 
     /// The tail of the Slurm output file (dispatch bounds it).
     pub fn log(&self, job: &JobId, run: &RunId) -> Result<Vec<u8>> {
-        self.call(
-            &Verb::Log {
-                job: job.clone(),
-                run: run.clone(),
-            },
-            None,
-        )
-        .map(String::into_bytes)
+        self.call(&Verb::Log { job: job.clone(), run: run.clone() }, None).map(String::into_bytes)
     }
 
     pub fn cancel(&self, job: &JobId, run: &RunId) -> Result<()> {
-        self.call(
-            &Verb::Cancel {
-                job: job.clone(),
-                run: run.clone(),
-            },
-            None,
-        )
-        .map(drop)
+        self.call(&Verb::Cancel { job: job.clone(), run: run.clone() }, None).map(drop)
     }
 
     /// slurmdbd lands a beat after completion: tolerate empty replies for a
     /// couple of minutes before giving up on the record.
     pub fn eff(&self, job: &JobId, run: &RunId) -> Result<Option<EffRecord>> {
-        let verb = Verb::Eff {
-            job: job.clone(),
-            run: run.clone(),
-        };
+        let verb = Verb::Eff { job: job.clone(), run: run.clone() };
         for _ in 0..6 {
             if let Some(rec) = parse_optional_json::<EffRecord>(&self.call(&verb, None)?)? {
                 return Ok(Some(rec));
@@ -142,7 +119,5 @@ fn parse_optional_json<T: serde::de::DeserializeOwned>(out: &str) -> Result<Opti
     if !line.starts_with('{') {
         bail!("unexpected dispatch reply {line:?}");
     }
-    serde_json::from_str(line)
-        .map(Some)
-        .context("parse dispatch reply")
+    serde_json::from_str(line).map(Some).context("parse dispatch reply")
 }

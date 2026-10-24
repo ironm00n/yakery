@@ -9,21 +9,21 @@ use std::os::fd::OwnedFd;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use anyhow::{bail, Context, Result};
-use nix::sys::signal::{kill, Signal};
+use anyhow::{Context, Result, bail};
+use nix::sys::signal::{Signal, kill};
 use nix::sys::statfs::statfs;
 use nix::unistd::Pid;
 
-use crate::callback::{self, Client, Hello, Msg, HEARTBEAT};
+use crate::callback::{self, Client, HEARTBEAT, Hello, Msg};
 use crate::cluster::ns;
 use crate::cluster::rundir::{JobFile, RunDir};
 use crate::cluster::sandbox::BuildStats;
-use crate::cluster::site::{self, CiDir, CACHE_DIR, NODE_TMP, NODE_TMP_FLOOR_BYTES};
+use crate::cluster::site::{self, CACHE_DIR, CiDir, NODE_TMP, NODE_TMP_FLOOR_BYTES};
 use crate::ids::RunId;
 use crate::proc::env_or;
 use crate::report::BuildReport;
@@ -125,9 +125,7 @@ impl Sink {
 pub fn run_relayed(mut cmd: Command, sink: &Sink) -> Result<i32> {
     let (r, w) = nix::unistd::pipe().context("pipe")?;
     let w2: OwnedFd = w.try_clone()?;
-    cmd.stdout(Stdio::from(w))
-        .stderr(Stdio::from(w2))
-        .stdin(Stdio::null());
+    cmd.stdout(Stdio::from(w)).stderr(Stdio::from(w2)).stdin(Stdio::null());
     let mut child = cmd.spawn().context("spawn child")?;
     drop(cmd);
     CURRENT_CHILD.store(child.id() as i32, Ordering::Relaxed);
@@ -193,10 +191,7 @@ pub fn gate(ci: &CiDir, ws: &Workspace, reap_grace: Duration) -> Result<Gate> {
         bail!("cache dir {CACHE_DIR} missing");
     }
     if !ci.cache_key().is_file() || !ci.cache_pub().is_file() {
-        bail!(
-            "cache signing key pair missing under {}",
-            ci.root().display()
-        );
+        bail!("cache signing key pair missing under {}", ci.root().display());
     }
     reap_stale_workspaces(reap_grace);
     Ok(Gate { bootstrap, version })
@@ -208,14 +203,9 @@ pub fn main(run: RunId) -> Result<i32> {
     let job = dir.job()?;
     let token = dir.take_token()?;
     let node = env_or("SLURMD_NODENAME", "unknown");
-    let slurm_job = std::env::var("SLURM_JOB_ID")
-        .ok()
-        .and_then(|s| JobId::parse(&s).ok());
-    let mut report = BuildReport {
-        node: node.clone(),
-        exit: exit::GATE_FAILED,
-        ..Default::default()
-    };
+    let slurm_job = std::env::var("SLURM_JOB_ID").ok().and_then(|s| JobId::parse(&s).ok());
+    let mut report =
+        BuildReport { node: node.clone(), exit: exit::GATE_FAILED, ..Default::default() };
 
     // Opening the callback is the reachability half of the gate: a filtered
     // node fails here instead of building for an hour into a dead socket.
@@ -223,20 +213,12 @@ pub fn main(run: RunId) -> Result<i32> {
     let client = match callback::connect(host, port, &job.submit.fingerprint) {
         Ok(s) => Client::new(s),
         Err(e) => {
-            eprintln!(
-                "gate: callback to {} unreachable: {e:#}",
-                job.submit.callback_host
-            );
+            eprintln!("gate: callback to {} unreachable: {e:#}", job.submit.callback_host);
             report.write(dir.path())?;
             return Ok(exit::GATE_FAILED);
         }
     };
-    client.send(&Msg::Hello(Hello {
-        run: run.clone(),
-        token,
-        job: slurm_job,
-        node,
-    }));
+    client.send(&Msg::Hello(Hello { run: run.clone(), token, job: slurm_job, node }));
     {
         let client = client.clone();
         thread::spawn(move || {
@@ -247,9 +229,7 @@ pub fn main(run: RunId) -> Result<i32> {
         });
     }
     install_term_forwarding()?;
-    let sink = Sink {
-        client: Some(client.clone()),
-    };
+    let sink = Sink { client: Some(client.clone()) };
 
     let code = match attempt(&ci, &job, &sink, &mut report) {
         Ok(code) => code,
@@ -298,11 +278,7 @@ fn attempt_in(
         }
     };
     report.bootstrap_version = gate.version.clone();
-    sink.line(format!(
-        "gate ok: bootstrap v{} at {}",
-        gate.version,
-        gate.bootstrap.display()
-    ));
+    sink.line(format!("gate ok: bootstrap v{} at {}", gate.version, gate.bootstrap.display()));
 
     let t = Instant::now();
     let mut fetch = self_exe();
@@ -364,9 +340,8 @@ fn attempt_in(
         .args(&s.spec.installables)
         .env_clear();
     let code = run_relayed(build, sink)?;
-    if let Some(stats) = fs::read(&stats_file)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<BuildStats>(&b).ok())
+    if let Some(stats) =
+        fs::read(&stats_file).ok().and_then(|b| serde_json::from_slice::<BuildStats>(&b).ok())
     {
         report.build_secs = stats.build_secs;
         report.push_secs = stats.push_secs;

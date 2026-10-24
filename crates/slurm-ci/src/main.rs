@@ -7,11 +7,7 @@ use slurm_ci::ids::RunId;
 use slurm_ci::{cluster, vps};
 
 #[derive(Parser)]
-#[command(
-    name = "slurm-ci",
-    about = "Forgejo Actions → Explorer Slurm CI",
-    version
-)]
+#[command(name = "slurm-ci", about = "Forgejo Actions → Explorer Slurm CI", version)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

@@ -39,9 +39,7 @@ impl BuildReport {
 
     pub fn read(run_dir: &Path) -> Result<Option<Self>> {
         match fs::read(run_dir.join(Self::FILE)) {
-            Ok(bytes) => Ok(Some(
-                serde_json::from_slice(&bytes).context("parse build.json")?,
-            )),
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).context("parse build.json")?)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
         }
@@ -126,12 +124,8 @@ mod tests {
     fn build_report_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(BuildReport::read(dir.path()).unwrap(), None);
-        let r = BuildReport {
-            node: "d0020".into(),
-            exit: 76,
-            pushed_paths: 3,
-            ..Default::default()
-        };
+        let r =
+            BuildReport { node: "d0020".into(), exit: 76, pushed_paths: 3, ..Default::default() };
         r.write(dir.path()).unwrap();
         assert_eq!(BuildReport::read(dir.path()).unwrap(), Some(r));
     }

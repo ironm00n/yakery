@@ -16,7 +16,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{RunId, Token};
@@ -132,9 +132,7 @@ impl RunDir {
             .filter_map(|e| e.metadata().ok()?.modified().ok())
             .max()
             .or_else(|| fs::metadata(&self.path).ok()?.modified().ok());
-        newest
-            .and_then(|t| SystemTime::now().duration_since(t).ok())
-            .unwrap_or(Duration::ZERO)
+        newest.and_then(|t| SystemTime::now().duration_since(t).ok()).unwrap_or(Duration::ZERO)
     }
 
     pub fn remove(self) -> Result<()> {
@@ -215,12 +213,7 @@ mod tests {
         let t = SystemTime::now() - Duration::from_secs(secs);
         let ft = std::fs::FileTimes::new().set_modified(t);
         for e in fs::read_dir(path).unwrap().flatten() {
-            fs::File::options()
-                .write(true)
-                .open(e.path())
-                .unwrap()
-                .set_times(ft)
-                .unwrap();
+            fs::File::options().write(true).open(e.path()).unwrap().set_times(ft).unwrap();
         }
         fs::File::open(path).unwrap().set_times(ft).unwrap();
     }
@@ -232,16 +225,9 @@ mod tests {
         let token = Token::random().unwrap();
         let dir = RunDir::create(root.path(), &job(run.clone()), &token).unwrap();
         assert!(RunDir::create(root.path(), &job(run.clone()), &token).is_err());
+        assert_eq!(fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777, 0o700);
         assert_eq!(
-            fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777,
-            0o700
-        );
-        assert_eq!(
-            fs::metadata(dir.path().join("cbtoken"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
+            fs::metadata(dir.path().join("cbtoken")).unwrap().permissions().mode() & 0o777,
             0o600
         );
         assert_eq!(dir.job().unwrap().submit.run, run);
@@ -279,9 +265,8 @@ mod tests {
         let live = mk(4000, true, false);
         let orphan = mk(100_000, true, false);
         let done_recent = mk(50, true, true);
-        let mut done_old: Vec<RunId> = (0..KEEP_DONE + 2)
-            .map(|i| mk(1000 + i as u64, true, true))
-            .collect();
+        let mut done_old: Vec<RunId> =
+            (0..KEEP_DONE + 2).map(|i| mk(1000 + i as u64, true, true)).collect();
 
         let removed = prune(root.path(), Duration::from_secs(50_000)).unwrap();
         assert_eq!(removed, 1 + 1 + 3);

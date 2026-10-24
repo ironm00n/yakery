@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::RunId;
@@ -130,13 +130,27 @@ impl Verb {
     }
 
     fn parse_submit(rest: &[&str]) -> Result<Submit> {
-        let sep = rest
-            .iter()
-            .position(|&t| t == "--")
-            .context("submit: missing `--`")?;
+        let sep = rest.iter().position(|&t| t == "--").context("submit: missing `--`")?;
         let (fixed, installables) = (&rest[..sep], &rest[sep + 1..]);
-        let [protocol, run, repo, git_host, git_ref, commit, callback_host, fingerprint, cores, jobs, mem, time, partition, constraint, exclusive, tmpdir, exclude] =
-            fixed
+        let [
+            protocol,
+            run,
+            repo,
+            git_host,
+            git_ref,
+            commit,
+            callback_host,
+            fingerprint,
+            cores,
+            jobs,
+            mem,
+            time,
+            partition,
+            constraint,
+            exclusive,
+            tmpdir,
+            exclude,
+        ] = fixed
         else {
             bail!("submit: expected 17 fixed args, got {}", fixed.len());
         };
@@ -204,8 +218,7 @@ fn all(s: &str, what: &str, pred: impl Fn(char) -> bool) -> Result<()> {
 pub fn check_repo(s: &str) -> Result<()> {
     let ok = matches!(s.split('/').collect::<Vec<_>>().as_slice(), [owner, name]
         if !owner.is_empty() && !name.is_empty() && !owner.starts_with('.') && !name.starts_with('.'))
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-/".contains(c));
     if !ok {
         bail!("bad repo {s:?}: expected owner/name");
     }
@@ -218,12 +231,9 @@ pub fn check_host(s: &str) -> Result<()> {
         .filter(|(_, p)| p.bytes().all(|b| b.is_ascii_digit()))
         .unwrap_or((s, ""));
     if !port.is_empty() {
-        port.parse::<u16>()
-            .with_context(|| format!("bad port in {s:?}"))?;
+        port.parse::<u16>().with_context(|| format!("bad port in {s:?}"))?;
     }
-    all(host, "host", |c| {
-        c.is_ascii_alphanumeric() || ".-".contains(c)
-    })?;
+    all(host, "host", |c| c.is_ascii_alphanumeric() || ".-".contains(c))?;
     if host.starts_with('-') || host.starts_with('.') {
         bail!("bad host {s:?}");
     }
@@ -231,9 +241,7 @@ pub fn check_host(s: &str) -> Result<()> {
 }
 
 pub fn check_ref(s: &str) -> Result<()> {
-    all(s, "ref", |c| {
-        c.is_ascii_alphanumeric() || "._/-".contains(c)
-    })?;
+    all(s, "ref", |c| c.is_ascii_alphanumeric() || "._/-".contains(c))?;
     if s.contains("..") || s.starts_with('-') || s.starts_with('/') {
         bail!("bad ref {s:?}");
     }
@@ -248,9 +256,7 @@ pub fn check_commit(s: &str) -> Result<()> {
 }
 
 pub fn check_node(s: &str) -> Result<()> {
-    all(s, "node", |c| {
-        c.is_ascii_alphanumeric() || "._-".contains(c)
-    })?;
+    all(s, "node", |c| c.is_ascii_alphanumeric() || "._-".contains(c))?;
     if s.starts_with('-') {
         bail!("bad node {s:?}");
     }
@@ -303,18 +309,9 @@ mod tests {
         round_trip(Verb::Submit(Box::new(plain)));
         let job = JobId::parse("9442675").unwrap();
         let run = RunId::parse(&"ab".repeat(16)).unwrap();
-        round_trip(Verb::Status {
-            job: job.clone(),
-            run: run.clone(),
-        });
-        round_trip(Verb::Log {
-            job: job.clone(),
-            run: run.clone(),
-        });
-        round_trip(Verb::Cancel {
-            job: job.clone(),
-            run: run.clone(),
-        });
+        round_trip(Verb::Status { job: job.clone(), run: run.clone() });
+        round_trip(Verb::Log { job: job.clone(), run: run.clone() });
+        round_trip(Verb::Cancel { job: job.clone(), run: run.clone() });
         round_trip(Verb::Eff { job, run });
         round_trip(Verb::Rebake);
     }

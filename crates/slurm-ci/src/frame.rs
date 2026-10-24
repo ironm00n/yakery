@@ -4,7 +4,7 @@
 
 use std::io::{self, Read, Write};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 pub const MAX_PAYLOAD: usize = 1 << 20;
 
@@ -16,10 +16,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn new(kind: u8, payload: impl Into<Vec<u8>>) -> Self {
-        Frame {
-            kind,
-            payload: payload.into(),
-        }
+        Frame { kind, payload: payload.into() }
     }
 
     pub fn write_to(&self, w: &mut impl Write) -> Result<()> {
@@ -49,10 +46,7 @@ impl Frame {
         }
         let mut payload = vec![0u8; len];
         r.read_exact(&mut payload)?;
-        Ok(Some(Frame {
-            kind: header[0],
-            payload,
-        }))
+        Ok(Some(Frame { kind: header[0], payload }))
     }
 }
 
@@ -66,14 +60,8 @@ mod tests {
         Frame::new(7, b"hello".to_vec()).write_to(&mut buf).unwrap();
         Frame::new(1, Vec::new()).write_to(&mut buf).unwrap();
         let mut r = buf.as_slice();
-        assert_eq!(
-            Frame::read_from(&mut r).unwrap(),
-            Some(Frame::new(7, b"hello".to_vec()))
-        );
-        assert_eq!(
-            Frame::read_from(&mut r).unwrap(),
-            Some(Frame::new(1, Vec::new()))
-        );
+        assert_eq!(Frame::read_from(&mut r).unwrap(), Some(Frame::new(7, b"hello".to_vec())));
+        assert_eq!(Frame::read_from(&mut r).unwrap(), Some(Frame::new(1, Vec::new())));
         assert_eq!(Frame::read_from(&mut r).unwrap(), None);
     }
 
@@ -89,8 +77,6 @@ mod tests {
     fn oversize_is_error() {
         let header = [1u8, 0xff, 0xff, 0xff, 0xff];
         assert!(Frame::read_from(&mut header.as_slice()).is_err());
-        assert!(Frame::new(1, vec![0u8; MAX_PAYLOAD + 1])
-            .write_to(&mut Vec::new())
-            .is_err());
+        assert!(Frame::new(1, vec![0u8; MAX_PAYLOAD + 1]).write_to(&mut Vec::new()).is_err());
     }
 }

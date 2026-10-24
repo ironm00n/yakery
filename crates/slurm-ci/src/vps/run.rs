@@ -5,8 +5,8 @@
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 
 use crate::frame::Frame;
 use crate::proc::{env_or, env_var};
-use crate::vps::ipc::{Task, ToDaemon, ToRun, DEFAULT_SOCKET};
+use crate::vps::ipc::{DEFAULT_SOCKET, Task, ToDaemon, ToRun};
 
 pub fn main() -> Result<i32> {
     let task = Task {

@@ -15,15 +15,15 @@
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Args;
-use nix::sys::signal::{kill, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{fork, ForkResult, Pid};
+use nix::sys::signal::{Signal, kill};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::{ForkResult, Pid, fork};
 
 use crate::cluster::ns::{self, Rootfs};
 use crate::cluster::push;
@@ -47,11 +47,7 @@ impl ToolEnv {
         let env_dir = fs::read_link(bootstrap.join("env"))
             .with_context(|| format!("readlink {}/env", bootstrap.display()))?;
         if !env_dir.starts_with("/nix/store/") {
-            bail!(
-                "{}/env points outside /nix/store: {}",
-                bootstrap.display(),
-                env_dir.display()
-            );
+            bail!("{}/env points outside /nix/store: {}", bootstrap.display(), env_dir.display());
         }
         Ok(ToolEnv { env_dir, tmpdir })
     }
@@ -68,10 +64,7 @@ impl ToolEnv {
         let home = "/tmp/home";
         let cacert = self.cacert().display().to_string();
         vec![
-            (
-                "PATH".into(),
-                self.env_dir.join("bin").display().to_string(),
-            ),
+            ("PATH".into(), self.env_dir.join("bin").display().to_string()),
             ("HOME".into(), home.into()),
             ("USER".into(), "ci".into()),
             ("TMPDIR".into(), self.tmpdir.display().to_string()),
@@ -143,10 +136,8 @@ pub fn ns_main(a: NsArgs) -> Result<i32> {
     let term = term_flag()?;
     ns::enter_userns(0, 0)?;
     ns::unshare_pid()?;
-    let child = Command::new("/proc/self/exe")
-        .args(&a.inner)
-        .spawn()
-        .context("spawn namespaced role")?;
+    let child =
+        Command::new("/proc/self/exe").args(&a.inner).spawn().context("spawn namespaced role")?;
     supervise(child, &term)
 }
 
@@ -200,10 +191,7 @@ pub fn fetch_main(a: FetchArgs) -> Result<i32> {
         &a.commit,
     ]);
     if let Err(e) = by_sha {
-        eprintln!(
-            "fetch by sha failed ({e:#}); fetching {} and verifying",
-            a.git_ref
-        );
+        eprintln!("fetch by sha failed ({e:#}); fetching {} and verifying", a.git_ref);
         git(&[
             "fetch",
             "-q",
@@ -285,12 +273,8 @@ pub fn build_main(a: BuildArgs) -> Result<i32> {
     let key = File::open(&a.key).with_context(|| format!("open {}", a.key.display()))?;
     let upper = File::open(&a.upper).with_context(|| format!("open {}", a.upper.display()))?;
     let lower_store = File::open(a.bootstrap.join("nix/store")).context("open lower store")?;
-    let mut stats_file = a
-        .stats_file
-        .as_ref()
-        .map(File::create)
-        .transpose()
-        .context("create stats file")?;
+    let mut stats_file =
+        a.stats_file.as_ref().map(File::create).transpose().context("create stats file")?;
     let rebake = a.rebake_candidate.is_some();
 
     let fs = base_rootfs(&a.root, &resolv)?;
@@ -316,25 +300,12 @@ pub fn build_main(a: BuildArgs) -> Result<i32> {
         nix_args.push("--print-out-paths".into());
         nix_args.extend(a.installables.iter().cloned());
     } else {
-        nix_args.extend(
-            a.installables
-                .iter()
-                .map(|frag| format!("path:/src#{frag}")),
-        );
+        nix_args.extend(a.installables.iter().map(|frag| format!("path:/src#{frag}")));
     }
     let out_file = rebake.then(|| PathBuf::from("/run/out-paths"));
     let t = std::time::Instant::now();
-    let code = run_stub(
-        &tools,
-        &tools.bin("nix"),
-        &nix_args,
-        out_file.as_deref(),
-        &term,
-    )?;
-    let mut stats = BuildStats {
-        build_secs: t.elapsed().as_secs(),
-        ..Default::default()
-    };
+    let code = run_stub(&tools, &tools.bin("nix"), &nix_args, out_file.as_deref(), &term)?;
+    let mut stats = BuildStats { build_secs: t.elapsed().as_secs(), ..Default::default() };
 
     let t = std::time::Instant::now();
     let code = if let Some(candidate) = &a.rebake_candidate {
@@ -342,12 +313,8 @@ pub fn build_main(a: BuildArgs) -> Result<i32> {
             code
         } else {
             let out = fs::read_to_string("/run/out-paths")?;
-            let env_path = out
-                .lines()
-                .next()
-                .context("rebake produced no out path")?
-                .trim()
-                .to_owned();
+            let env_path =
+                out.lines().next().context("rebake produced no out path")?.trim().to_owned();
             push::rebake_publish(&tools, &env_path, Path::new("/candidate"), candidate)?;
             0
         }
@@ -455,6 +422,7 @@ pub fn stub_main(a: StubArgs) -> Result<i32> {
     ns::enter_userns(a.uid, a.gid)?;
     ns::unshare_pid()?;
     // Single-threaded here (no thread has been spawned), so fork is sound.
+    #[allow(unsafe_code)]
     match unsafe { fork() }.context("fork pid 1")? {
         ForkResult::Parent { child } => supervise_pid(child, &term),
         ForkResult::Child => {

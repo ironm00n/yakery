@@ -4,7 +4,7 @@
 //! verb run the same checks — one binary — so a bad spec fails on the VPS
 //! first and cannot pass dispatch by accident.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::units::{MiB, Minutes};
@@ -125,23 +125,13 @@ impl JobSpec {
         }
         let cap = caps::partition(&self.partition)?;
         if self.cores > cap.max_cores {
-            bail!(
-                "cores {} exceeds {} cap {}",
-                self.cores,
-                cap.name,
-                cap.max_cores
-            );
+            bail!("cores {} exceeds {} cap {}", self.cores, cap.name, cap.max_cores);
         }
         if self.mem > cap.max_mem {
             bail!("mem {} exceeds {} cap {}", self.mem, cap.name, cap.max_mem);
         }
         if self.time > cap.max_time {
-            bail!(
-                "time {} exceeds {} cap {}",
-                self.time,
-                cap.name,
-                cap.max_time
-            );
+            bail!("time {} exceeds {} cap {}", self.time, cap.name, cap.max_time);
         }
         Ok(cap)
     }
@@ -216,11 +206,7 @@ pub mod caps {
     }
 
     pub fn longest_walltime() -> Minutes {
-        PARTITIONS
-            .iter()
-            .map(|p| p.max_time)
-            .max()
-            .expect("non-empty caps")
+        PARTITIONS.iter().map(|p| p.max_time).max().expect("non-empty caps")
     }
 }
 
@@ -230,8 +216,7 @@ pub fn check_installable(s: &str) -> Result<()> {
     let ok = !s.is_empty()
         && !s.starts_with('-')
         && !s.starts_with('.')
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
     if !ok {
         bail!("bad installable {s:?}: expected a dotted attr path");
     }
@@ -270,17 +255,11 @@ mod tests {
     #[test]
     fn caps_reject() {
         let over = "installables = [\"a\"]\ntime = \"2h\"\n";
-        assert!(JobSpec::from_toml(over)
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds sharing cap"));
+        assert!(JobSpec::from_toml(over).unwrap_err().to_string().contains("exceeds sharing cap"));
         let short = "installables = [\"a\"]\ntime = \"2h\"\npartition = \"short\"\n";
         assert!(JobSpec::from_toml(short).is_ok());
         let part = "installables = [\"a\"]\npartition = \"gpu\"\n";
-        assert!(JobSpec::from_toml(part)
-            .unwrap_err()
-            .to_string()
-            .contains("allowlist"));
+        assert!(JobSpec::from_toml(part).unwrap_err().to_string().contains("allowlist"));
         let mem = "installables = [\"a\"]\nmem = \"1T\"\n";
         assert!(JobSpec::from_toml(mem).is_err());
         let unknown = "installables = [\"a\"]\nnodes = 2\n";
@@ -292,16 +271,7 @@ mod tests {
     fn installables() {
         assert!(check_installable("packages.x86_64-linux.default").is_ok());
         assert!(check_installable("checks.x86_64-linux.my-test_1").is_ok());
-        for bad in [
-            "",
-            "-x",
-            ".#foo",
-            "github:a/b#c",
-            "a b",
-            "a/b",
-            "path:/etc",
-            "a\n",
-        ] {
+        for bad in ["", "-x", ".#foo", "github:a/b#c", "a b", "a/b", "path:/etc", "a\n"] {
             assert!(check_installable(bad).is_err(), "{bad:?}");
         }
     }

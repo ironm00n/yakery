@@ -42,11 +42,7 @@ fn script(dir: &Path, name: &str, body: &str) {
 }
 
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
 fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
@@ -97,11 +93,7 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
         );
         script(&bin, "squeue", "exit 0");
         script(&bin, "sinfo", "echo 1:00:00");
-        script(
-            &bin,
-            "curl",
-            r#"cat > /dev/null; cat "$FAKE_HOME/slurm-ci.toml""#,
-        );
+        script(&bin, "curl", r#"cat > /dev/null; cat "$FAKE_HOME/slurm-ci.toml""#);
 
         let port = free_port();
         let daemon = Command::new(BIN)
@@ -126,14 +118,7 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
-        let h = Harness {
-            _dir: dir,
-            fake_home,
-            state,
-            socket,
-            port,
-            daemon,
-        };
+        let h = Harness { _dir: dir, fake_home, state, socket, port, daemon };
         wait_for("daemon socket", || h.socket.exists());
         h
     }
@@ -220,9 +205,7 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
 
     fn jsonl(&self) -> Vec<serde_json::Value> {
         let text = fs::read_to_string(self.state.join("efficiency.jsonl")).unwrap_or_default();
-        text.lines()
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect()
+        text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
     }
 
     fn sbatch_args(&self, jobid: &JobId) -> Vec<String> {
@@ -246,32 +229,23 @@ fn green_via_callback_streams_log() {
     assert_eq!(job.submit.spec.cores, 4);
     let args = h.sbatch_args(&jobid);
     assert!(
-        args.iter()
-            .any(|a| a == &format!("--comment=slurm-ci:{}", job.submit.run)),
+        args.iter().any(|a| a == &format!("--comment=slurm-ci:{}", job.submit.run)),
         "{args:?}"
     );
     assert!(args.iter().any(|a| a == "--account=test"));
     assert!(args.iter().any(|a| a == "--mem=8192M"));
     assert!(args.iter().any(|a| a == "--time=30"));
     assert!(args.iter().any(|a| a == "--partition=sharing"));
-    assert!(args
-        .iter()
-        .any(|a| a.starts_with("--wrap=") && a.ends_with(&format!("build {}", job.submit.run))));
     assert!(
-        !args.iter().any(|a| a.contains(token.as_str())),
-        "token on the sbatch line"
+        args.iter()
+            .any(|a| a.starts_with("--wrap=") && a.ends_with(&format!("build {}", job.submit.run)))
     );
+    assert!(!args.iter().any(|a| a.contains(token.as_str())), "token on the sbatch line");
 
     let mut node = h.compute_node(&job, token, &jobid);
-    Msg::Data(b"building...\n".to_vec())
-        .to_frame()
-        .write_to(&mut node)
-        .unwrap();
+    Msg::Data(b"building...\n".to_vec()).to_frame().write_to(&mut node).unwrap();
     Msg::Heartbeat.to_frame().write_to(&mut node).unwrap();
-    Msg::Data(b"done\n".to_vec())
-        .to_frame()
-        .write_to(&mut node)
-        .unwrap();
+    Msg::Data(b"done\n".to_vec()).to_frame().write_to(&mut node).unwrap();
     h.set_sacct(&jobid, "COMPLETED", "0:0");
     Msg::Exit(0).to_frame().write_to(&mut node).unwrap();
     callback::close(node);
@@ -289,9 +263,7 @@ fn green_via_callback_streams_log() {
     assert_eq!(records[0]["verdict_via"], "callback");
     assert_eq!(records[0]["eff"]["sacct"]["max_rss"], "4000000K");
     assert_eq!(records[0]["mem_overshoot"], false);
-    wait_for("registry cleared", || {
-        fs::read_dir(h.state.join("runs")).unwrap().count() == 0
-    });
+    wait_for("registry cleared", || fs::read_dir(h.state.join("runs")).unwrap().count() == 0);
 }
 
 #[test]
@@ -340,24 +312,15 @@ fn gate_failure_resubmits_excluding_node() {
     let run = h.start_run("push");
     let (dir1, job1, token1, jobid1) = h.wait_run_dir(&[]);
     let mut node = h.compute_node(&job1, token1, &jobid1);
-    Msg::Data(b"gate: /tmp is nfs\n".to_vec())
-        .to_frame()
-        .write_to(&mut node)
-        .unwrap();
+    Msg::Data(b"gate: /tmp is nfs\n".to_vec()).to_frame().write_to(&mut node).unwrap();
     h.set_sacct(&jobid1, "FAILED", &format!("{}:0", exit::GATE_FAILED));
-    Msg::Exit(exit::GATE_FAILED)
-        .to_frame()
-        .write_to(&mut node)
-        .unwrap();
+    Msg::Exit(exit::GATE_FAILED).to_frame().write_to(&mut node).unwrap();
     callback::close(node);
 
     let (_, job2, token2, jobid2) = h.wait_run_dir(&[dir1]);
     assert_ne!(job2.submit.run, job1.submit.run);
     assert_eq!(job2.submit.exclude.as_deref(), Some("d0020"));
-    assert!(h
-        .sbatch_args(&jobid2)
-        .iter()
-        .any(|a| a == "--exclude=d0020"));
+    assert!(h.sbatch_args(&jobid2).iter().any(|a| a == "--exclude=d0020"));
     let mut node = h.compute_node(&job2, token2, &jobid2);
     h.set_sacct(&jobid2, "COMPLETED", "0:0");
     Msg::Exit(0).to_frame().write_to(&mut node).unwrap();
@@ -386,12 +349,7 @@ fn cancel_scancels_and_exits_promptly() {
     assert!(t.elapsed() < Duration::from_secs(10));
     assert!(err.contains("cancelled"), "{err}");
     wait_for("scancel", || h.fake_home.join("scancelled").exists());
-    assert_eq!(
-        fs::read_to_string(h.fake_home.join("scancelled"))
-            .unwrap()
-            .trim(),
-        jobid.as_str()
-    );
+    assert_eq!(fs::read_to_string(h.fake_home.join("scancelled")).unwrap().trim(), jobid.as_str());
     wait_for("jsonl", || !h.jsonl().is_empty());
     assert_eq!(h.jsonl()[0]["verdict"]["kind"], "red");
 }
@@ -407,10 +365,7 @@ fn wrong_token_cannot_claim_a_run() {
     let _ = thief.read(&mut buf);
     drop(thief);
     thread::sleep(Duration::from_millis(300));
-    assert!(
-        fs::read_dir(h.state.join("runs")).unwrap().count() == 1,
-        "thief concluded the run"
-    );
+    assert!(fs::read_dir(h.state.join("runs")).unwrap().count() == 1, "thief concluded the run");
 
     let mut node = h.compute_node(&job, token.clone(), &jobid);
     h.set_sacct(&jobid, "COMPLETED", "0:0");
@@ -440,10 +395,7 @@ fn non_push_events_and_bad_specs_are_refused() {
     let (code, _, err) = Harness::finish(h.start_run("push"));
     assert_eq!(code, 1);
     assert!(err.contains("exceeds sharing cap"), "{err}");
-    assert!(
-        !h.fake_home.join("ci").exists(),
-        "nothing should have reached dispatch"
-    );
+    assert!(!h.fake_home.join("ci").exists(), "nothing should have reached dispatch");
 }
 
 #[test]
@@ -454,19 +406,12 @@ fn dispatch_refuses_foreign_job_ids() {
     let other = JobId::parse("424242").unwrap();
     let out = Command::new(BIN)
         .arg("dispatch")
-        .env(
-            "SSH_ORIGINAL_COMMAND",
-            format!("cancel {other} {}", job.submit.run),
-        )
+        .env("SSH_ORIGINAL_COMMAND", format!("cancel {other} {}", job.submit.run))
         .env("HOME", &h.fake_home)
         .env("CI_SLURM_ACCOUNT", "test")
         .env(
             "PATH",
-            format!(
-                "{}:{}",
-                h._dir.path().join("bin").display(),
-                std::env::var("PATH").unwrap()
-            ),
+            format!("{}:{}", h._dir.path().join("bin").display(), std::env::var("PATH").unwrap()),
         )
         .output()
         .unwrap();
@@ -515,9 +460,7 @@ fn daemon_restart_reattaches() {
         .stderr(Stdio::inherit())
         .spawn()
         .unwrap();
-    wait_for("reconciled", || {
-        fs::read_dir(h.state.join("runs")).unwrap().count() == 0
-    });
+    wait_for("reconciled", || fs::read_dir(h.state.join("runs")).unwrap().count() == 0);
     let records = h.jsonl();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["verdict"]["kind"], "green");
