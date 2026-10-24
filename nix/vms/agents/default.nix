@@ -7,7 +7,6 @@
 }:
 let
   agents = import ./agents.nix { inherit lib; };
-  agentd = pkgs.callPackage ../../../crates/rust.nix { crate = "agentd"; };
   mac = "02:61:67:6e:74:01";
   apiAddress = "127.0.0.9";
   mib = gib: gib * 1024;
@@ -46,7 +45,17 @@ let
   keyDeviceUnit = "${utils.escapeSystemdPath keyDevice}.device";
 in
 {
-  imports = [ ./agent-mail.nix ];
+  imports = [
+    ./agent-mail.nix
+    (import ./agentd.nix {
+      key = keyDevice;
+      keyUnit = keyDeviceUnit;
+      quotaDevice = "/dev/disk/by-label/${home.label}";
+      sessions = config.microvm.vcpu;
+      inherit apiAddress;
+      claude = lib.getExe pkgs.claude-code;
+    })
+  ];
 
   microvm = {
     hypervisor = "qemu";
@@ -124,39 +133,6 @@ in
         toString (mib agent.homeQuotaGiB * 1024)
       } 0 0 /home"
     ) agents;
-  };
-
-  systemd.services.agentd = {
-    description = "Agent sessions and their way to the gateway";
-    wantedBy = [ "multi-user.target" ];
-    requires = [ keyDeviceUnit ];
-    after = [ keyDeviceUnit ];
-    startLimitIntervalSec = 0;
-    path = [ config.systemd.package ];
-    serviceConfig = {
-      ExecStart = lib.escapeShellArgs [
-        (lib.getExe' agentd "agentd")
-        "--agents"
-        (import ./agents-json.nix { inherit lib pkgs; })
-        "--key"
-        keyDevice
-        "--claude"
-        (lib.getExe pkgs.claude-code)
-        "--mkdir"
-        (lib.getExe' pkgs.coreutils "mkdir")
-        "--quota-device"
-        "/dev/disk/by-label/${home.label}"
-        "--sessions"
-        (toString config.microvm.vcpu)
-        "--api-address"
-        "${apiAddress}:443"
-      ];
-      RuntimeDirectory = "agentd";
-      RuntimeDirectoryMode = "0755";
-      OOMScoreAdjust = -1000;
-      Restart = "always";
-      RestartSec = "1s";
-    };
   };
 
   services.openssh = {

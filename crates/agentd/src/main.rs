@@ -3,12 +3,11 @@
 
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::fs::Permissions;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{ExitCode, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,9 +15,9 @@ use agent_proto::{
     CA, CONTROL_PORT, HOST_CID, Key, Reply, Request, Service, WAKE, accept, challenge, prove,
     read_agents, read_key,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
-use private::{Dir, Mode, Replace, now};
+use private::{Dir, Mode, Replace, listen_fds, now};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use tokio::io::{
@@ -54,10 +53,6 @@ struct Args {
     quota_device: PathBuf,
     #[arg(long, default_value = "/run/agentd")]
     run_dir: PathBuf,
-    /// Where the VM's hosts file sends api.anthropic.com, for what Claude Code
-    /// fetches there instead of over the API socket.
-    #[arg(long)]
-    api_address: SocketAddrV4,
     #[arg(long, default_value_t = 5000)]
     gateway_port: u32,
     #[arg(long, default_value_t = 5001)]
@@ -95,6 +90,7 @@ enum Woken {
 
 struct State {
     args: Args,
+    api: PathBuf,
     key: Key,
     agents: HashMap<String, u32>,
     sessions: Mutex<HashMap<String, Session>>,
@@ -154,7 +150,7 @@ impl State {
         );
         let env = [
             ("PATH", path),
-            ("ANTHROPIC_UNIX_SOCKET", self.args.run_dir.join("api.sock").display().to_string()),
+            ("ANTHROPIC_UNIX_SOCKET", self.api.display().to_string()),
             ("CLAUDE_CODE_OAUTH_TOKEN", "ssh-placeholder".into()),
             ("NODE_EXTRA_CA_CERTS", self.args.run_dir.join("ca.pem").display().to_string()),
             ("CLAUDE_CONFIG_DIR", config.display().to_string()),
@@ -385,23 +381,57 @@ async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// systemd binds the sockets (agentd's socket units), so their modes are in Nix and connections queue while agentd
+/// restarts; it passes them by name before any thread starts, as `listen_fds` requires.
+fn main() -> ExitCode {
     let args = Args::parse();
-    let agents = read_agents(&args.agents)?;
-    let socket = args.run_dir.join("api.sock");
-    let _ = std::fs::remove_file(&socket);
-    let api = UnixListener::bind(&socket)?;
-    std::fs::set_permissions(&socket, Permissions::from_mode(0o666))?;
-    let direct = TcpListener::bind(args.api_address).await?;
-    let control = VsockListener::bind(VsockAddr::new(libc::VMADDR_CID_ANY, CONTROL_PORT))?;
+    let started = listen_fds().and_then(|passed| {
+        let mut named = HashMap::new();
+        for (name, socket) in passed {
+            ensure!(
+                named.insert(name.clone(), socket).is_none(),
+                "systemd passed two sockets named {name}"
+            );
+        }
+        let mut take = |name: &str| {
+            let socket = named.remove(name);
+            socket.with_context(|| {
+                format!("systemd passed no socket named {name}; agentd runs from its socket units")
+            })
+        };
+        let (api, direct, control) = (take("api")?, take("direct")?, take("control")?);
+        ensure!(
+            named.is_empty(),
+            "systemd passed sockets agentd does not know: {:?}",
+            named.keys()
+        );
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?
+            .block_on(run(args, api, direct, control))
+    });
+    yakery_log::exit_code(started.map(|()| ExitCode::SUCCESS))
+}
+
+async fn run(args: Args, api: OwnedFd, direct: OwnedFd, control: OwnedFd) -> Result<()> {
+    let (api, direct) =
+        (std::os::unix::net::UnixListener::from(api), std::net::TcpListener::from(direct));
+    api.set_nonblocking(true)?;
+    direct.set_nonblocking(true)?;
     let state = Arc::new(State {
+        api: api.local_addr()?.as_pathname().context("the api socket has no path")?.into(),
         slots: Arc::new(Semaphore::new(args.sessions)),
         key: read_key(&args.key)?,
+        agents: read_agents(&args.agents)?,
         args,
-        agents,
         sessions: Mutex::default(),
     });
+    // SAFETY: the fd is open, and the listener becomes its one owner.
+    #[allow(unsafe_code)]
+    let control = unsafe { VsockListener::from_raw_fd(control.into_raw_fd()) };
+    let port = control.local_addr()?.port();
+    ensure!(port == CONTROL_PORT, "the control socket is on port {port}, not {CONTROL_PORT}");
+    let (api, direct) = (UnixListener::from_std(api)?, TcpListener::from_std(direct)?);
     tokio::join!(relay(api, state.clone()), relay(direct, state.clone()), serve(control, state));
     Ok(())
 }
