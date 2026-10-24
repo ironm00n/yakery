@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use agentd::{CONTROL_PORT, Reply, Request, Service, WAKE, prove, read_key};
+use agent_proto::{CONTROL_PORT, Reply, Request, Service, WAKE, prove, read_key};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

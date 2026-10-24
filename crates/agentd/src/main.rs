@@ -14,7 +14,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use agentd::{
+use agent_proto::{
     CA, CONTROL_PORT, HOST_CID, Key, Reply, Request, Service, WAKE, accept, challenge, prove,
     read_key,
 };
@@ -104,10 +104,7 @@ struct State {
 
 impl State {
     fn agent_of(&self, uid: u32) -> Option<&str> {
-        self.agents
-            .iter()
-            .find(|&(_, &u)| u == uid)
-            .map(|(name, _)| name.as_str())
+        self.agents.iter().find(|&(_, &u)| u == uid).map(|(name, _)| name.as_str())
     }
 
     fn ca(&self) -> PathBuf {
@@ -115,10 +112,7 @@ impl State {
     }
 
     async fn wake(self: &Arc<Self>, agent: &str, message: &str) -> Result<Woken> {
-        let &uid = self
-            .agents
-            .get(agent)
-            .with_context(|| format!("no agent named {agent}"))?;
+        let &uid = self.agents.get(agent).with_context(|| format!("no agent named {agent}"))?;
         if let Some(session) = self.sessions.lock().await.get_mut(agent) {
             session.send(message).await?;
             return Ok(Woken::Injected);
@@ -135,18 +129,13 @@ impl State {
         }
         self.refresh_ca().await.context("fetch the gateway's CA")?;
         let mut child = self.spawn(agent, uid)?;
-        let mut session = Session {
-            stdin: child.stdin.take().expect("piped"),
-            injected: Instant::now(),
-        };
+        let mut session =
+            Session { stdin: child.stdin.take().expect("piped"), injected: Instant::now() };
         session.send(message).await?;
         sessions.insert(agent.to_owned(), session);
         let stdout = child.stdout.take().expect("piped");
         let (tx, rx) = mpsc::unbounded_channel();
-        tokio::spawn(
-            self.clone()
-                .drive(agent.to_owned(), child, stdout, tx, slot),
-        );
+        tokio::spawn(self.clone().drive(agent.to_owned(), child, stdout, tx, slot));
         Ok(Woken::Started(rx))
     }
 
@@ -172,10 +161,7 @@ impl State {
         );
         let env = [
             ("PATH", path),
-            (
-                "ANTHROPIC_UNIX_SOCKET",
-                self.args.run_dir.join("api.sock").display().to_string(),
-            ),
+            ("ANTHROPIC_UNIX_SOCKET", self.args.run_dir.join("api.sock").display().to_string()),
             ("CLAUDE_CODE_OAUTH_TOKEN", "ssh-placeholder".into()),
             ("NODE_EXTRA_CA_CERTS", self.ca().display().to_string()),
             ("CLAUDE_CONFIG_DIR", config.display().to_string()),
@@ -202,19 +188,11 @@ impl State {
             // Only agentd reaches the host over vsock, so the uid it sends
             // the gateway is one it checked.
             .arg("--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK")
-            .args(
-                env.iter()
-                    .map(|(name, value)| format!("--setenv={name}={value}")),
-            )
+            .args(env.iter().map(|(name, value)| format!("--setenv={name}={value}")))
             .arg("--")
             .arg(&self.args.claude)
             .args(["-p", "--verbose", "--dangerously-skip-permissions"])
-            .args([
-                "--input-format",
-                "stream-json",
-                "--output-format",
-                "stream-json",
-            ])
+            .args(["--input-format", "stream-json", "--output-format", "stream-json"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -272,18 +250,14 @@ impl State {
     }
 }
 
+#[allow(unsafe_code)]
 fn has_quota(device: &Path, uid: u32) -> Result<bool> {
     let device = CString::new(device.as_os_str().as_bytes())?;
     let mut quota: libc::dqblk = unsafe { std::mem::zeroed() };
     let command = libc::QCMD(libc::Q_GETQUOTA, libc::USRQUOTA);
     // SAFETY: `device` is a NUL-terminated path and `quota` the dqblk Q_GETQUOTA fills.
     let status = unsafe {
-        libc::quotactl(
-            command,
-            device.as_ptr(),
-            uid as libc::c_int,
-            (&raw mut quota).cast(),
-        )
+        libc::quotactl(command, device.as_ptr(), uid as libc::c_int, (&raw mut quota).cast())
     };
     if status != 0 {
         return Err(std::io::Error::last_os_error()).context("quotactl Q_GETQUOTA");
@@ -371,13 +345,7 @@ async fn tunnel<L: Local>(mut client: L::Stream, state: &State) -> Result<()> {
     }
     let mut gateway =
         VsockStream::connect(VsockAddr::new(HOST_CID, state.args.gateway_port)).await?;
-    prove(
-        &mut gateway,
-        &state.key,
-        Service::Gateway,
-        &format!("uid {uid}"),
-    )
-    .await?;
+    prove(&mut gateway, &state.key, Service::Gateway, &format!("uid {uid}")).await?;
     copy_bidirectional(&mut client, &mut gateway).await?;
     Ok(())
 }
@@ -404,10 +372,7 @@ async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
         bail!("a control connection claimed {claim:?}");
     }
     let mut request = String::new();
-    (&mut stream)
-        .take(MAX_REQUEST)
-        .read_line(&mut request)
-        .await?;
+    (&mut stream).take(MAX_REQUEST).read_line(&mut request).await?;
     let Request::Wake { agent, message } = serde_json::from_str(&request)?;
     let mut write = stream.into_inner();
     match state.wake(&agent, &message).await {
@@ -425,9 +390,7 @@ async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
         }
         Err(e) => {
             let reason = format!("{e:#}");
-            write
-                .write_all(Reply::Refused { reason }.line().as_bytes())
-                .await?;
+            write.write_all(Reply::Refused { reason }.line().as_bytes()).await?;
         }
     }
     Ok(())
@@ -451,11 +414,7 @@ async fn main() -> Result<()> {
         agents,
         sessions: Mutex::default(),
     });
-    tokio::join!(
-        relay(api, state.clone()),
-        relay(direct, state.clone()),
-        serve(control, state)
-    );
+    tokio::join!(relay(api, state.clone()), relay(direct, state.clone()), serve(control, state));
     Ok(())
 }
 
@@ -472,16 +431,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unsafe_code)]
     async fn a_loopback_client_is_its_owner() {
-        let listener = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 9), 0))
-            .await
-            .unwrap();
-        let _client = TcpStream::connect(listener.local_addr().unwrap())
-            .await
-            .unwrap();
+        let listener = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 9), 0)).await.unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
         let server = listener.next().await.unwrap();
-        assert_eq!(TcpListener::uid(&server).unwrap(), unsafe {
-            libc::getuid()
-        });
+        assert_eq!(TcpListener::uid(&server).unwrap(), unsafe { libc::getuid() });
     }
 }

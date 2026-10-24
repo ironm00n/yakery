@@ -7,7 +7,7 @@
 }:
 let
   agents = import ./agents.nix { inherit lib; };
-  agentd = pkgs.callPackage ../../../packages/agentd/package.nix { };
+  agentd = pkgs.callPackage ../../../crates/rust.nix { crate = "agentd"; };
   mac = "02:61:67:6e:74:01";
   apiAddress = "127.0.0.9";
   mib = gib: gib * 1024;

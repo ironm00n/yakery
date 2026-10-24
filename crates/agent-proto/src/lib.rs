@@ -69,10 +69,7 @@ pub fn read_key(path: &Path) -> Result<Key> {
 }
 
 pub fn tag(key: &Key, nonce: &[u8; NONCE_LEN], claim: &str) -> blake3::Hash {
-    blake3::Hasher::new_keyed(key)
-        .update(nonce)
-        .update(claim.as_bytes())
-        .finalize()
+    blake3::Hasher::new_keyed(key).update(nonce).update(claim.as_bytes()).finalize()
 }
 
 fn nonce() -> Result<[u8; NONCE_LEN]> {
@@ -102,9 +99,7 @@ pub async fn prove(
         stream.write_all(proof.as_bytes()).await?;
         Ok(())
     };
-    tokio::time::timeout(HANDSHAKE, handshake)
-        .await
-        .context("the handshake timed out")?
+    tokio::time::timeout(HANDSHAKE, handshake).await.context("the handshake timed out")?
 }
 
 /// The accepting end of `service`: proves it holds the key, then returns the
@@ -119,14 +114,9 @@ pub async fn challenge(
         stream.read_exact(&mut theirs).await?;
         let ours = nonce()?;
         stream.write_all(&ours).await?;
-        stream
-            .write_all(tag(key, &theirs, service.accepted()).as_bytes())
-            .await?;
+        stream.write_all(tag(key, &theirs, service.accepted()).as_bytes()).await?;
         let mut line = Vec::with_capacity(MAX_PROOF);
-        (&mut *stream)
-            .take(MAX_PROOF as u64)
-            .read_until(b'\n', &mut line)
-            .await?;
+        (&mut *stream).take(MAX_PROOF as u64).read_until(b'\n', &mut line).await?;
         let (claim, hex) = std::str::from_utf8(&line)?
             .strip_suffix('\n')
             .and_then(|line| line.rsplit_once(' '))
@@ -139,9 +129,7 @@ pub async fn challenge(
         }
         Ok(claim.to_owned())
     };
-    tokio::time::timeout(HANDSHAKE, handshake)
-        .await
-        .context("the handshake timed out")?
+    tokio::time::timeout(HANDSHAKE, handshake).await.context("the handshake timed out")?
 }
 
 /// The next connection `accepting` takes, outliving the errors it returns
@@ -208,9 +196,7 @@ mod tests {
             "0b346bc239a5621e087194715abb7698e6e72161480cbb0a962272c42ed80984",
         );
         assert_eq!(
-            tag(&KEY, &[9; NONCE_LEN], Service::Gateway.accepted())
-                .to_hex()
-                .as_str(),
+            tag(&KEY, &[9; NONCE_LEN], Service::Gateway.accepted()).to_hex().as_str(),
             "9a86f6875380db50f0168a833724b6b4441386f2056d9cceedfaa79f5862e980",
         );
     }
@@ -260,14 +246,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_opener_claiming_to_be_an_acceptor_is_refused() {
-        let (_, claim) = exchange(
-            KEY,
-            Service::Control,
-            KEY,
-            Service::Control,
-            "accepted control",
-        )
-        .await;
+        let (_, claim) =
+            exchange(KEY, Service::Control, KEY, Service::Control, "accepted control").await;
         assert!(claim.is_err());
     }
 
@@ -275,10 +255,6 @@ mod tests {
     async fn a_silent_peer_times_out() {
         let (accepting, _opening) = duplex(1024);
         let mut accepting = BufReader::new(accepting);
-        assert!(
-            challenge(&mut accepting, &KEY, Service::Control)
-                .await
-                .is_err()
-        );
+        assert!(challenge(&mut accepting, &KEY, Service::Control).await.is_err());
     }
 }

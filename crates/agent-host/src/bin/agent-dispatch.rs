@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agentd::{CONTROL_PORT, Key, Request, Service, WAKE, accept, prove, read_key};
+use agent_proto::{CONTROL_PORT, Key, Request, Service, WAKE, accept, prove, read_key};
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use clap::Parser;
@@ -95,13 +95,8 @@ impl Dispatch {
         let mut stream = VsockStream::connect(VsockAddr::new(self.cid, CONTROL_PORT)).await?;
         prove(&mut stream, &self.key, Service::Control, WAKE).await?;
         let (read, mut write) = tokio::io::split(stream);
-        let request = Request::Wake {
-            agent: agent.to_owned(),
-            message: MESSAGE.to_owned(),
-        };
-        write
-            .write_all(format!("{}\n", serde_json::to_string(&request)?).as_bytes())
-            .await?;
+        let request = Request::Wake { agent: agent.to_owned(), message: MESSAGE.to_owned() };
+        write.write_all(format!("{}\n", serde_json::to_string(&request)?).as_bytes()).await?;
         let mut reply = String::new();
         if BufReader::new(read).read_line(&mut reply).await? == 0 {
             bail!("the daemon hung up without replying");
@@ -131,10 +126,7 @@ async fn handle(
     let status = if request.method() != Method::POST {
         StatusCode::METHOD_NOT_ALLOWED
     } else {
-        match Limited::new(request.into_body(), BODY_LIMIT)
-            .collect()
-            .await
-        {
+        match Limited::new(request.into_body(), BODY_LIMIT).collect().await {
             Ok(body) => match serde_json::from_slice::<Batch>(&body.to_bytes()) {
                 Ok(batch) => {
                     for agent in dispatch.recipients(&batch) {
@@ -211,9 +203,6 @@ mod tests {
             { "type": "message-ingest.ham", "data": { "to": ["beta@agent.ironmoon.dev"] } },
         ] }))
         .unwrap();
-        assert_eq!(
-            dispatch.recipients(&batch),
-            BTreeSet::from(["alpha", "beta"])
-        );
+        assert_eq!(dispatch.recipients(&batch), BTreeSet::from(["alpha", "beta"]));
     }
 }

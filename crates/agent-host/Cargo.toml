@@ -1,0 +1,30 @@
+[package]
+name = "agent-host"
+version = "0.1.0"
+description = "The host's end of the agent VM: agentctl, and the mail server's webhook that wakes agents"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "agentctl"
+path = "src/bin/agentctl.rs"
+
+[[bin]]
+name = "agent-dispatch"
+path = "src/bin/agent-dispatch.rs"
+
+[dependencies]
+agent-proto.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }
+tokio-vsock.workspace = true
+
+[lints]
+workspace = true

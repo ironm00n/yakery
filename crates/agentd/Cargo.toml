@@ -1,0 +1,23 @@
+[package]
+name = "agentd"
+version = "0.1.0"
+description = "The agent VM's root daemon: agent sessions, and their way to the host's gateway"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "agentd"
+path = "src/main.rs"
+
+[dependencies]
+agent-proto.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio-vsock.workspace = true
+
+[lints]
+workspace = true
