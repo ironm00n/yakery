@@ -118,7 +118,9 @@ let
   # RCPT-stage scripts see only the recipient being added
   unreceivable =
     let
-      unreceiving = lib.attrNames (lib.filterAttrs (_: account: !account.receivesMail) cfg.programAccounts);
+      unreceiving = lib.attrNames (
+        lib.filterAttrs (_: account: !account.receivesMail) cfg.programAccounts
+      );
     in
     ''
       require ["envelope", "reject"];
@@ -529,30 +531,32 @@ in
       plan = {
         enableDefaultPlan = true;
         sequence = [
-          (reconcile "NetworkListener" [ "name" ] ({
-            http = {
-              name = "http";
-              bind = toSet [
-                "${loopback.address}:${toString httpPort}"
-                "[::1]:${toString httpPort}"
-              ];
-              protocol = "http";
-              useTls = false;
-              tlsImplicit = false;
-            };
-          }
-          // lib.optionalAttrs cfg.receiving.enable {
-            smtp = {
-              name = "smtp";
-              bind = toSet [
-                "${ips.ipv4.address}:25"
-                "[${address}]:25"
-              ];
-              protocol = "smtp";
-              useTls = true;
-              tlsImplicit = false;
-            };
-          }))
+          (reconcile "NetworkListener" [ "name" ] (
+            {
+              http = {
+                name = "http";
+                bind = toSet [
+                  "${loopback.address}:${toString httpPort}"
+                  "[::1]:${toString httpPort}"
+                ];
+                protocol = "http";
+                useTls = false;
+                tlsImplicit = false;
+              };
+            }
+            // lib.optionalAttrs cfg.receiving.enable {
+              smtp = {
+                name = "smtp";
+                bind = toSet [
+                  "${ips.ipv4.address}:25"
+                  "[${address}]:25"
+                ];
+                protocol = "smtp";
+                useTls = true;
+                tlsImplicit = false;
+              };
+            }
+          ))
           (reconcile "Certificate" [ "certificate" ] (
             lib.optionalAttrs cfg.receiving.enable {
               mail = {
@@ -663,20 +667,18 @@ in
             encryptionAtRest."@type" = "Disabled";
           })
           (upsertOn "Account" [ "name" "domainId" ] (
-            lib.mapAttrs
-              (_: name: {
-                "@type" = "Group";
-                inherit name;
-                domainId = ref "ironmoon";
-                # with no role, delivery to the group fails and bounces
-                permissions = {
-                  "@type" = "Merge";
-                  enabledPermissions = toSet [ "emailReceive" ];
-                };
-                roles."@type" = "Custom";
-                roles.roleIds = [ ];
-              })
-              (lib.genAttrs ([ "postmaster" ] ++ cfg.sharedMailboxes) lib.id)
+            lib.mapAttrs (_: name: {
+              "@type" = "Group";
+              inherit name;
+              domainId = ref "ironmoon";
+              # with no role, delivery to the group fails and bounces
+              permissions = {
+                "@type" = "Merge";
+                enabledPermissions = toSet [ "emailReceive" ];
+              };
+              roles."@type" = "Custom";
+              roles.roleIds = [ ];
+            }) (lib.genAttrs ([ "postmaster" ] ++ cfg.sharedMailboxes) lib.id)
           ))
           (upsertOn "Account" [ "name" "domainId" ] (
             lib.mapAttrs (name: account: programAccount name account.permissions) cfg.programAccounts
@@ -924,7 +926,8 @@ in
     networking.firewall.allowedUDPPorts = [ 53 ];
     networking.firewall.allowedTCPPorts = [ 53 ] ++ lib.optional cfg.receiving.enable 25;
     # Stalwart reads the certificate files only at start
-    security.acme.certs.${hostname}.reloadServices = lib.optional cfg.receiving.enable "stalwart.service";
+    security.acme.certs.${hostname}.reloadServices =
+      lib.optional cfg.receiving.enable "stalwart.service";
     systemd.services.stalwart = lib.mkIf cfg.receiving.enable {
       wants = [ "acme-${hostname}.service" ];
       after = [ "acme-${hostname}.service" ];

@@ -46,7 +46,9 @@ let
     value = listsToIndexedObjects records;
   };
 
-  create1 = object: id: body: create object { ${id} = body; };
+  create1 =
+    object: id: body:
+    create object { ${id} = body; };
 
   update = object: patch: {
     "@type" = "update";
@@ -70,7 +72,9 @@ let
     inherit object;
     value = listsToIndexedObjects value;
   };
-  upsert1 = object: id: body: upsert object { ${id} = body; };
+  upsert1 =
+    object: id: body:
+    upsert object { ${id} = body; };
 
   upsertOn = object: matchOn: value: {
     "@type" = "upsert";
@@ -78,7 +82,9 @@ let
     value = listsToIndexedObjects value;
   };
 
-  upsertOn1 = object: id: matchOn: body: upsertOn object matchOn { ${id} = body; };
+  upsertOn1 =
+    object: id: matchOn: body:
+    upsertOn object matchOn { ${id} = body; };
 
   reconcile = object: matchOn: value: {
     "@type" = "reconcile";
@@ -105,20 +111,29 @@ let
     perms = stalwart-pkg.permissions;
     inherit defaults;
   };
-  rolesOp = reconcile "Role" ["description"] (
-    lib.mapAttrs (_: {name, extends ? [], enabled ? [], disabled ? []}: {
-      description = name;
-      roleIds = toSet (map ref extends);
-      enabledPermissions = toSet enabled;
-      disabledPermissions = toSet disabled;
-    }) roleDefs
+  rolesOp = reconcile "Role" [ "description" ] (
+    lib.mapAttrs (
+      _:
+      {
+        name,
+        extends ? [ ],
+        enabled ? [ ],
+        disabled ? [ ],
+      }:
+      {
+        description = name;
+        roleIds = toSet (map ref extends);
+        enabledPermissions = toSet enabled;
+        disabledPermissions = toSet disabled;
+      }
+    ) roleDefs
   );
 in
 {
   sops.secrets = stalwart-secrets.secrets;
 
   disabledModules = [ "services/mail/stalwart.nix" ];
-  imports = [../../../modules/stalwart];
+  imports = [ ../../../modules/stalwart ];
 
   services.stalwart = {
     enable = true;
@@ -139,7 +154,7 @@ in
     plan = {
       enableDefaultPlan = true;
       sequence = [
-        (upsertOn1 "Directory" "zitadel-oidc" ["description"] {
+        (upsertOn1 "Directory" "zitadel-oidc" [ "description" ] {
           "@type" = "Oidc";
           description = "ironmoon Zitadel";
           issuerUrl = "https://auth.ironmoon.dev";
@@ -147,19 +162,19 @@ in
           usernameDomain = main-domain;
           # claimGroups = "groups";
           # HACK until https://github.com/zitadel/zitadel/pull/12180 lands
-          requireScopes = [];
+          requireScopes = [ ];
         })
 
         rolesOp
         (update "Authentication" {
           directoryId = ref "zitadel-oidc";
           # TODO: do i want to customize?
-          defaultUserRoleIds = toSet [(ref "default-user")];
-          defaultGroupRoleIds = toSet [(ref "default-group")];
-          defaultAdminRoleIds = toSet [(ref "super-admin")];
+          defaultUserRoleIds = toSet [ (ref "default-user") ];
+          defaultGroupRoleIds = toSet [ (ref "default-group") ];
+          defaultAdminRoleIds = toSet [ (ref "super-admin") ];
         })
 
-        (upsertOn1 "Domain" main-domain-id ["name"] {
+        (upsertOn1 "Domain" main-domain-id [ "name" ] {
           name = "${main-domain}";
           dkimManagement."@type" = "Manual";
         })
@@ -167,7 +182,7 @@ in
           defaultHostname = "mail.${main-domain}";
           defaultDomainId = ref main-domain-id;
         })
-        (upsertOn1 "Account" "root" ["name" "domainId"] {
+        (upsertOn1 "Account" "root" [ "name" "domainId" ] {
           "@type" = "User";
           name = "root";
           domainId = ref main-domain-id;
@@ -176,13 +191,13 @@ in
           encryptionAtRest."@type" = "Disabled";
         })
 
-        (upsertOn1 "Account" "postmaster" ["name" "domainId"] {
+        (upsertOn1 "Account" "postmaster" [ "name" "domainId" ] {
           "@type" = "Group";
           name = "postmaster";
           domainId = ref main-domain-id;
           permissions."@type" = "Inherit";
           roles."@type" = "Custom";
-          roles.roleIds = [];
+          roles.roleIds = [ ];
         })
 
         # Permissive CORS so the browser app at bulwark.test may call the

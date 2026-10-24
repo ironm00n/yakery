@@ -21,7 +21,7 @@ let
     {
       "@type" = "reconcile";
       object = "Tracer";
-      matchOn = ["enable"];
+      matchOn = [ "enable" ];
       value = {
         journal = {
           "@type" = "Stdout";
@@ -34,7 +34,7 @@ let
     {
       "@type" = "reconcile";
       object = "Application";
-      matchOn = ["description"];
+      matchOn = [ "description" ];
       value = {
         webui = {
           enabled = true;
@@ -72,7 +72,7 @@ let
       (lib.optionalString hasAfterApply "! ${cmp} -s ${afterApplyFile} $STATE_DIRECTORY/.after-apply ||")
       "[ -n '${lib.optionalString cfg.recoveryMode.forceEnable "FORCE_RECOVERY"}' ]"
     ];
-  in
+in
 {
   imports = [
     ./app-passwords.nix
@@ -436,5 +436,3 @@ let
     ];
   };
 }
-
-

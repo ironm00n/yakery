@@ -26,4 +26,3 @@ rustPlatform.buildRustPackage (finalAttrs: {
     changelog = "https://github.com/stalwartlabs/cli/blob/${finalAttrs.version}/CHANGELOG.md";
   };
 })
-

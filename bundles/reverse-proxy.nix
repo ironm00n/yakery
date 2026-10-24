@@ -219,7 +219,8 @@ let
       + lib.optionalString (!opts.websockets) ''
         proxy_set_header Connection "";
       '';
-      netbirdOnly = lib.concatMapStrings (cidr: "allow ${cidr};\n") my-lib.netbird.overlayCidrs + "deny all;";
+      netbirdOnly =
+        lib.concatMapStrings (cidr: "allow ${cidr};\n") my-lib.netbird.overlayCidrs + "deny all;";
       proxied =
         extraConfig:
         let

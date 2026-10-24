@@ -5,7 +5,7 @@
   stalwart,
   nix-update-script,
   python314,
-  python314Packages
+  python314Packages,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -49,4 +49,3 @@ stdenv.mkDerivation (finalAttrs: {
     inherit (stalwart.meta) maintainers;
   };
 })
-
