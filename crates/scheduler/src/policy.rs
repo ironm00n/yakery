@@ -99,9 +99,13 @@ impl Policy {
     }
 }
 
-pub static POLICY: LazyLock<Policy> = LazyLock::new(|| {
-    serde_json::from_str(env!("SCHEDULER_POLICY")).expect("the bundle's policy parses")
-});
+#[cfg(not(test))]
+const COMPILED: &str = env!("SCHEDULER_POLICY");
+#[cfg(test)]
+const COMPILED: &str = tests::FIXTURE;
+
+pub static POLICY: LazyLock<Policy> =
+    LazyLock::new(|| serde_json::from_str(COMPILED).expect("the bundle's policy parses"));
 
 #[cfg(test)]
 #[path = "../tests/policy.rs"]

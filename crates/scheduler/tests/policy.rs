@@ -1,29 +1,34 @@
 use super::*;
 
-/// The bundle's defaults, for an owner in New York with two counted calendars.
+/// The bundle's defaults, for an owner in New York with two counted calendars: the policy tests
+/// compile in.
+pub const FIXTURE: &str = r#"{
+    "owner": "owen@example.test",
+    "host": "schedule.example.test",
+    "stalwart": "127.0.0.1:8080",
+    "zone": "America/New_York",
+    "hours": ["mon 10:00-18:00", "tue 10:00-18:00", "wed 10:00-18:00", "thu 10:00-18:00", "fri 10:00-18:00"],
+    "notice": "PT4H",
+    "horizonWeeks": 4,
+    "gap": "PT5M",
+    "calendars": [{"key": "work", "label": "Work"}, {"key": "personal", "label": "Personal"}],
+    "showCalendars": true
+}"#;
+
 pub fn fixture() -> Policy {
-    serde_json::from_value(serde_json::json!({
-        "owner": "owen@example.test",
-        "host": "schedule.example.test",
-        "stalwart": "127.0.0.1:8080",
-        "zone": "America/New_York",
-        "hours": ["mon 10:00-18:00", "tue 10:00-18:00", "wed 10:00-18:00", "thu 10:00-18:00", "fri 10:00-18:00"],
-        "notice": "PT4H",
-        "horizonWeeks": 4,
-        "gap": "PT5M",
-        "calendars": [{"key": "work", "label": "Work"}, {"key": "personal", "label": "Personal"}],
-        "showCalendars": true,
-    }))
-    .unwrap()
+    serde_json::from_str(FIXTURE).unwrap()
 }
 
 pub fn leaked(policy: Policy) -> &'static Policy {
     Box::leak(Box::new(policy))
 }
 
+/// The package's build sets the policy it compiles in, so a policy that doesn't parse fails it.
 #[test]
-fn the_compiled_policy_parses() {
-    LazyLock::force(&POLICY);
+fn the_deployed_policy_parses() {
+    if let Some(deployed) = option_env!("SCHEDULER_POLICY") {
+        serde_json::from_str::<Policy>(deployed).unwrap();
+    }
 }
 
 #[test]
