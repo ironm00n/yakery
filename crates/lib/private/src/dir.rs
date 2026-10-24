@@ -19,9 +19,14 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{now, random};
 
-/// Written names never start with a dot, so no name a caller writes can take a partial file's.
+/// Dir's own names for files it is still writing; no caller may use one, so the sweep removes only those.
 const PARTIAL: &str = ".partial-";
 pub const PARTIAL_EXPIRY: Duration = Duration::from_secs(600);
+
+fn caller(name: &str) -> Result<&str> {
+    ensure!(!name.starts_with(PARTIAL), "{name}: names starting with {PARTIAL} are Dir's own");
+    Ok(name)
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Mode {
@@ -99,7 +104,7 @@ impl Dir {
 
     /// `name` open to read and write, created private if missing, never through a link.
     pub fn file(&self, name: &str) -> Result<File> {
-        self.at(name, OFlags::CREATE | OFlags::RDWR)
+        self.at(caller(name)?, OFlags::CREATE | OFlags::RDWR)
             .with_context(|| self.path(name).display().to_string())
     }
 
@@ -137,6 +142,7 @@ impl Dir {
         replace: Replace,
         noreplace: impl FnOnce(&str, &str) -> rustix::io::Result<()>,
     ) -> Result<bool> {
+        caller(name)?;
         let partial = format!("{PARTIAL}{}", random::chars(random::ALPHANUMERIC, 16)?);
         let mut file = self.at(&partial, OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY)?;
         let written = fchmod(&file, mode.bits()).map_err(std::io::Error::from);
@@ -165,13 +171,15 @@ impl Dir {
     /// `bytes` at the end of `name`, which is created private if missing; synced.
     pub fn append(&self, name: &str, bytes: &[u8]) -> Result<()> {
         let path = || self.path(name).display().to_string();
-        let mut file =
-            self.at(name, OFlags::CREATE | OFlags::WRONLY | OFlags::APPEND).with_context(path)?;
+        let mut file = self
+            .at(caller(name)?, OFlags::CREATE | OFlags::WRONLY | OFlags::APPEND)
+            .with_context(path)?;
         file.write_all(bytes).and_then(|()| file.sync_data()).with_context(path)
     }
 
     /// `name`, made here private, or `None` if a directory has the name already.
     pub fn create_dir(&self, name: &str) -> Result<Option<Dir>> {
+        caller(name)?;
         let path = || self.path(name).display().to_string();
         match mkdirat(&self.0, name, RawMode::RWXU) {
             Ok(()) => {}
@@ -214,7 +222,15 @@ impl Dir {
                 continue;
             }
             match statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW) {
-                Ok(stat) if stat.st_mtime < expired => unlinkat(&self.0, name, AtFlags::empty())?,
+                Ok(stat)
+                    if FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile
+                        && stat.st_mtime < expired =>
+                {
+                    match unlinkat(&self.0, name, AtFlags::empty()) {
+                        Ok(()) | Err(Errno::NOENT) => {}
+                        Err(e) => return Err(e.into()),
+                    }
+                }
                 Ok(_) | Err(Errno::NOENT) => {}
                 Err(e) => return Err(e.into()),
             }

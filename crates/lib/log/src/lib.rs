@@ -1,10 +1,11 @@
 use std::{
     env,
-    fmt::Arguments,
+    fmt::{Arguments, Display},
     fs::File,
     io::{Write, stderr},
     os::{fd::AsFd, unix::fs::MetadataExt},
     path::Path,
+    process::ExitCode,
     sync::OnceLock,
 };
 
@@ -31,19 +32,36 @@ macro_rules! note {
     ($($arg:tt)*) => { $crate::emit($crate::Priority::Notice, format_args!($($arg)*)) };
 }
 
+/// What `main` returns: its code, or failure once the error is out at err priority.
+pub fn exit(ran: Result<ExitCode, impl Display>) -> ExitCode {
+    ran.unwrap_or_else(|e| {
+        fail!("{e:#}");
+        ExitCode::FAILURE
+    })
+}
+
 #[doc(hidden)]
 pub fn emit(priority: Priority, message: Arguments) {
     static TO: OnceLock<To> = OnceLock::new();
-    let to = TO.get_or_init(|| {
-        let stderr =
-            stderr().as_fd().try_clone_to_owned().map(File::from).and_then(|f| f.metadata());
-        match stderr {
-            Ok(m) if journal(env::var("JOURNAL_STREAM").ok().as_deref(), (m.dev(), m.ino())) => {
-                To::Journal
+    let unknown;
+    let to = match TO.get() {
+        Some(to) => to,
+        // stderr is read through a dup, which fails while descriptors run out; the next line tries again
+        None => {
+            match stderr().as_fd().try_clone_to_owned().map(File::from).and_then(|f| f.metadata()) {
+                Ok(m) => TO.get_or_init(|| {
+                    match journal(env::var("JOURNAL_STREAM").ok().as_deref(), (m.dev(), m.ino())) {
+                        true => To::Journal,
+                        false => To::Terminal(program()),
+                    }
+                }),
+                Err(_) => {
+                    unknown = To::Terminal(program());
+                    &unknown
+                }
             }
-            _ => To::Terminal(program()),
         }
-    });
+    };
     let _ = stderr().lock().write_all(to.render(priority, &message.to_string()).as_bytes());
 }
 

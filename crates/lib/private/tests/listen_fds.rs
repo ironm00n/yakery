@@ -1,7 +1,7 @@
 #![allow(unsafe_code)]
 
 use std::{
-    env,
+    env, fs,
     os::{
         fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd},
         unix::net::{UnixListener, UnixStream},
@@ -43,6 +43,10 @@ fn main() {
     assert!(refused.contains("before a second thread starts"), "{refused}");
     assert_eq!(env::var("LISTEN_FDS").as_deref(), Ok("1"));
     sleeper.join().unwrap();
+    // a joined thread can stay listed in /proc for a moment after it is gone
+    while fs::read_dir("/proc/self/task").unwrap().count() > 1 {
+        thread::sleep(Duration::from_millis(1));
+    }
 
     let passed = private::listen_fds().unwrap();
     assert_eq!(

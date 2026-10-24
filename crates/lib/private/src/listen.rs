@@ -56,7 +56,7 @@ fn passed(
         .context("LISTEN_FDS is past every fd")?;
     let names: Vec<String> = match names {
         None => vec!["unknown".into(); count],
-        Some("") if count == 0 => Vec::new(),
+        Some("") => Vec::new(),
         Some(names) => names.split(':').map(String::from).collect(),
     };
     ensure!(
@@ -111,5 +111,9 @@ mod tests {
             let refused = shown(Some("41"), Some("2"), Some(names));
             assert!(refused.ends_with("but LISTEN_FDS passes 2"), "{names}: {refused}");
         }
+        assert!(
+            shown(Some("41"), Some("1"), Some(""))
+                .ends_with("names 0 fds, but LISTEN_FDS passes 1")
+        );
     }
 }

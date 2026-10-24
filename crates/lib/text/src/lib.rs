@@ -41,7 +41,8 @@ macro_rules! text {
 
 #[doc(hidden)]
 pub const fn secret_like(name: &str) -> bool {
-    const WORDS: [&[u8]; 4] = [b"token", b"secret", b"password", b"key"];
+    const WORDS: [&[u8]; 7] =
+        [b"token", b"secret", b"password", b"passwd", b"passphrase", b"credential", b"key"];
     let name = name.as_bytes();
     let mut w = 0;
     while w < WORDS.len() {

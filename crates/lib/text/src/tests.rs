@@ -52,7 +52,17 @@ fn serde_goes_through_the_parser() {
 
 #[test]
 fn names_like_secrets_are_caught() {
-    for name in ["Token", "ApiToken", "SECRET", "PasswordFile", "Key", "Monkey"] {
+    for name in [
+        "Token",
+        "ApiToken",
+        "SECRET",
+        "PasswordFile",
+        "Passwd",
+        "Passphrase",
+        "Credentials",
+        "Key",
+        "Monkey",
+    ] {
         assert!(secret_like(name), "{name}");
     }
     for name in ["Address", "Topic", "MessageId", "RunId", "Fingerprint", "Login"] {

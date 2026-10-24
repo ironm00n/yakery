@@ -27,3 +27,8 @@ workspace = true
 name = "listen_fds"
 path = "tests/listen_fds.rs"
 harness = false
+
+[[test]]
+name = "umask"
+path = "tests/umask.rs"
+harness = false

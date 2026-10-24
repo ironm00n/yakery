@@ -195,3 +195,18 @@ fn a_subdir_is_opened_with_opens_checks_and_never_made() {
     let linked = format!("{:#}", dir.subdir("link").err().unwrap());
     assert!(linked.ends_with("link: not a directory, or a symlink"), "{linked}");
 }
+
+#[test]
+fn partial_names_are_dirs_own_and_the_sweep_takes_only_old_partial_files() {
+    let home = TempDir::new().unwrap();
+    let dir = Dir::open(home.path(), &[]).unwrap();
+    assert!(dir.write(".partial-x", b"", Mode::Private, Replace::No).is_err());
+    assert!(dir.append(".partial-x", b"").is_err() && dir.file(".partial-x").is_err());
+    assert!(dir.create_dir(".partial-x").is_err() && entries(home.path()).is_empty());
+    let kept = home.path().join(".partial-dir");
+    fs::create_dir(&kept).unwrap();
+    let old = SystemTime::now() - PARTIAL_EXPIRY - Duration::from_secs(60);
+    File::open(&kept).unwrap().set_modified(old).unwrap();
+    dir.drop_stale_partials().unwrap();
+    assert!(kept.exists(), "a directory is never swept");
+}
