@@ -44,9 +44,11 @@ fn main() {
     assert_eq!(env::var("LISTEN_FDS").as_deref(), Ok("1"));
     sleeper.join().unwrap();
     // a joined thread can stay listed in /proc for a moment after it is gone
-    while fs::read_dir("/proc/self/task").unwrap().count() > 1 {
+    let gone = (0..5000).any(|_| {
         thread::sleep(Duration::from_millis(1));
-    }
+        fs::read_dir("/proc/self/task").unwrap().count() == 1
+    });
+    assert!(gone, "the joined thread is still in /proc/self/task");
 
     let passed = private::listen_fds().unwrap();
     assert_eq!(

@@ -1,13 +1,13 @@
 use std::{
     env,
     fmt::{Arguments, Display},
-    fs::File,
     io::{Write, stderr},
-    os::{fd::AsFd, unix::fs::MetadataExt},
     path::Path,
     process::ExitCode,
     sync::OnceLock,
 };
+
+use rustix::fs::fstat;
 
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug)]
@@ -33,7 +33,7 @@ macro_rules! note {
 }
 
 /// What `main` returns: its code, or failure once the error is out at err priority.
-pub fn exit(ran: Result<ExitCode, impl Display>) -> ExitCode {
+pub fn exit_code(ran: Result<ExitCode, impl Display>) -> ExitCode {
     ran.unwrap_or_else(|e| {
         fail!("{e:#}");
         ExitCode::FAILURE
@@ -43,25 +43,12 @@ pub fn exit(ran: Result<ExitCode, impl Display>) -> ExitCode {
 #[doc(hidden)]
 pub fn emit(priority: Priority, message: Arguments) {
     static TO: OnceLock<To> = OnceLock::new();
-    let unknown;
-    let to = match TO.get() {
-        Some(to) => to,
-        // stderr is read through a dup, which fails while descriptors run out; the next line tries again
-        None => {
-            match stderr().as_fd().try_clone_to_owned().map(File::from).and_then(|f| f.metadata()) {
-                Ok(m) => TO.get_or_init(|| {
-                    match journal(env::var("JOURNAL_STREAM").ok().as_deref(), (m.dev(), m.ino())) {
-                        true => To::Journal,
-                        false => To::Terminal(program()),
-                    }
-                }),
-                Err(_) => {
-                    unknown = To::Terminal(program());
-                    &unknown
-                }
-            }
+    let to = TO.get_or_init(|| match fstat(stderr()) {
+        Ok(s) if journal(env::var("JOURNAL_STREAM").ok().as_deref(), (s.st_dev, s.st_ino)) => {
+            To::Journal
         }
-    };
+        _ => To::Terminal(program()),
+    });
     let _ = stderr().lock().write_all(to.render(priority, &message.to_string()).as_bytes());
 }
 

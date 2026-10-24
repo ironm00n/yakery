@@ -6,7 +6,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use rustix::io::Errno;
+use rustix::{
+    fs::{AtFlags, FileType, Mode as Bits},
+    io::Errno,
+};
 use tempfile::TempDir;
 
 use crate::{Dir, Mode, PARTIAL_EXPIRY, Replace, Secret, hex, random, secret::PASSWORD_CLASSES};
@@ -147,13 +150,22 @@ fn where_rename_takes_no_flags_a_link_keeps_replace_no() {
     let home = TempDir::new().unwrap();
     let dir = Dir::open(home.path(), &NAMES).unwrap();
     let at = home.path().join(".cache/app/files");
+    let files = File::open(&at).unwrap();
     let nfs = |_: &str, _: &str| Err(Errno::INVAL);
-    assert!(dir.write_with("a", b"one", Mode::Readable, Replace::No, nfs).unwrap());
-    assert!(!dir.write_with("a", b"two", Mode::Private, Replace::No, nfs).unwrap());
+    let link =
+        |from: &str, to: &str| rustix::fs::linkat(&files, from, &files, to, AtFlags::empty());
+    assert!(dir.write_with("a", b"one", Mode::Readable, Replace::No, nfs, link).unwrap());
+    assert!(!dir.write_with("a", b"two", Mode::Private, Replace::No, nfs, link).unwrap());
     assert_eq!((fs::read(at.join("a")).unwrap(), mode(&at.join("a"))), (b"one".to_vec(), 0o644));
+    let replayed = |from: &str, to: &str| link(from, to).and(Err(Errno::EXIST));
+    assert!(
+        dir.write_with("b", b"one", Mode::Private, Replace::No, nfs, replayed).unwrap(),
+        "a replayed link landed"
+    );
+    assert_eq!(fs::read(at.join("b")).unwrap(), b"one");
     let refused = |_: &str, _: &str| Err(Errno::ACCESS);
-    assert!(dir.write_with("b", b"one", Mode::Private, Replace::No, refused).is_err());
-    assert_eq!(entries(&at), ["a"], "no partial file stays behind");
+    assert!(dir.write_with("c", b"one", Mode::Private, Replace::No, refused, link).is_err());
+    assert_eq!(entries(&at), ["a", "b"], "no partial file stays behind");
 }
 
 #[test]
@@ -209,4 +221,24 @@ fn partial_names_are_dirs_own_and_the_sweep_takes_only_old_partial_files() {
     File::open(&kept).unwrap().set_modified(old).unwrap();
     dir.drop_stale_partials().unwrap();
     assert!(kept.exists(), "a directory is never swept");
+}
+
+#[test]
+fn a_name_is_one_component_and_only_a_regular_file_opens() {
+    let home = TempDir::new().unwrap();
+    let dir = Dir::open(home.path(), &[]).unwrap();
+    fs::create_dir(home.path().join("sub")).unwrap();
+    symlink(home.path().join("sub"), home.path().join("link")).unwrap();
+    for name in ["./.partial-x", "sub/a", "link/", "", ".", ".."] {
+        assert!(dir.write(name, b"", Mode::Private, Replace::No).is_err(), "{name:?}");
+        assert!(dir.append(name, b"").is_err() && dir.read(name).is_err(), "{name:?}");
+        assert!(dir.subdir(name).is_err() && dir.create_dir(name).is_err(), "{name:?}");
+        assert!(Dir::open(home.path(), &[name]).is_err(), "{name:?}");
+    }
+    assert!(entries(&home.path().join("sub")).is_empty());
+    rustix::fs::mknodat(File::open(home.path()).unwrap(), "fifo", FileType::Fifo, Bits::RWXU, 0)
+        .unwrap();
+    let refused = format!("{:#}", dir.open_file("fifo").unwrap_err());
+    assert!(refused.ends_with("fifo: not a regular file"), "{refused}");
+    assert!(dir.read("fifo").is_err() && dir.append("fifo", b"x").is_err(), "and none blocks");
 }

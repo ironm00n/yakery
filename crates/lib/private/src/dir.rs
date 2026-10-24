@@ -23,9 +23,32 @@ use crate::{now, random};
 const PARTIAL: &str = ".partial-";
 pub const PARTIAL_EXPIRY: Duration = Duration::from_secs(600);
 
-fn caller(name: &str) -> Result<&str> {
-    ensure!(!name.starts_with(PARTIAL), "{name}: names starting with {PARTIAL} are Dir's own");
+/// Every guarantee holds per path component, so a name is exactly one.
+fn entry(name: &str) -> Result<&str> {
+    let one = !name.is_empty() && !name.contains('/') && name != "." && name != "..";
+    ensure!(one, "{:?} is not a single file name", name);
     Ok(name)
+}
+
+fn caller(name: &str) -> Result<&str> {
+    ensure!(
+        !entry(name)?.starts_with(PARTIAL),
+        "{name}: names starting with {PARTIAL} are Dir's own"
+    );
+    Ok(name)
+}
+
+fn errno(e: &anyhow::Error) -> Option<Errno> {
+    e.downcast_ref::<Errno>().copied()
+}
+
+/// Mode set, bytes written and synced, and closed: NFS keeps a file unlinked while open under a .nfs name.
+fn synced(mut file: File, bytes: &[u8], mode: Mode) -> rustix::io::Result<(u64, u64)> {
+    fchmod(&file, mode.bits())?;
+    let io = |e: std::io::Error| Errno::from_io_error(&e).unwrap_or(Errno::IO);
+    file.write_all(bytes).and_then(|()| file.sync_all()).map_err(io)?;
+    let stat = fstat(&file)?;
+    Ok((stat.st_dev, stat.st_ino))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -63,12 +86,16 @@ impl Dir {
             Dir(openat(CWD, base, flags, RawMode::empty()).with_context(at)?, base.into());
         for name in names {
             let path = || dir.path(name).display().to_string();
-            match mkdirat(&dir.0, *name, RawMode::RWXU) {
-                Ok(()) | Err(Errno::EXIST) => {}
+            let made = match mkdirat(&dir.0, entry(name)?, RawMode::RWXU) {
+                Ok(()) => true,
+                Err(Errno::EXIST) => false,
                 Err(e) => return Err(anyhow!(e).context(path())),
-            }
+            };
             let next =
                 dir.subdir(name)?.with_context(|| format!("{}: gone as it was made", path()))?;
+            if made {
+                fchmod(&next.0, RawMode::RWXU).with_context(path)?;
+            }
             dir = next;
         }
         Ok(dir)
@@ -76,7 +103,7 @@ impl Dir {
 
     /// The directory `name` if it is there, opened from this one as `open` opens each of its names.
     pub fn subdir(&self, name: &str) -> Result<Option<Dir>> {
-        let path = self.path(name);
+        let path = self.path(entry(name)?);
         let shown = path.display().to_string();
         let flags = OFlags::DIRECTORY | OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
         let fd = match openat(&self.0, name, flags, RawMode::empty()) {
@@ -97,43 +124,51 @@ impl Dir {
         self.1.join(name)
     }
 
-    fn at(&self, name: &str, flags: OFlags) -> rustix::io::Result<File> {
-        let flags = flags | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-        openat(&self.0, name, flags, Mode::Private.bits()).map(File::from)
+    /// A regular file only: non-blocking, so a FIFO put in a file's place cannot hang the open.
+    fn at(&self, name: &str, flags: OFlags) -> Result<File> {
+        let shown = || self.path(name).display().to_string();
+        let flags = flags | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
+        let fd = openat(&self.0, entry(name)?, flags, Mode::Private.bits())
+            .map_err(anyhow::Error::from)
+            .with_context(shown)?;
+        let kind = FileType::from_raw_mode(fstat(&fd).with_context(shown)?.st_mode);
+        ensure!(kind == FileType::RegularFile, "{}: not a regular file", shown());
+        Ok(File::from(fd))
     }
 
     /// `name` open to read and write, created private if missing, never through a link.
     pub fn file(&self, name: &str) -> Result<File> {
         self.at(caller(name)?, OFlags::CREATE | OFlags::RDWR)
-            .with_context(|| self.path(name).display().to_string())
     }
 
     /// `name` open to read, never through a link.
     pub fn open_file(&self, name: &str) -> Result<File> {
-        self.at(name, OFlags::RDONLY).with_context(|| self.path(name).display().to_string())
+        self.at(name, OFlags::RDONLY)
     }
 
     pub fn read(&self, name: &str) -> Result<Option<Vec<u8>>> {
-        let path = || self.path(name).display().to_string();
         let mut file = match self.at(name, OFlags::RDONLY) {
-            Err(Errno::NOENT) => return Ok(None),
-            opened => opened.with_context(path)?,
+            Err(e) if errno(&e) == Some(Errno::NOENT) => return Ok(None),
+            opened => opened?,
         };
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).with_context(path)?;
+        file.read_to_end(&mut bytes).with_context(|| self.path(name).display().to_string())?;
         Ok(Some(bytes))
     }
 
-    /// Whole or not at all: through a partial file, synced with the directory, renamed over `name` only if
-    /// `replace`. False if `name` was there and not replaced.
+    /// Whole or not at all: through a partial file, synced with the directory, then renamed to `name`, over what
+    /// is there only if `replace`. False if `name` was there and not replaced.
     pub fn write(&self, name: &str, bytes: &[u8], mode: Mode, replace: Replace) -> Result<bool> {
-        self.write_with(name, bytes, mode, replace, |from, to| {
+        let noreplace = |from: &str, to: &str| {
             renameat_with(&self.0, from, &self.0, to, RenameFlags::NOREPLACE)
-        })
+        };
+        let link = |from: &str, to: &str| linkat(&self.0, from, &self.0, to, AtFlags::empty());
+        self.write_with(name, bytes, mode, replace, noreplace, link)
     }
 
     /// NFS refuses renameat2's flags with EINVAL; a hard link, which fails on an existing name, stands in for
-    /// RENAME_NOREPLACE there. Tests pass their own `noreplace`.
+    /// RENAME_NOREPLACE there, and since NFS answers a LINK replayed after a lost reply with EEXIST, a name that is
+    /// already this inode counts as linked. Tests pass their own renameat2 and linkat.
     pub(crate) fn write_with(
         &self,
         name: &str,
@@ -141,23 +176,29 @@ impl Dir {
         mode: Mode,
         replace: Replace,
         noreplace: impl FnOnce(&str, &str) -> rustix::io::Result<()>,
+        link: impl FnOnce(&str, &str) -> rustix::io::Result<()>,
     ) -> Result<bool> {
         caller(name)?;
         let partial = format!("{PARTIAL}{}", random::chars(random::ALPHANUMERIC, 16)?);
-        let mut file = self.at(&partial, OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY)?;
-        let written = fchmod(&file, mode.bits()).map_err(std::io::Error::from);
-        let placed =
-            match written.and_then(|()| file.write_all(bytes)).and_then(|()| file.sync_all()) {
-                Err(e) => Err(Errno::from_io_error(&e).unwrap_or(Errno::IO)),
-                Ok(()) if replace == Replace::Yes => renameat(&self.0, &partial, &self.0, name),
-                Ok(()) => match noreplace(&partial, name) {
-                    Err(Errno::INVAL) => linkat(&self.0, &partial, &self.0, name, AtFlags::empty())
-                        .map(|()| {
-                            let _ = unlinkat(&self.0, &partial, AtFlags::empty());
-                        }),
-                    renamed => renamed,
-                },
-            };
+        let file = self.at(&partial, OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY)?;
+        let placed = synced(file, bytes, mode).and_then(|ours| match replace {
+            Replace::Yes => renameat(&self.0, &partial, &self.0, name),
+            Replace::No => match noreplace(&partial, name) {
+                Err(Errno::INVAL) => {
+                    let linked = match link(&partial, name) {
+                        Err(Errno::EXIST) => statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW)
+                            .ok()
+                            .filter(|stat| (stat.st_dev, stat.st_ino) == ours)
+                            .map_or(Err(Errno::EXIST), |_| Ok(())),
+                        linked => linked,
+                    };
+                    linked.map(|()| {
+                        let _ = unlinkat(&self.0, &partial, AtFlags::empty());
+                    })
+                }
+                renamed => renamed,
+            },
+        });
         if placed.is_err() {
             let _ = unlinkat(&self.0, &partial, AtFlags::empty());
         }
@@ -168,13 +209,24 @@ impl Dir {
         }
     }
 
-    /// `bytes` at the end of `name`, which is created private if missing; synced.
+    /// `bytes` at the end of `name`, created private and synced with the directory if missing. Whole or not at all
+    /// for one writer at a time, since a failed write is cut back off; O_APPEND does not order writers on NFS.
     pub fn append(&self, name: &str, bytes: &[u8]) -> Result<()> {
-        let path = || self.path(name).display().to_string();
-        let mut file = self
-            .at(caller(name)?, OFlags::CREATE | OFlags::WRONLY | OFlags::APPEND)
-            .with_context(path)?;
-        file.write_all(bytes).and_then(|()| file.sync_data()).with_context(path)
+        let flags = OFlags::WRONLY | OFlags::APPEND;
+        let mut file = match self.at(caller(name)?, flags | OFlags::CREATE | OFlags::EXCL) {
+            Ok(file) => {
+                fchmod(&file, Mode::Private.bits())?;
+                fsync(&self.0)?;
+                file
+            }
+            Err(e) if errno(&e) == Some(Errno::EXIST) => self.at(name, flags)?,
+            Err(e) => return Err(e),
+        };
+        let start = file.metadata()?.len();
+        let appended = file.write_all(bytes).and_then(|()| file.sync_data());
+        appended
+            .or_else(|e| file.set_len(start).and(Err(e)))
+            .with_context(|| self.path(name).display().to_string())
     }
 
     /// `name`, made here private, or `None` if a directory has the name already.
@@ -187,7 +239,10 @@ impl Dir {
             Err(e) => return Err(anyhow!(e).context(path())),
         }
         fsync(&self.0).with_context(path)?;
-        self.subdir(name)?.with_context(|| format!("{}: gone as it was made", path())).map(Some)
+        let made =
+            self.subdir(name)?.with_context(|| format!("{}: gone as it was made", path()))?;
+        fchmod(&made.0, RawMode::RWXU).with_context(path)?;
+        Ok(Some(made))
     }
 
     pub fn load<T: DeserializeOwned + Default>(&self, name: &str) -> Result<T> {
@@ -203,7 +258,7 @@ impl Dir {
     }
 
     pub fn existing(&self, name: &str) -> Result<Option<PathBuf>> {
-        match statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW) {
+        match statat(&self.0, entry(name)?, AtFlags::SYMLINK_NOFOLLOW) {
             Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile => {
                 Ok(Some(self.path(name)))
             }
