@@ -295,6 +295,19 @@
         initrd-network = import ./nix/tests/initrd-network.nix { pkgs = pkgs-map.${system}; };
         bulwark = import ./nix/tests/bulwark.nix { pkgs = pkgs-map.${system}; };
         agentd = import ./nix/tests/agentd.nix { pkgs = pkgs-map.${system}; };
+        # every member's tests, the shared crates' included, which no package runs; agent-mail's load the system's roots
+        crates = pkgs-map.${system}.callPackage ./crates/rust.nix {
+          nativeCheckInputs = [ pkgs-map.${system}.cacert ];
+          # the scheduler's tests read time zones
+          env.TZDIR = "${pkgs-map.${system}.tzdata}/share/zoneinfo";
+        };
+        crates-manifest = pkgs-map.${system}.runCommand "crates-manifest" { } (
+          let
+            workspace = import ./crates/manifest.nix { inherit lib; };
+          in
+          builtins.seq (workspace.checked workspace.members) "touch $out"
+        );
+        treefmt = treefmtEval.${system}.config.build.check self;
         desktop-boot = import ./nix/tests/desktop-boot.nix {
           pkgs = pkgs-map.${system};
           inherit inputs my-lib;
@@ -397,8 +410,15 @@
           '';
         };
 
-      # agent-mail's build-time deployment values only; crates/.envrc takes the Rust toolchain from another shell
-      crates = pkgs.mkShellNoCC {
+      # the compiler and tools Nix builds the crates with, and agent-mail's build-time deployment values
+      crates = pkgs.mkShell {
+        packages = with pkgs; [
+          cargo
+          rustc
+          rustfmt
+          clippy
+          rust-analyzer
+        ];
         env = import ./crates/agent-mail/deployment-env.nix {
           inherit lib;
           deployment = my-lib.ironmoon;
