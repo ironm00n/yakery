@@ -47,6 +47,12 @@ let
           description = "systemd calendar expression the dump runs on.";
         };
 
+        readWritePaths = mkOption {
+          type = types.listOf types.path;
+          default = [ ];
+          description = "Paths the dump command writes to; the job's unit is otherwise read-only.";
+        };
+
         secretsFile = mkOption {
           type = types.nullOr types.path;
           default = inputs.secrets.lib.borg.${name};
@@ -105,7 +111,7 @@ in
 
     services.borgbackup.jobs = mapAttrs (name: svc: {
       repo = "ssh://${cfg.target.user}@${cfg.target.host}:${toString cfg.target.port}/./${name}";
-      inherit (svc) dumpCommand startAt;
+      inherit (svc) dumpCommand startAt readWritePaths;
       encryption = {
         mode = "repokey-blake2";
         passCommand = "cat ${svc.passphraseFile}";

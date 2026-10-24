@@ -1,0 +1,770 @@
+diff --git a/components/email/__tests__/composer-send-errors.test.tsx b/components/email/__tests__/composer-send-errors.test.tsx
+index 5e791f62..5919e7f5 100644
+--- a/components/email/__tests__/composer-send-errors.test.tsx
++++ b/components/email/__tests__/composer-send-errors.test.tsx
+@@ -1,7 +1,9 @@
+ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+-import { describe, it, expect, vi, beforeEach } from 'vitest';
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+ import React from 'react';
+ import { EmailComposer } from '../email-composer';
++import { SenderAddressError } from '@/lib/sender-address';
++import { useIdentityStore } from '@/stores/identity-store';
+ 
+ // ─── Heavy component mocks (mirrors reply-addressing.test.tsx) ────────────────
+ 
+@@ -233,6 +235,45 @@ describe('composer send errors', () => {
+     await waitFor(() => expect(toastError).toHaveBeenCalled());
+     expect(toastError).toHaveBeenCalledWith('send_failed', { message: 'No recipients found in email. [noRecipients]' });
+   });
++
++  it('says why a send from a sender that is not an address was refused', async () => {
++    const onSend = vi.fn().mockRejectedValue(new SenderAddressError('ironmoon'));
++    render(<EmailComposer initialData={DRAFT} onSend={onSend} />);
++
++    fireEvent.click(sendButton());
++
++    await waitFor(() => expect(toastError).toHaveBeenCalled());
++    expect(toastError).toHaveBeenCalledWith('send_failed', { message: 'Not sent: the sender "ironmoon" is not an email address' });
++  });
++});
++
++// A composer whose identity went away sent from the account's first identity,
++// with nothing on screen to say so.
++describe('composer with no identity selected', () => {
++  const offered = useIdentityStore.getState().identities;
++  beforeEach(() => toastError.mockClear());
++  afterEach(() => useIdentityStore.setState({ identities: offered }));
++
++  const refuses = async (initialData: typeof DRAFT) => {
++    const onSend = vi.fn().mockResolvedValue(undefined);
++    render(<EmailComposer initialData={initialData} onSend={onSend} />);
++
++    fireEvent.click(sendButton());
++
++    await waitFor(() => expect(toastError).toHaveBeenCalled());
++    expect(toastError).toHaveBeenCalledWith('send_failed', { message: new SenderAddressError().message });
++    expect(onSend).not.toHaveBeenCalled();
++  };
++
++  it('refuses to send when the identity it had is no longer offered', async () => {
++    useIdentityStore.setState({ identities: [{ id: 'id-other', email: 'other@example.com', name: 'Other', mayDelete: false }] });
++    await refuses(DRAFT);
++  });
++
++  it('refuses to send when there is no identity to send from', async () => {
++    useIdentityStore.setState({ identities: [] });
++    await refuses({ ...DRAFT, selectedIdentityId: null as unknown as string });
++  });
+ });
+ 
+ describe('composer and the toast stack', () => {
+diff --git a/components/email/__tests__/viewer-unsubscribe-login.test.tsx b/components/email/__tests__/viewer-unsubscribe-login.test.tsx
+new file mode 100644
+index 00000000..821e5e11
+--- /dev/null
++++ b/components/email/__tests__/viewer-unsubscribe-login.test.tsx
+@@ -0,0 +1,96 @@
++import { render, screen, fireEvent, waitFor } from '@testing-library/react';
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++import type { Email, Identity, Mailbox } from '@/lib/jmap/types';
++import { useAuthStore } from '@/stores/auth-store';
++import { useAccountStore } from '@/stores/account-store';
++import { useEmailStore } from '@/stores/email-store';
++
++// A List-Unsubscribe mailto in a unified view went out through the login
++// holding the newsletter with no identity named, and sendEmail sent it from
++// that login's first identity. It goes from the identity the newsletter was
++// addressed to, and without one it does not go.
++
++vi.mock('@/hooks/use-media-query', () => ({
++  useDeviceDetection: () => ({ isMobile: false, isTablet: false, isDesktop: true }),
++  useMediaQuery: () => false,
++  useIsDesktop: () => true,
++}));
++vi.mock('@/components/tour/tour-provider', () => ({
++  useTour: () => ({ activeTour: null, startTour: vi.fn(), endTour: vi.fn(), registerStep: vi.fn() }),
++}));
++vi.mock('@/components/plugins/plugin-slot', () => ({ PluginSlot: () => null }));
++vi.mock('@/hooks/use-plugin-slot-offers', () => ({ usePluginSlotOffers: () => [] }));
++
++class NoopResizeObserver {
++  observe() {}
++  unobserve() {}
++  disconnect() {}
++}
++vi.stubGlobal('ResizeObserver', NoopResizeObserver);
++
++const { EmailViewer } = await import('../email-viewer');
++
++const mailboxes = [
++  { id: 'inbox', name: 'Inbox', role: 'inbox', parentId: null, myRights: { mayAddItems: true } },
++] as unknown as Mailbox[];
++
++const identity = (id: string, email: string) => ({ id, email, name: email }) as Identity;
++
++const loginClient = (accountId: string, identities: Identity[]) => ({
++  getAccountId: () => accountId, getSieveAccountId: () => null, hasDelayedSend: () => false, getSession: () => null,
++  getIdentities: vi.fn(async () => identities),
++  sendEmail: vi.fn(async () => ({})),
++});
++
++const newsletter = (to: string, stamp: Partial<Email> = {}) => ({
++  id: 'e1', blobId: 'b1', threadId: 't1', mailboxIds: { inbox: true }, keywords: { $seen: true },
++  from: [{ name: 'News', email: 'news@list.example' }], to: [{ name: '', email: to }],
++  subject: 'Issue 12', receivedAt: '2026-01-01T00:00:00Z', preview: 'News', hasAttachment: false, size: 100,
++  textBody: [{ partId: '1', type: 'text/plain' }], htmlBody: [{ partId: '1', type: 'text/plain' }], attachments: [],
++  bodyValues: { '1': { value: 'News' } },
++  headers: { 'List-Unsubscribe': '<mailto:leave@list.example?subject=unsubscribe>' },
++  ...stamp,
++}) as unknown as Email;
++
++const clientA = loginClient('jmap-a', [identity('a0', 'me@a.example')]);
++const clientB = loginClient('jmap-b', [identity('b0', 'first@b.example'), identity('b1', 'me@b.example')]);
++
++beforeEach(() => {
++  vi.clearAllMocks();
++  useAccountStore.setState({
++    accounts: [{ id: 'A', isConnected: true }, { id: 'B', isConnected: true }] as never,
++  });
++  useAuthStore.setState({
++    client: clientA as never,
++    activeAccountId: 'A',
++    identities: [identity('a0', 'me@a.example')],
++    getClientForAccount: ((id: string) => ({ A: clientA, B: clientB } as never)[id]) as never,
++  });
++  useEmailStore.setState({ viewingAccountId: null });
++});
++
++const unsubscribe = async (email: Email) => {
++  render(<EmailViewer email={email} mailboxes={mailboxes} selectedMailbox="inbox" currentMailboxRole="inbox" />);
++  fireEvent.click((await screen.findAllByText('email_viewer.unsubscribe_banner.button'))[0]);
++  fireEvent.click(screen.getAllByText('email_viewer.unsubscribe_banner.confirm_button')[0]);
++};
++
++describe('List-Unsubscribe mailto for a newsletter another login holds', () => {
++  it('is sent through that login, from its identity the newsletter was addressed to', async () => {
++    await unsubscribe(newsletter('me@b.example', { sourceClientAccountId: 'B', sourceAccountId: 'jmap-b' }));
++
++    await waitFor(() => expect(clientB.sendEmail).toHaveBeenCalledTimes(1));
++    const [to, , , , , identityId, fromEmail] = clientB.sendEmail.mock.calls[0] as unknown[];
++    expect(to).toEqual(['leave@list.example']);
++    expect({ identityId, fromEmail }).toEqual({ identityId: 'b1', fromEmail: 'me@b.example' });
++    expect(clientA.sendEmail).not.toHaveBeenCalled();
++  });
++
++  it("is not sent when it reached none of that login's identities", async () => {
++    await unsubscribe(newsletter('me@a.example', { sourceClientAccountId: 'B', sourceAccountId: 'jmap-b' }));
++
++    await screen.findByText('email_viewer.unsubscribe_banner.error');
++    expect(clientB.sendEmail).not.toHaveBeenCalled();
++    expect(clientA.sendEmail).not.toHaveBeenCalled();
++  });
++});
+diff --git a/components/email/email-composer.tsx b/components/email/email-composer.tsx
+index c0daa416..515d0ece 100644
+--- a/components/email/email-composer.tsx
++++ b/components/email/email-composer.tsx
+@@ -46,6 +46,7 @@ import { cn, formatFileSize, formatDateTime, generateUUID } from "@/lib/utils";
+ import { schedulePresets } from "@/lib/schedule-presets";
+ import { debug } from "@/lib/debug";
+ import { toast } from "@/stores/toast-store";
++import { SenderAddressError } from "@/lib/sender-address";
+ import { useContextMenu } from "@/hooks/use-context-menu";
+ import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
+ import { sanitizeSignatureHtml, sanitizeSignatureHtmlForDisplay, sanitizeEmailHtml, escapeHtml, sanitizePluginBodyHtml } from "@/lib/email-sanitization";
+@@ -3015,6 +3016,13 @@ export function EmailComposer({
+       }
+     }
+ 
++    // The From row shows the picked identity, or with none picked the primary
++    // one. A picked identity no longer offered falls back to nothing.
++    if (selectedIdentityId ? !identities.some((identity) => identity.id === selectedIdentityId) : !primaryIdentity) {
++      toast.error(t('send_failed'), { message: new SenderAddressError().message });
++      return;
++    }
++
+     // Past every "don't send" early return - mark the send in flight so a
+     // second click is a no-op until this resolves (reset in the finally below).
+     isSendingRef.current = true;
+diff --git a/components/email/email-viewer.tsx b/components/email/email-viewer.tsx
+index e03ceb23..da40dd4d 100644
+--- a/components/email/email-viewer.tsx
++++ b/components/email/email-viewer.tsx
+@@ -116,6 +116,8 @@ import { UnsubscribeBanner } from "./unsubscribe-banner";
+ import { CalendarInvitationBanner } from "./calendar-invitation-banner";
+ import { ReadReceiptBanner } from "./read-receipt-banner";
+ import { stripCrossAccountIdentityPrefix, useProMultiAccountIdentities } from "@/hooks/use-pro-multi-account-identities";
++import { findReplyIdentityId } from "@/lib/reply-identity";
++import { SenderAddressError } from "@/lib/sender-address";
+ import { useTour } from "@/components/tour/tour-provider";
+ import { useMenuNavigation } from "@/hooks/use-menu-navigation";
+ import { findCalendarAttachment, isCalendarMimeType } from "@/lib/calendar-invitation";
+@@ -1365,26 +1367,33 @@ export function EmailViewer({
+   const blobClient = blobSource ? blobSource.client : legacyBlobClient;
+   const blobAccountId = blobSource ? blobSource.accountId : legacyBlobAccountId;
+ 
++  // Mail a message calls for - its read receipt, a List-Unsubscribe mailto -
++  // goes out through the login holding it, from one of that login's
++  // identities: a submission naming another account's identity is refused.
++  const viewingAccountId = useEmailStore((s) => s.viewingAccountId);
++  const multiAccountIdentities = useProMultiAccountIdentities();
++  const mailLoginId = email?.sourceClientAccountId ?? viewingAccountId;
++  const otherMailLoginId = mailLoginId && mailLoginId !== activeAccountId ? mailLoginId : null;
++  const mailLoginIdentities = otherMailLoginId
++    ? multiAccountIdentities.groups.find((g) => g.localAccountId === otherMailLoginId)?.identities
++    : identities;
++  const mailLoginClient = useCallback(
++    () => (otherMailLoginId ? useAuthStore.getState().getClientForAccount(otherMailLoginId) : client),
++    [otherMailLoginId, client],
++  );
++
+   // List-Unsubscribe mailto: send the message ourselves - this is a webmail
+   // client, handing a mailto: URL to the OS mail handler goes nowhere for
+-  // most users. Route to the email's own account in unified views and prefer
+-  // the identity that received the newsletter, so the list can match the
+-  // subscriber; sendEmail resolves the identity (with its own fallback to
+-  // the account default) from the address we pass.
++  // most users. It goes from the identity the newsletter was addressed to, so
++  // the list can match the subscriber, and without one it does not go.
+   const handleSendMailtoUnsubscribe = async (fields: { to: string[]; subject?: string; body?: string }) => {
+-    const sendClient = (email?.sourceClientAccountId
+-      ? useAuthStore.getState().getClientForAccount(email.sourceClientAccountId)
+-      : undefined) ?? client;
++    const sendClient = mailLoginClient();
+     if (!sendClient) throw new Error('Not connected');
+-
+-    const recipientAddresses = [...(email?.to ?? []), ...(email?.cc ?? [])].map(r => r.email?.toLowerCase());
+-    // In unified views the owning account's identities are not loaded here -
+-    // pass nothing and let its client fall back to its default identity.
+-    const fromIdentity = email?.sourceClientAccountId
+-      ? undefined
+-      : identities.find(i => i.email && recipientAddresses.includes(i.email.toLowerCase()));
+-
+-    await sendClient.sendEmail(fields.to, fields.subject ?? '', fields.body ?? '', undefined, undefined, fromIdentity?.id, fromIdentity?.email, undefined, fromIdentity?.name);
++    const fromIdentityId = findReplyIdentityId(mailLoginIdentities ?? [], { to: email?.to, cc: email?.cc, bcc: email?.bcc });
++    const fromIdentity = mailLoginIdentities?.find((i) => i.id === fromIdentityId);
++    if (!fromIdentity) throw new SenderAddressError();
++    const { rawId } = stripCrossAccountIdentityPrefix(fromIdentity.id);
++    await sendClient.sendEmail(fields.to, fields.subject ?? '', fields.body ?? '', undefined, undefined, rawId, fromIdentity.email, undefined, fromIdentity.name);
+   };
+   const promptForRescheduleDelayedUntil = useCallback((): string | null => {
+     const value = window.prompt(t('reschedule_prompt'));
+@@ -3509,24 +3518,14 @@ export function EmailViewer({
+     return addr || null;
+   }, [email?.headers]);
+ 
+-  // The MDN goes out through the login holding the message, from one of its
+-  // identities: a submission naming another account's identity is refused.
+-  const viewingAccountId = useEmailStore((s) => s.viewingAccountId);
+-  const multiAccountIdentities = useProMultiAccountIdentities();
+-  const mailLoginId = email?.sourceClientAccountId ?? viewingAccountId;
+-  const otherMailLoginId = mailLoginId && mailLoginId !== activeAccountId ? mailLoginId : null;
+-  const receiptIdentities = otherMailLoginId
+-    ? multiAccountIdentities.groups.find((g) => g.localAccountId === otherMailLoginId)?.identities
+-    : identities;
+-
+   // The identity whose address received the original message — the MDN is sent
+   // "from" that address, and with none of them it is not sent.
+   const receiptIdentity = useMemo(() => {
+     const recipients = [...(email?.to || []), ...(email?.cc || [])]
+       .map(r => r.email?.toLowerCase())
+       .filter(Boolean);
+-    return receiptIdentities?.find(i => recipients.includes(i.email?.toLowerCase())) ?? null;
+-  }, [receiptIdentities, email?.to, email?.cc]);
++    return mailLoginIdentities?.find(i => recipients.includes(i.email?.toLowerCase())) ?? null;
++  }, [mailLoginIdentities, email?.to, email?.cc]);
+ 
+   const mdnAlreadyHandled = email?.keywords?.['$mdnsent'] === true;
+   const [mdnHandledLocally, setMdnHandledLocally] = useState(false);
+@@ -3545,12 +3544,10 @@ export function EmailViewer({
+     readReceiptResponse !== 'never' &&
+     inReceiptEligibleFolder &&
+     !isDraft &&
+-    !!receiptIdentities?.length;
++    !!mailLoginIdentities?.length;
+ 
+   const sendReadReceiptNow = useCallback(async (automatic: boolean) => {
+-    const receiptClient = otherMailLoginId
+-      ? useAuthStore.getState().getClientForAccount(otherMailLoginId)
+-      : client;
++    const receiptClient = mailLoginClient();
+     if (!receiptClient || !client || !email || !readReceiptRequestedBy) return;
+     if (!receiptIdentity) {
+       const reason = 'No identity of this login received the mail';
+@@ -3581,7 +3578,7 @@ export function EmailViewer({
+       });
+       throw err;
+     }
+-  }, [client, otherMailLoginId, email, readReceiptRequestedBy, receiptIdentity, t]);
++  }, [client, mailLoginClient, email, readReceiptRequestedBy, receiptIdentity, t]);
+ 
+   const ignoreReadReceipt = useCallback(async () => {
+     setMdnHandledLocally(true);
+diff --git a/components/mail/mail-app.tsx b/components/mail/mail-app.tsx
+index f4f652c7..2a193c4c 100644
+--- a/components/mail/mail-app.tsx
++++ b/components/mail/mail-app.tsx
+@@ -39,6 +39,7 @@ import { useEmailStore, pendingInitialData, buildUnifiedAccountClients, invalida
+ import { useRemoveFromFolder } from "@/hooks/use-remove-from-folder";
+ import { groupSearchScopeFolders, SEARCH_SCOPE_ALL_FOLDERS } from "@/lib/search-scope-folders";
+ import { toast } from "@/stores/toast-store";
++import { SenderAddressError } from "@/lib/sender-address";
+ import { formatRejectedRecipients, type JMAPClient } from "@/lib/jmap/client";
+ import { reconcilePushBindings, releasePushBindings, type PushBinding } from "@/lib/push-bindings";
+ import { runBatchEmailAction } from "@/lib/email-action-toast";
+@@ -3803,16 +3804,22 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+       cc: selectedEmail.cc,
+       bcc: selectedEmail.bcc,
+     });
+-    const sendingIdentity =
+-      (sendingIdentityId ? identities.find((i) => i.id === sendingIdentityId) : undefined) || primaryIdentity;
+-    const headerFromEmail = sendingIdentity?.email;
+-    const headerFromName = sendingIdentity?.name || undefined;
++    const sendingIdentity = sendingIdentityId ? identities.find((i) => i.id === sendingIdentityId) : undefined;
++    // With no From row there is nowhere to show a sender picked for the user:
++    // mail that reached none of the identities is answered from the composer.
++    if (!sendingIdentity) {
++      const refusal = new SenderAddressError();
++      toast.error(t('email_composer.send_failed'), { message: refusal.message });
++      throw refusal;
++    }
++    const headerFromEmail = sendingIdentity.email;
++    const headerFromName = sendingIdentity.name || undefined;
+ 
+     // Alias and shared identities frequently carry no signature of their own,
+     // so fall back to the primary's - the composer does the same
+     // (`signatureIdentity`). Without it, quick-replying from a shared mailbox
+     // silently drops the user's signature.
+-    const signatureIdentity = (sendingIdentity?.htmlSignature || sendingIdentity?.textSignature)
++    const signatureIdentity = (sendingIdentity.htmlSignature || sendingIdentity.textSignature)
+       ? sendingIdentity
+       : primaryIdentity;
+     const separator = useSettingsStore.getState().signatureSeparatorEnabled;
+@@ -3857,7 +3864,7 @@ export function MailApp({ linkSegments: routeSegments }: MailAppProps = {}) {
+       finalBody,
+       undefined,
+       undefined,
+-      sendingIdentity?.id,
++      sendingIdentity.id,
+       headerFromEmail,
+       undefined,
+       headerFromName,
+diff --git a/lib/__tests__/jmap-send-sender-address.test.ts b/lib/__tests__/jmap-send-sender-address.test.ts
+new file mode 100644
+index 00000000..5071a87b
+--- /dev/null
++++ b/lib/__tests__/jmap-send-sender-address.test.ts
+@@ -0,0 +1,142 @@
++import { describe, it, expect, vi, afterEach } from 'vitest';
++import { JMAPClient } from '../jmap/client';
++import { buildMdnMessage } from '../mdn';
++import { SenderAddressError } from '../sender-address';
++
++// A send with no From fell back to the login name - '' for an OAuth login,
++// "ironmoon" for a short one - and went out with a From no client could
++// parse and a Message-ID `@localhost`; with one it fell back to the
++// account's first identity. Such a send is refused, never given an invented
++// address or a sender the caller did not name.
++
++type MethodCall = [string, Record<string, unknown>, string];
++type Identity = { id: string; email: string; mayDelete: boolean };
++
++function createClient(username: string): JMAPClient {
++  const client = new JMAPClient('https://jmap.example.com', username, 'pass');
++  Object.assign(client, { apiUrl: 'https://jmap.example.com/api', accountId: 'account-1', username });
++  return client;
++}
++
++/** Answers sendEmail's requests; returns every method the client called. */
++function mockServer(identities: Identity[]) {
++  const calls: MethodCall[] = [];
++  vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
++    const { methodCalls } = JSON.parse((init as { body: string }).body) as { methodCalls: MethodCall[] };
++    calls.push(...methodCalls);
++    const methodResponses = methodCalls.map(([name, args, callId]) => {
++      if (name === 'Mailbox/get') {
++        return [name, { list: [{ id: 'mb-drafts', name: 'Drafts', role: 'drafts' }, { id: 'mb-sent', name: 'Sent', role: 'sent' }] }, callId];
++      }
++      if (name === 'Identity/get') return [name, { list: identities }, callId];
++      if (name === 'Email/set') {
++        const created = Object.keys((args.create ?? {}) as object);
++        return [name, { created: Object.fromEntries(created.map((id) => [id, { id: 'email-9' }])) }, callId];
++      }
++      if (name === 'EmailSubmission/set') return [name, { created: { '1': { id: 'sub-1' } } }, callId];
++      return ['error', { type: 'unknownMethod' }, callId];
++    });
++    const payload = { methodResponses };
++    return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(payload)), json: () => Promise.resolve(payload) } as Response;
++  });
++  return calls;
++}
++
++const send = (client: JMAPClient, fromEmail?: string, identityId?: string) =>
++  client.sendEmail(['bob@example.net'], 'Hi', 'Body', undefined, undefined, identityId, fromEmail);
++
++const createdEmail = (calls: MethodCall[]) => {
++  const set = calls.find(([name]) => name === 'Email/set');
++  return set ? Object.values(set[1].create as Record<string, Record<string, unknown>>)[0] : undefined;
++};
++const submittedIdentityId = (calls: MethodCall[]) => {
++  const set = calls.find(([name]) => name === 'EmailSubmission/set');
++  return set ? Object.values(set[1].create as Record<string, { identityId: string }>)[0].identityId : undefined;
++};
++const wroteAnything = (calls: MethodCall[]) =>
++  calls.some(([name]) => name === 'Email/set' || name === 'EmailSubmission/set');
++
++afterEach(() => vi.restoreAllMocks());
++
++describe('sendEmail refuses a sender that is not an address', () => {
++  it.each(['', 'ironmoon'])('with no From and an account without identities (login %j)', async (login) => {
++    const calls = mockServer([]);
++    await expect(send(createClient(login))).rejects.toBeInstanceOf(SenderAddressError);
++    expect(wroteAnything(calls)).toBe(false);
++  });
++
++  it('with a From that has no @', async () => {
++    const calls = mockServer([{ id: 'i1', email: 'me@example.com', mayDelete: false }]);
++    await expect(send(createClient(''), 'me', 'i1')).rejects.toThrow('Not sent: the sender "me" is not an email address');
++    expect(wroteAnything(calls)).toBe(false);
++  });
++
++  it('with an address but no identity to send it through', async () => {
++    const calls = mockServer([]);
++    await expect(send(createClient(''), 'me@example.com')).rejects.toBeInstanceOf(SenderAddressError);
++    expect(wroteAnything(calls)).toBe(false);
++  });
++});
++
++describe('sendEmail sends only from the sender its caller names', () => {
++  const identities = [
++    { id: 'i1', email: 'first@example.com', mayDelete: false },
++    { id: 'i2', email: 'me@example.org', mayDelete: false },
++  ];
++
++  it('refuses with neither an identity nor a From, rather than send from the first identity', async () => {
++    const calls = mockServer(identities);
++    await expect(send(createClient('me@example.org'))).rejects.toBeInstanceOf(SenderAddressError);
++    expect(wroteAnything(calls)).toBe(false);
++  });
++
++  it('refuses a From that is none of the identities, with no identity named', async () => {
++    const calls = mockServer(identities);
++    await expect(send(createClient(''), 'other@example.org')).rejects.toBeInstanceOf(SenderAddressError);
++    expect(wroteAnything(calls)).toBe(false);
++  });
++
++  it('sends from the identity it is given, with a Message-ID at its domain', async () => {
++    const calls = mockServer(identities);
++    await send(createClient(''), undefined, 'i2');
++    const email = createdEmail(calls)!;
++    expect(email.from).toEqual([{ email: 'me@example.org' }]);
++    expect((email.messageId as string[])[0]).toMatch(/@example\.org$/);
++    expect(submittedIdentityId(calls)).toBe('i2');
++  });
++
++  it('sends as the From it is given, through the identity with that address', async () => {
++    const calls = mockServer(identities);
++    await send(createClient(''), 'me@example.org');
++    expect(createdEmail(calls)!.from).toEqual([{ email: 'me@example.org' }]);
++    expect(submittedIdentityId(calls)).toBe('i2');
++  });
++});
++
++describe('an invitation reply', () => {
++  const reply = (client: JMAPClient, attendeeEmail: string) => client.sendImipReply({
++    organizerEmail: 'organizer@example.net', attendeeEmail, uid: 'uid-1@example.net',
++    summary: 'Meet', dtStart: '2026-10-20T10:00:00', status: 'ACCEPTED',
++  });
++  const identities = [
++    { id: 'i1', email: 'first@example.com', mayDelete: false },
++    { id: 'i2', email: 'me@example.org', mayDelete: false },
++  ];
++
++  it('goes out through the identity of the invited address', async () => {
++    const calls = mockServer(identities);
++    await reply(createClient(''), 'me@example.org');
++    expect(submittedIdentityId(calls)).toBe('i2');
++  });
++
++  it('is refused when no identity has the invited address, rather than sent from the first one', async () => {
++    const calls = mockServer(identities);
++    await expect(reply(createClient(''), 'other@example.org')).rejects.toBeInstanceOf(SenderAddressError);
++    expect(wroteAnything(calls)).toBe(false);
++  });
++});
++
++it("a read receipt takes its Message-ID domain from the sender's address", () => {
++  expect(buildMdnMessage({ to: 'alice@example.com', fromEmail: 'me@example.com' }))
++    .toMatch(/^Message-ID: <mdn\.[^@\s]+@example\.com>\r$/m);
++});
+diff --git a/lib/__tests__/jmap-send-threading.test.ts b/lib/__tests__/jmap-send-threading.test.ts
+index df6dc9bf..57b8b1f4 100644
+--- a/lib/__tests__/jmap-send-threading.test.ts
++++ b/lib/__tests__/jmap-send-threading.test.ts
+@@ -247,6 +247,9 @@ describe('JMAPClient.sendEmail threading headers', () => {
+     const requestSpy = vi.spyOn(client as unknown as { request: JMAPClient['request'] }, 'request')
+       .mockImplementation(async (methodCalls) => {
+         const args = methodCalls[0][1] as { create?: unknown; update?: Record<string, unknown> };
++        if (methodCalls[0][0] === 'Identity/get') {
++          return { methodResponses: [['Identity/get', { list: [{ id: 'identity-1', email: 'user@example.com' }] }, '0']] };
++        }
+         if (args.create) {
+           return { methodResponses: [['EmailSubmission/set', { created: { replacement: { id: 'sub-new' } } }, '0']] };
+         }
+diff --git a/lib/__tests__/mdn-header-injection.test.ts b/lib/__tests__/mdn-header-injection.test.ts
+index 0da11a53..732044bb 100644
+--- a/lib/__tests__/mdn-header-injection.test.ts
++++ b/lib/__tests__/mdn-header-injection.test.ts
+@@ -132,7 +132,7 @@ describe('buildMdnMessage — header injection (GHSA-w38p-hpqv-g89c)', () => {
+     const nasty = 'x\r\ny\rz\nw';
+     const msg = buildMdnMessage({
+       to: nasty,
+-      fromEmail: nasty,
++      fromEmail: `${nasty}@${nasty}`,
+       fromName: nasty,
+       originalMessageId: nasty,
+       originalSubject: nasty,
+diff --git a/lib/__tests__/mdn.test.ts b/lib/__tests__/mdn.test.ts
+index 527d2fe1..556b71f9 100644
+--- a/lib/__tests__/mdn.test.ts
++++ b/lib/__tests__/mdn.test.ts
+@@ -1,5 +1,6 @@
+ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+ import { buildMdnMessage } from '@/lib/mdn';
++import { SenderAddressError } from '@/lib/sender-address';
+ 
+ // buildMdnMessage pulls in Date / Date.now / Math.random for the Date header,
+ // Message-ID and MIME boundary. Pin all three so the output is reproducible.
+@@ -77,10 +78,8 @@ describe('buildMdnMessage — header encoding & normalisation', () => {
+     expect(msg).toContain('Final-Recipient: rfc822;alias@example.com');
+   });
+ 
+-  it('falls back to the localhost domain when fromEmail has no @', () => {
+-    const msg = buildMdnMessage({ to: base.to, fromEmail: 'invalid' });
+-    expect(msg).toMatch(/^Message-ID: <mdn\.[0-9a-z]+\.i@localhost>$/m);
+-    expect(msg).toContain('Reporting-UA: localhost; Bulwark Webmail');
++  it('refuses a fromEmail with no @ rather than a Message-ID at localhost', () => {
++    expect(() => buildMdnMessage({ to: base.to, fromEmail: 'invalid' })).toThrow(SenderAddressError);
+   });
+ });
+ 
+diff --git a/lib/jmap/client.ts b/lib/jmap/client.ts
+index 5032231b..4eac7ef7 100644
+--- a/lib/jmap/client.ts
++++ b/lib/jmap/client.ts
+@@ -25,6 +25,7 @@ import { buildEmailSort, compareEmails, hasKeywordLevels, type KeywordSortPolari
+ import { toInertBlob } from "@/lib/file-preview";
+ import { toStorageQuota, type JMAPQuota, type StorageQuota } from "@/lib/quota";
+ import { messagePriorityHeaders, type MessagePriority } from "@/lib/message-priority";
++import { requireSenderAddress, SenderAddressError } from "@/lib/sender-address";
+ 
+ // Cap for the follow-up Email/get issued when a displayed body part comes
+ // back truncated at the normal 256000-byte limit (see refetchTruncatedBodyValues
+@@ -917,8 +918,8 @@ function stripMessageIdBrackets(id: string): string {
+ // headers — an anti-spam signal and an information disclosure. Use the sender's
+ // domain instead, matching what receivers expect a Message-ID to look like.
+ function generateMessageId(fromEmail: string): string {
+-  const at = fromEmail.lastIndexOf('@');
+-  const domain = at > 0 ? fromEmail.slice(at + 1) : 'localhost';
++  const address = requireSenderAddress(fromEmail);
++  const domain = address.slice(address.lastIndexOf('@') + 1);
+   // FTM fix (2026-08-22): crypto.randomUUID() only exists in SECURE contexts (https/localhost).
+   // On a plain-http LAN origin it is undefined, so this line threw AFTER the draft was saved and
+   // BEFORE EmailSubmission/set — send silently failed with drafts piling up. generateUUID() from
+@@ -4123,46 +4124,29 @@ export class JMAPClient implements IJMAPClient {
+     }
+ 
+     const requestedMailFrom = envelopeMailFrom ? parseRecipientString(envelopeMailFrom).email : undefined;
+-    let finalIdentityId = identityId;
+-    let identityReplyTo: EmailAddress[] | undefined;
+-    let identityEmail: string | undefined;
+-    {
+-      const identityResponse = await this.request([
+-        ["Identity/get", { accountId: targetAccountId }, "0"]
+-      ]);
+-
+-      if (!finalIdentityId) {
+-        finalIdentityId = targetAccountId;
+-      }
+-      if (identityResponse.methodResponses?.[0]?.[0] === "Identity/get") {
+-        const identities = (identityResponse.methodResponses[0][1].list || []) as Identity[];
+-        if (identities.length > 0) {
+-          // A requested MAIL FROM that is itself one of the account's
+-          // identities is sent through that identity, so the server accepts
+-          // it as the envelope sender (#1009).
+-          let matchingIdentity = requestedMailFrom
+-            ? identities.find((id) => id.email.toLowerCase() === requestedMailFrom.toLowerCase())
+-            : undefined;
+-          if (!matchingIdentity && identityId) {
+-            matchingIdentity = identities.find((id) => id.id === identityId);
+-          }
+-          if (!matchingIdentity) {
+-            const target = fromEmail || this.username;
+-            matchingIdentity = identities.find((id) => id.email === target)
+-              || (!target.includes('@') ? identities.find((id) => id.email.split('@')[0] === target) : undefined);
+-          }
+-          finalIdentityId = matchingIdentity?.id || identities[0].id;
+-          identityReplyTo = matchingIdentity?.replyTo || identities[0].replyTo;
+-          identityEmail = (matchingIdentity || identities[0]).email;
+-        }
+-      }
+-    }
++    const identityResponse = await this.request([
++      ["Identity/get", { accountId: targetAccountId }, "0"]
++    ]);
++    const identities = identityResponse.methodResponses?.[0]?.[0] === "Identity/get"
++      ? (identityResponse.methodResponses[0][1].list || []) as Identity[]
++      : [];
++    // The caller names the sender, as the identity it picked or the address it
++    // sends as; none is chosen for it. A requested MAIL FROM that is itself one
++    // of the account's identities is sent through that identity, so the server
++    // accepts it as the envelope sender (#1009).
++    const sendingIdentity = (requestedMailFrom
++      ? identities.find((id) => id.email.toLowerCase() === requestedMailFrom.toLowerCase())
++      : undefined)
++      ?? (identityId ? identities.find((id) => id.id === identityId) : undefined)
++      ?? (fromEmail ? identities.find((id) => id.email === fromEmail) : undefined);
++    if (!sendingIdentity) throw new SenderAddressError();
++    const { id: finalIdentityId, replyTo: identityReplyTo, email: identityEmail } = sendingIdentity;
+     // The MAIL FROM the server derives from the identity when the envelope is
+     // omitted. A wildcard identity (RFC 8621 §6, "*@example.com") names no
+     // concrete address, so the header From stands in for it.
+-    const identityMailFrom = identityEmail && !identityEmail.includes('*')
+-      ? identityEmail
+-      : parseRecipientString(fromEmail || this.username).email;
++    const wildcardIdentity = identityEmail.includes('*');
++    const sender = requireSenderAddress(fromEmail || (wildcardIdentity ? undefined : identityEmail));
++    const identityMailFrom = wildcardIdentity ? parseRecipientString(sender).email : identityEmail;
+ 
+     // Per RFC 8621 §4.1.2.3 inReplyTo/references are arrays of bare msg-ids
+     // (no angle brackets). Stalwart may return them either way, so normalize.
+@@ -4172,7 +4156,7 @@ export class JMAPClient implements IJMAPClient {
+     const sanitizedFromName = sanitizeIdentityDisplayName(fromName);
+     // Always create a new email with the final body content
+     const emailCreate: Record<string, unknown> = {
+-      from: [{ ...(sanitizedFromName ? { name: sanitizedFromName } : {}), email: fromEmail || this.username }],
++      from: [{ ...(sanitizedFromName ? { name: sanitizedFromName } : {}), email: sender }],
+       replyTo: identityReplyTo?.length ? identityReplyTo : undefined,
+       to: to.map(parseRecipientString),
+       // RFC 5322 §3.6.3: To/Cc carry an address-list (non-empty). Sending
+@@ -4181,7 +4165,7 @@ export class JMAPClient implements IJMAPClient {
+       cc: cc?.length ? cc.map(parseRecipientString) : undefined,
+       bcc: bcc?.length ? bcc.map(parseRecipientString) : undefined,
+       subject,
+-      messageId: [generateMessageId(fromEmail || this.username)],
++      messageId: [generateMessageId(sender)],
+       inReplyTo: normalizedInReplyTo?.length ? normalizedInReplyTo : undefined,
+       references: normalizedReferences?.length ? normalizedReferences : undefined,
+       keywords: { "$seen": true, "$draft": true },
+@@ -4192,7 +4176,7 @@ export class JMAPClient implements IJMAPClient {
+       // RFC 8098: ask the recipient's client to return a Message Disposition
+       // Notification to our address. JMAP lets us set the raw header on create
+       // via the "header:<Name>:asText" property form.
+-      emailCreate["header:Disposition-Notification-To:asText"] = fromEmail || this.username;
++      emailCreate["header:Disposition-Notification-To:asText"] = sender;
+     }
+ 
+     Object.assign(emailCreate, messagePriorityHeaders(options?.priority));
+@@ -4491,13 +4475,13 @@ export class JMAPClient implements IJMAPClient {
+       const identityResponse = await this.request([
+         ["Identity/get", { accountId: this.accountId }, "0"]
+       ]);
+-      if (identityResponse.methodResponses?.[0]?.[0] === "Identity/get") {
+-        const identities = (identityResponse.methodResponses[0][1].list || []) as { id: string; email: string }[];
+-        const match = identities.find((id) => id.email === opts.attendeeEmail);
+-        finalIdentityId = match?.id || identities[0]?.id || this.accountId;
+-      } else {
+-        finalIdentityId = this.accountId;
+-      }
++      const identities = identityResponse.methodResponses?.[0]?.[0] === "Identity/get"
++        ? (identityResponse.methodResponses[0][1].list || []) as { id: string; email: string }[]
++        : [];
++      // The reply goes out as the invited attendee, through that address's own
++      // identity; none other is picked for it.
++      finalIdentityId = identities.find((id) => id.email === opts.attendeeEmail)?.id;
++      if (!finalIdentityId) throw new SenderAddressError();
+     }
+ 
+     // Build iCalendar REPLY (RFC 5546 §3.2.3)
+@@ -9475,7 +9459,7 @@ export class JMAPClient implements IJMAPClient {
+     const importMailboxId = draftMailboxId || sentMailboxId;
+     const identities = await this.getIdentities();
+     const identity = identities.find(item => item.id === identityId);
+-    const envelope = createDelayedSubmissionEnvelope(identity?.email || this.username, holdForSeconds, envelopeRecipients);
++    const envelope = createDelayedSubmissionEnvelope(requireSenderAddress(identity?.email), holdForSeconds, envelopeRecipients);
+ 
+     const methodCalls: [string, Record<string, unknown>, string][] = [
+       ['Email/import', {
+@@ -9601,7 +9585,7 @@ export class JMAPClient implements IJMAPClient {
+ 
+     const identities = await this.getIdentities();
+     const identity = identities.find(item => item.id === identityId);
+-    const envelope = createDelayedSubmissionEnvelope(identity?.email || this.username, holdForSeconds, envelopeRecipients);
++    const envelope = createDelayedSubmissionEnvelope(requireSenderAddress(identity?.email), holdForSeconds, envelopeRecipients);
+ 
+     //Temporarily import the raw email into Drafts to satisfy JMAP's requirement that an EmailSubmission references an existing Email. 
+     // The Email will be destroyed after submission.
+@@ -9852,7 +9836,7 @@ export class JMAPClient implements IJMAPClient {
+     const envelopeRecipients = existingEnvelope?.rcptTo?.length
+       ? existingEnvelope.rcptTo
+       : [...(email?.to || []), ...(email?.cc || []), ...(email?.bcc || [])];
+-    const envelope = createDelayedSubmissionEnvelope(identity?.email || this.username, holdForSeconds, envelopeRecipients);
++    const envelope = createDelayedSubmissionEnvelope(requireSenderAddress(identity?.email), holdForSeconds, envelopeRecipients);
+     const response = await this.request([
+       ['EmailSubmission/set', {
+         accountId: submissionAccountId,
+diff --git a/lib/mdn.ts b/lib/mdn.ts
+index 5e05ab0d..c6ea7096 100644
+--- a/lib/mdn.ts
++++ b/lib/mdn.ts
+@@ -9,6 +9,8 @@
+ // The optional third part (original message/headers) is omitted; RFC 8098 §3.1
+ // permits a two-part report.
+ 
++import { requireSenderAddress } from "@/lib/sender-address";
++
+ export interface MdnOptions {
+   /** Address that requested the receipt (Disposition-Notification-To) — the MDN recipient. */
+   to: string;
+@@ -122,10 +124,10 @@ export function buildMdnMessage(opts: MdnOptions): string {
+   // Everything interpolated into a header line goes through headerAtom /
+   // encodeHeaderWord so that no CR/LF (or other control) can split a line.
+   const to = headerAtom(opts.to);
+-  const fromEmail = headerAtom(opts.fromEmail);
++  const fromEmail = requireSenderAddress(headerAtom(opts.fromEmail));
+   const originalRecipient = opts.originalRecipient ? headerAtom(opts.originalRecipient) : "";
+   const finalRecipient = originalRecipient || fromEmail;
+-  const domain = fromEmail.split("@")[1] || "localhost";
++  const domain = fromEmail.slice(fromEmail.lastIndexOf("@") + 1);
+   const messageId = `<mdn.${randomToken()}@${domain}>`;
+   const boundary = `----=_MDN_${randomToken()}`;
+   const origMsgId = ensureAngles(opts.originalMessageId); // normalized "<...>" or ""
+diff --git a/lib/sender-address.ts b/lib/sender-address.ts
+new file mode 100644
+index 00000000..1dd9511b
+--- /dev/null
++++ b/lib/sender-address.ts
+@@ -0,0 +1,22 @@
++/**
++ * Raised instead of sending mail whose sender is not an address, or that names
++ * no sender at all. A login name (`''` for an OAuth login) used to stand in for
++ * a missing identity: the message left with a From no client could parse and
++ * a Message-ID `@localhost`. The account's first identity is no stand-in
++ * either: Bulwark never picks a sender the user did not.
++ */
++export class SenderAddressError extends Error {
++  constructor(sender?: string) {
++    super(sender
++      ? `Not sent: the sender "${sender}" is not an email address`
++      : 'Not sent: no sending identity was chosen');
++    this.name = 'SenderAddressError';
++  }
++}
++
++/** `sender` when it is an address with a local part and a domain; throws otherwise. */
++export function requireSenderAddress(sender: string | null | undefined): string {
++  const at = sender?.lastIndexOf('@') ?? -1;
++  if (!sender || at <= 0 || at === sender.length - 1) throw new SenderAddressError(sender ?? undefined);
++  return sender;
++}

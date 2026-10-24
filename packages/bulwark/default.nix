@@ -1,0 +1,107 @@
+{
+  lib,
+  buildNpmPackage,
+  fetchFromGitHub,
+  google-fonts,
+  nodejs,
+  stdenv,
+  nix-update-script,
+  nixosTests,
+}:
+buildNpmPackage (finalAttrs: {
+  pname = "bulwark";
+  version = "1.16.0";
+
+  src = fetchFromGitHub {
+    owner = "bulwarkmail";
+    repo = "webmail";
+    tag = finalAttrs.version;
+    hash = "sha256-mjc4F6NefqT34t5a5efSlmdQzueu0snJ/YUKdmf324U=";
+    leaveDotGit = true;
+    postFetch = ''
+      cd "$out"
+      git rev-parse --short HEAD > $out/COMMIT
+      find "$out" -name .git -print0 | xargs -0 rm -rf
+    '';
+  };
+  npmDepsHash = "sha256-xidJueIZlOZx8McsM3CYK0EcPbXXUlDZYdfMiCVjYj0=";
+
+  strictDeps = true;
+
+  patches = [
+    ./01-localfont.patch
+    ./02-mobile-handoff-signed-in.patch
+    ./03-mail-frames-match-the-page.patch
+    ./04-mail-keeps-its-vector-images.patch
+    ./05-expanded-threads-stay-whole.patch
+    ./06-threads-read-inline.patch
+    ./07-read-receipts-from-the-mail-login.patch
+    ./08-identities-stay-with-their-login.patch
+    ./09-senders-are-addresses.patch
+  ];
+
+  configurePhase = ''
+    runHook preConfigure
+
+    mkdir -p app/fonts
+    cp "${
+      google-fonts.override { fonts = [ "Geist" ]; }
+    }/share/fonts/truetype/Geist[wght].ttf" app/fonts/Geist.ttf
+    cp "${
+      google-fonts.override { fonts = [ "GeistMono" ]; }
+    }/share/fonts/truetype/GeistMono[wght].ttf" app/fonts/GeistMono.ttf
+    cp "${
+      google-fonts.override { fonts = [ "HankenGrotesk" ]; }
+    }/share/fonts/truetype/HankenGrotesk[wght].ttf" app/fonts/HankenGrotesk.ttf
+
+    runHook postConfigure
+  '';
+
+  buildPhase = ''
+    runHook preBuild
+
+    NEXT_TELEMETRY_DISABLED=1 GIT_COMMIT=$(cat COMMIT) node_modules/.bin/next build --webpack
+
+    runHook postBuild
+  '';
+
+  installPhase = ''
+    runHook preInstall
+
+    mkdir $out
+    cp -R .next/standalone/. $out/
+    cp -R public $out/public
+    cp -R .next/static $out/.next/static
+
+    makeWrapper ${nodejs}/bin/node $out/bin/bulwark \
+      --add-flags "$out/server.js" \
+      --set NODE_ENV production \
+      --set NEXT_TELEMETRY_DISABLED 1
+
+    runHook postInstall
+  '';
+
+  postInstall = ''
+    # sharp picks its native binary by libc (detect-libc), so the copies built
+    # for the other libc can never be loaded.
+    rm -rf $out/node_modules/@img/*-${if stdenv.hostPlatform.isMusl then "linux" else "linuxmusl"}-*
+  '';
+
+  __structuredAttrs = true;
+
+  passthru = {
+    updateScript = nix-update-script { };
+    tests = {
+      inherit (nixosTests) bulwark;
+    };
+  };
+
+  meta = {
+    description = "Modern, self-hosted webmail client for Stalwart Mail Server";
+    homepage = "https://bulwarkmail.org";
+    changelog = "https://github.com/bulwarkmail/webmail/releases/tag/${finalAttrs.src.tag}";
+    license = lib.licenses.agpl3Only;
+    maintainers = with lib.maintainers; [ Cameo007 ];
+    mainProgram = "bulwark";
+  };
+})
