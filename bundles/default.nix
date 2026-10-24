@@ -26,6 +26,7 @@
     ./claude-code.nix
     ./stalwart
     ./bulwark.nix
+    ./scheduler.nix
 
     ./displaylink
   ];
