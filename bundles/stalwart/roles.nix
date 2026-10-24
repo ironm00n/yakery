@@ -11,7 +11,7 @@
     name = "Group (Default)";
     enabled = defaults.group;
   };
-  default-tenant ={
+  default-tenant = {
     name = "Tenant Admin (Default)";
     enabled = defaults.tenant;
   };
@@ -23,20 +23,26 @@
   member = {
     name = "Member";
     enabled = with perms; [
-      authenticate authenticateWithAlias
+      authenticate
+      authenticateWithAlias
     ];
   };
 
   calendar = {
     name = "Calendar";
     enabled = with perms; [
-      calendarAlarmsSend calendarSchedulingSend calendarSchedulingReceive 
+      calendarAlarmsSend
+      calendarSchedulingSend
+      calendarSchedulingReceive
     ];
   };
 
   no-limit = {
     name = "No Limits";
-    enabled = with perms; [ unlimitedRequests unlimitedUploads ];
+    enabled = with perms; [
+      unlimitedRequests
+      unlimitedUploads
+    ];
   };
 
   admin = {

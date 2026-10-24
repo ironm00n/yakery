@@ -19,7 +19,11 @@
       "lspServers": {
         "coq-lsp": {
           "command": "direnv",
-          "args": ["exec", ".", "coq-lsp"],
+          "args": [
+            "exec",
+            ".",
+            "coq-lsp"
+          ],
           "extensionToLanguage": {
             ".v": "coq"
           }

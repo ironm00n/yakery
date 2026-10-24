@@ -14,7 +14,7 @@ let
   # only be placed when it is actually the configured format
   lua-config = hl.configType == "lua";
 
-  lua-symlink  = path: mkIf lua-config { source = symlink path; };
+  lua-symlink = path: mkIf lua-config { source = symlink path; };
 
 in
 {
@@ -51,7 +51,7 @@ in
 
       "hypr/hyprland.lua" = lua-symlink ./hyprland.lua;
       "hypr/utils.lua" = lua-symlink ./utils.lua;
-      "hypr/conf" =  lua-symlink ./conf;
+      "hypr/conf" = lua-symlink ./conf;
     };
   };
 }

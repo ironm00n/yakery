@@ -25,10 +25,10 @@ in
 {
   sops.secrets = bulwark-secrets.secrets;
   disabledModules = [ "services/web-apps/bulwark.nix" ];
-  imports = [../../../modules/bulwark];
+  imports = [ ../../../modules/bulwark ];
   services.bulwark = {
     enable = true;
-    package = (pkgs.callPackage ../../../packages/bulwark {});
+    package = (pkgs.callPackage ../../../packages/bulwark { });
     jmap_server_url = "https://stalwart.test";
     oauth = {
       enabled = true;

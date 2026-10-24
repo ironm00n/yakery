@@ -6,7 +6,7 @@
   machines,
   mk-mv,
   mk-pkgs-stable,
-  pkgs-master
+  pkgs-master,
 }:
 let
   inherit (inputs) home-manager;

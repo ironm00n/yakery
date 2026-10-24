@@ -1,4 +1,8 @@
-{ runCommand, writeShellScript, comma }:
+{
+  runCommand,
+  writeShellScript,
+  comma,
+}:
 let
   picker = writeShellScript "noninteractive-picker" ''
     cands=$(cat)

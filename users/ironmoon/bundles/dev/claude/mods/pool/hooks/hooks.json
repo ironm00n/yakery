@@ -1,3 +1,5 @@
 {
-  "modules": ["./register.ts"]
+  "modules": [
+    "./register.ts"
+  ]
 }

@@ -23,23 +23,67 @@ let
   # A permission's wire name -> the buckets it belongs to.
   bucketsOf =
     name:
-    if elem name [ "authenticate" "authenticateWithAlias" "interactAi" ] then
-      [ "user" "tenant" "superuser" ]
+    if
+      elem name [
+        "authenticate"
+        "authenticateWithAlias"
+        "interactAi"
+      ]
+    then
+      [
+        "user"
+        "tenant"
+        "superuser"
+      ]
     else if
-      elem name [ "impersonate" "unlimitedRequests" "unlimitedUploads" "liveMetrics" "liveTracing" ]
+      elem name [
+        "impersonate"
+        "unlimitedRequests"
+        "unlimitedUploads"
+        "liveMetrics"
+        "liveTracing"
+      ]
     then
       [ "superuser" ]
-    else if elem name [ "fetchAnyBlob" "liveDeliveryTest" ] then
-      [ "tenant" "superuser" ]
-    else if anyPrefix [ "jmap" "imap" "pop3" "calendar" "email" "dav" "sieve" ] name then
-      [ "user" "group" ]
+    else if
+      elem name [
+        "fetchAnyBlob"
+        "liveDeliveryTest"
+      ]
+    then
+      [
+        "tenant"
+        "superuser"
+      ]
+    else if
+      anyPrefix [
+        "jmap"
+        "imap"
+        "pop3"
+        "calendar"
+        "email"
+        "dav"
+        "sieve"
+      ] name
+    then
+      [
+        "user"
+        "group"
+      ]
     else if
       anyPrefix [ "sysMaskedEmail" "sysArchivedItem" "sysAccountSettings" "sysPublicKey" ] name
       || (hasPrefix "sysSpamTrainingSample" name && !(hasInfix "Create" name))
     then
-      [ "user" "group" "superuser" ]
+      [
+        "user"
+        "group"
+        "superuser"
+      ]
     else if anyPrefix [ "sysAccountPassword" "sysApiKey" "sysAppPassword" ] name then
-      [ "user" "superuser" ]
+      [
+        "user"
+        "superuser"
+      ]
     else if
       anyPrefix [
         "sysDomain"
@@ -54,7 +98,10 @@ let
         "sysQueuedMessage"
       ] name
     then
-      [ "tenant" "superuser" ]
+      [
+        "tenant"
+        "superuser"
+      ]
     else
       [ "superuser" ];
 

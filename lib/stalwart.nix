@@ -21,7 +21,9 @@ rec {
     inherit object;
     value = listsToIndexedObjects records;
   };
-  create1 = object: id: body: create object { ${id} = body; };
+  create1 =
+    object: id: body:
+    create object { ${id} = body; };
 
   update = object: patch: {
     "@type" = "update";
@@ -44,13 +46,17 @@ rec {
     inherit object;
     value = listsToIndexedObjects value;
   };
-  upsert1 = object: id: body: upsert object { ${id} = body; };
+  upsert1 =
+    object: id: body:
+    upsert object { ${id} = body; };
   upsertOn = object: matchOn: value: {
     "@type" = "upsert";
     inherit object matchOn;
     value = listsToIndexedObjects value;
   };
-  upsertOn1 = object: id: matchOn: body: upsertOn object matchOn { ${id} = body; };
+  upsertOn1 =
+    object: id: matchOn: body:
+    upsertOn object matchOn { ${id} = body; };
 
   reconcile = object: matchOn: value: {
     "@type" = "reconcile";

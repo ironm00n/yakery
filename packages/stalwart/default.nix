@@ -20,7 +20,7 @@
   withFoundationdb ? false,
   stalwartEnterprise ? false,
   buildPackages,
-  webuiOauthClientId
+  webuiOauthClientId,
 }:
 
 rustPlatform.buildRustPackage (finalAttrs: {
@@ -102,7 +102,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     inherit rocksdb; # make used rocksdb version available (e.g., for backup scripts)
     webui = buildPackages.callPackage ./webui.nix { oauthClientId = webuiOauthClientId; };
     spam-filter = callPackage ./spam-filter.nix { };
-    cli = callPackage ./cli.nix {};
+    cli = callPackage ./cli.nix { };
 
     # Stalwart's full permission registry as { wireName = "wireName"; ... },
     # extracted from the JSON config schema it ships in its own source tree
@@ -151,4 +151,3 @@ rustPlatform.buildRustPackage (finalAttrs: {
     ];
   };
 })
-

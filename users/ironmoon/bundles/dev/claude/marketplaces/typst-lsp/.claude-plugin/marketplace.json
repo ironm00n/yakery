@@ -19,7 +19,12 @@
       "lspServers": {
         "tinymist": {
           "command": "direnv",
-          "args": ["exec", ".", "tinymist", "lsp"],
+          "args": [
+            "exec",
+            ".",
+            "tinymist",
+            "lsp"
+          ],
           "extensionToLanguage": {
             ".typ": "typst"
           }
