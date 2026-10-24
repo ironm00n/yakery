@@ -1,0 +1,19 @@
+[package]
+name = "text"
+version = "0.1.0"
+description = "Text newtypes that exist only as their parser accepts them, and mail addresses"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
