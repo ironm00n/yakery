@@ -5,7 +5,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::Read;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 macro_rules! hex_id {
@@ -67,11 +67,7 @@ hex_id!(
     16,
     "Per-attempt run identifier. Public (it rides in `--comment`), never a capability."
 );
-hex_id!(
-    Token,
-    32,
-    "Single-use callback secret. Lives in memory and 0600 files only."
-);
+hex_id!(Token, 32, "Single-use callback secret. Lives in memory and 0600 files only.");
 
 impl Token {
     /// Constant-time equality; the token is the one secret in a run.

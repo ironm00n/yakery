@@ -11,7 +11,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use nix::mount::{mount, MsFlags};
+use nix::mount::{MsFlags, mount};
 
 use crate::cluster::sandbox::ToolEnv;
 
@@ -63,11 +63,7 @@ pub fn push_phase(
     for path in &candidates {
         // Not every upper entry is a registered path (build temp dirs, a
         // failed build's leftovers): those are skipped, not pushed.
-        let out = match tools
-            .exec("nix")
-            .args(["path-info", "--sigs", path])
-            .output()
-        {
+        let out = match tools.exec("nix").args(["path-info", "--sigs", path]).output() {
             Ok(out) => out,
             Err(e) => {
                 eprintln!("push: skipping {path}: {e:#}");
@@ -83,11 +79,7 @@ pub fn push_phase(
         return Ok(0);
     }
     eprintln!("push: verifying {} built paths", built.len());
-    if let Err(e) = tools
-        .exec("nix")
-        .args(["store", "verify", "--no-trust"])
-        .args(&built)
-        .output()
+    if let Err(e) = tools.exec("nix").args(["store", "verify", "--no-trust"]).args(&built).output()
     {
         return Err(PushError::Tamper(format!("nix store verify failed: {e:#}")));
     }
@@ -116,12 +108,7 @@ pub fn push_phase(
         .context("nix store sign")?;
     tools
         .exec("nix")
-        .args([
-            "copy",
-            "--no-recursive",
-            "--to",
-            "file:///cache?compression=zstd",
-        ])
+        .args(["copy", "--no-recursive", "--to", "file:///cache?compression=zstd"])
         .args(&built)
         .output()
         .context("nix copy")?;
@@ -151,10 +138,7 @@ pub fn rebake_publish(
         .args(["copy", "--to", "file:///cache?compression=zstd", env_path])
         .output()
         .context("seed cache")?;
-    eprintln!(
-        "rebake: {} populated with {env_path}",
-        candidate_host.display()
-    );
+    eprintln!("rebake: {} populated with {env_path}", candidate_host.display());
     Ok(())
 }
 
@@ -164,9 +148,7 @@ fn looks_like_store_path(name: &str) -> bool {
         return false;
     };
     hash.len() == 32
-        && hash
-            .bytes()
-            .all(|b| b"0123456789abcdfghijklmnpqrsvwxyz".contains(&b))
+        && hash.bytes().all(|b| b"0123456789abcdfghijklmnpqrsvwxyz".contains(&b))
         && !rest.is_empty()
         && !name.ends_with(".drv")
         && !name.ends_with(".lock")
@@ -176,14 +158,8 @@ fn looks_like_store_path(name: &str) -> bool {
 /// Rw view of a bind we mounted read-only ourselves (not propagated, so not
 /// locked): the push phase's write access to the cache.
 fn remount_rw(target: &str) -> Result<()> {
-    mount(
-        None::<&str>,
-        target,
-        None::<&str>,
-        MsFlags::MS_BIND | MsFlags::MS_REMOUNT,
-        None::<&str>,
-    )
-    .with_context(|| format!("remount {target} rw"))
+    mount(None::<&str>, target, None::<&str>, MsFlags::MS_BIND | MsFlags::MS_REMOUNT, None::<&str>)
+        .with_context(|| format!("remount {target} rw"))
 }
 
 /// A directory held by fd survives the old root's detach; the magic link is
@@ -198,15 +174,9 @@ mod tests {
 
     #[test]
     fn store_path_names() {
-        assert!(looks_like_store_path(
-            "pg32lah9bfxyh8492bvdwwdpz2ibrvia-slurm-ci-0.1.0"
-        ));
-        assert!(!looks_like_store_path(
-            "pg32lah9bfxyh8492bvdwwdpz2ibrvia-foo.drv"
-        ));
-        assert!(!looks_like_store_path(
-            "pg32lah9bfxyh8492bvdwwdpz2ibrvia-foo.lock"
-        ));
+        assert!(looks_like_store_path("pg32lah9bfxyh8492bvdwwdpz2ibrvia-slurm-ci-0.1.0"));
+        assert!(!looks_like_store_path("pg32lah9bfxyh8492bvdwwdpz2ibrvia-foo.drv"));
+        assert!(!looks_like_store_path("pg32lah9bfxyh8492bvdwwdpz2ibrvia-foo.lock"));
         assert!(!looks_like_store_path(".links"));
         assert!(!looks_like_store_path("tmp-12345"));
         assert!(!looks_like_store_path("PG32LAH9BFXYH8492BVDWWDPZ2IBRVIA-x"));

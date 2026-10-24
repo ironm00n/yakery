@@ -38,10 +38,7 @@ pub struct RunRecord {
 }
 
 pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 pub struct StateDir {
@@ -102,14 +99,10 @@ impl StateDir {
 
     pub fn append_jsonl(&self, rec: &JsonlRecord) -> Result<()> {
         let path = self.root.join("efficiency.jsonl");
-        let mut f = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let mut f = fs::OpenOptions::new().create(true).append(true).open(&path)?;
         let mut line = serde_json::to_vec(rec)?;
         line.push(b'\n');
-        f.write_all(&line)
-            .with_context(|| format!("append {}", path.display()))
+        f.write_all(&line).with_context(|| format!("append {}", path.display()))
     }
 }
 
@@ -179,10 +172,7 @@ mod tests {
         let mode = fs::metadata(dir.path().join("runs")).unwrap();
         assert!(mode.is_dir());
         for e in fs::read_dir(dir.path().join("runs")).unwrap() {
-            assert_eq!(
-                e.unwrap().metadata().unwrap().permissions().mode() & 0o777,
-                0o600
-            );
+            assert_eq!(e.unwrap().metadata().unwrap().permissions().mode() & 0o777, 0o600);
         }
     }
 }

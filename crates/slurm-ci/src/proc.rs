@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 pub struct Exec {
     cmd: Command,
@@ -16,11 +16,7 @@ pub struct Exec {
 impl Exec {
     pub fn new(program: impl AsRef<OsStr>) -> Self {
         let program_str = program.as_ref().to_string_lossy().into_owned();
-        Exec {
-            cmd: Command::new(program),
-            program: program_str,
-            stdin: None,
-        }
+        Exec { cmd: Command::new(program), program: program_str, stdin: None }
     }
 
     pub fn arg(mut self, a: impl AsRef<OsStr>) -> Self {
@@ -53,11 +49,7 @@ impl Exec {
         let stdin = self.stdin.take();
         let mut child = self
             .cmd
-            .stdin(if stdin.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
+            .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -66,9 +58,7 @@ impl Exec {
             let mut pipe = child.stdin.take().expect("piped stdin");
             std::thread::spawn(move || pipe.write_all(&data))
         });
-        let out = child
-            .wait_with_output()
-            .with_context(|| format!("wait for {}", self.program))?;
+        let out = child.wait_with_output().with_context(|| format!("wait for {}", self.program))?;
         if let Some(t) = feeder {
             let _ = t.join();
         }

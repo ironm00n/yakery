@@ -2,7 +2,7 @@
 //! sends one `TASK`, relays what comes back to the runner's log, and sends
 //! `CANCEL` on SIGTERM.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::frame::Frame;
@@ -111,10 +111,7 @@ mod tests {
         for m in [
             ToRun::Info("hi".into()),
             ToRun::Data(vec![0, 1, 2]),
-            ToRun::Exit {
-                status: 1,
-                verdict: "red: x".into(),
-            },
+            ToRun::Exit { status: 1, verdict: "red: x".into() },
         ] {
             assert_eq!(ToRun::from_frame(m.to_frame()).unwrap(), m);
         }

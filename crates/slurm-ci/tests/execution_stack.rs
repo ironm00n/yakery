@@ -8,7 +8,7 @@
 //! static busybox. Skips itself otherwise.
 
 use std::fs;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -72,9 +72,7 @@ impl Fixture {
         fs::create_dir_all(bootstrap.join(format!("nix/store/{HASH}-ci-env/etc/ssl/certs")))
             .unwrap();
         fs::write(
-            bootstrap.join(format!(
-                "nix/store/{HASH}-ci-env/etc/ssl/certs/ca-bundle.crt"
-            )),
+            bootstrap.join(format!("nix/store/{HASH}-ci-env/etc/ssl/certs/ca-bundle.crt")),
             "",
         )
         .unwrap();
@@ -82,9 +80,9 @@ impl Fixture {
         fs::write(bootstrap.join("nix/var/nix/db/db.sqlite"), "").unwrap();
         symlink(env_dir(), bootstrap.join("env")).unwrap();
         fs::copy(busybox, bin.join("busybox")).unwrap();
-        for tool in [
-            "sh", "cat", "ls", "id", "mkdir", "echo", "touch", "chmod", "rm", "cp", "test", "wc",
-        ] {
+        for tool in
+            ["sh", "cat", "ls", "id", "mkdir", "echo", "touch", "chmod", "rm", "cp", "test", "wc"]
+        {
             symlink("busybox", bin.join(tool)).unwrap();
         }
         let sh = format!("#!{}/bin/sh\n", env_dir());
@@ -139,14 +137,7 @@ exit 0
         fs::create_dir_all(&cache).unwrap();
         let key = root.join("key");
         fs::write(&key, "fake-signing-key").unwrap();
-        Fixture {
-            _dir: dir,
-            root,
-            bootstrap,
-            ws,
-            cache,
-            key,
-        }
+        Fixture { _dir: dir, root, bootstrap, ws, cache, key }
     }
 
     fn fetch(&self) -> Output {
@@ -225,11 +216,7 @@ impl Drop for Fixture {
 }
 
 fn text(o: &Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&o.stdout),
-        String::from_utf8_lossy(&o.stderr)
-    )
+    format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
 }
 
 #[test]
@@ -246,18 +233,12 @@ fn fetch_then_build_then_push() {
     let out = f.fetch();
     assert!(out.status.success(), "{}", text(&out));
     assert!(f.ws.join("src/flake.nix").exists());
-    assert!(
-        !f.ws.join("src/.git").exists(),
-        ".git must be removed after the rev check"
-    );
+    assert!(!f.ws.join("src/.git").exists(), ".git must be removed after the rev check");
 
     let out = f.build("disk");
     let log = text(&out);
     assert_eq!(out.status.code(), Some(0), "{log}");
-    assert!(
-        log.contains("uid=1000 TMPDIR=/xtmp HOME=/tmp/home"),
-        "{log}"
-    );
+    assert!(log.contains("uid=1000 TMPDIR=/xtmp HOME=/tmp/home"), "{log}");
     assert!(log.contains("nixconf=12"), "{log}");
     assert!(log.contains("src=flake.nix"), "{log}");
     assert!(
@@ -267,23 +248,11 @@ fn fetch_then_build_then_push() {
     assert!(!log.contains("KEY VISIBLE"), "{log}");
     assert!(!log.contains("CACHE WRITABLE"), "{log}");
     assert!(log.contains("push: 1 paths pushed"), "{log}");
-    assert!(f
-        .ws
-        .join("upper/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-built/f")
-        .exists());
+    assert!(f.ws.join("upper/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-built/f").exists());
     assert!(f.ws.join("xtmp/big").exists());
-    assert!(
-        !f.ws.join("upper/tmp").exists(),
-        "job tmpfs must not land in the store upper"
-    );
-    assert_eq!(
-        fs::read_to_string(f.cache.join("marker")).unwrap().trim(),
-        "copied"
-    );
-    assert_eq!(
-        fs::read_to_string(f.cache.join("signed-with")).unwrap(),
-        "fake-signing-key"
-    );
+    assert!(!f.ws.join("upper/tmp").exists(), "job tmpfs must not land in the store upper");
+    assert_eq!(fs::read_to_string(f.cache.join("marker")).unwrap().trim(), "copied");
+    assert_eq!(fs::read_to_string(f.cache.join("signed-with")).unwrap(), "fake-signing-key");
     let stats: serde_json::Value =
         serde_json::from_slice(&fs::read(f.ws.join("stats.json")).unwrap()).unwrap();
     assert_eq!(stats["pushed_paths"], 1);
@@ -292,11 +261,7 @@ fn fetch_then_build_then_push() {
     f.marker("TAMPER");
     let out = f.build("ram");
     let log = text(&out);
-    assert_eq!(
-        out.status.code(),
-        Some(slurm_ci::verdict::exit::TAMPER),
-        "{log}"
-    );
+    assert_eq!(out.status.code(), Some(slurm_ci::verdict::exit::TAMPER), "{log}");
     assert!(log.contains("TAMPER: lower store paths copied up"), "{log}");
     assert!(!f.cache.join("marker").exists(), "tamper must not push");
     fs::remove_file(f.ws.join("src/TAMPER")).unwrap();
@@ -304,24 +269,14 @@ fn fetch_then_build_then_push() {
     f.reset_store();
     f.marker("FAIL_VERIFY");
     let out = f.build("ram");
-    assert_eq!(
-        out.status.code(),
-        Some(slurm_ci::verdict::exit::TAMPER),
-        "{}",
-        text(&out)
-    );
+    assert_eq!(out.status.code(), Some(slurm_ci::verdict::exit::TAMPER), "{}", text(&out));
     assert!(!f.cache.join("marker").exists());
     fs::remove_file(f.ws.join("src/FAIL_VERIFY")).unwrap();
 
     f.reset_store();
     f.marker("FAIL_COPY");
     let out = f.build("ram");
-    assert_eq!(
-        out.status.code(),
-        Some(slurm_ci::verdict::exit::PUSH_FAILED),
-        "{}",
-        text(&out)
-    );
+    assert_eq!(out.status.code(), Some(slurm_ci::verdict::exit::PUSH_FAILED), "{}", text(&out));
     fs::remove_file(f.ws.join("src/FAIL_COPY")).unwrap();
 
     f.reset_store();
@@ -329,10 +284,7 @@ fn fetch_then_build_then_push() {
     let out = f.build("ram");
     let log = text(&out);
     assert_eq!(out.status.code(), Some(1), "{log}");
-    assert!(
-        log.contains("push: 1 paths pushed"),
-        "a red build still caches what it built: {log}"
-    );
+    assert!(log.contains("push: 1 paths pushed"), "a red build still caches what it built: {log}");
 }
 
 #[test]
@@ -354,9 +306,5 @@ fn fetch_refuses_wrong_rev_and_submodules() {
     f.marker("WANT_SUBMODULES");
     let out = f.fetch();
     assert!(!out.status.success());
-    assert!(
-        text(&out).contains("submodules are not supported"),
-        "{}",
-        text(&out)
-    );
+    assert!(text(&out).contains("submodules are not supported"), "{}", text(&out));
 }

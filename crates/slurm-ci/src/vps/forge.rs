@@ -3,8 +3,8 @@
 
 use anyhow::{Context, Result};
 
-use crate::proc::{env_or, env_var, Exec};
-use crate::spec::{JobSpec, CONFIG_PATH};
+use crate::proc::{Exec, env_or, env_var};
+use crate::spec::{CONFIG_PATH, JobSpec};
 
 pub struct Forge {
     api: String,
@@ -22,10 +22,7 @@ impl Forge {
     }
 
     pub fn job_spec(&self, repo: &str, commit: &str, token: &str) -> Result<JobSpec> {
-        let url = format!(
-            "{}/api/v1/repos/{repo}/raw/{CONFIG_PATH}?ref={commit}",
-            self.api
-        );
+        let url = format!("{}/api/v1/repos/{repo}/raw/{CONFIG_PATH}?ref={commit}", self.api);
         let curlrc = format!("header = \"Authorization: token {token}\"\nurl = \"{url}\"\n");
         let body = Exec::new(&self.curl)
             .args(["-sfS", "--max-time", "30", "-K", "-"])

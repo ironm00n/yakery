@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
-use crate::proc::{env_var, Exec};
+use crate::proc::{Exec, env_var};
 use crate::spec::caps;
 use crate::units::Minutes;
 
@@ -30,9 +30,7 @@ pub struct CiDir {
 
 impl CiDir {
     pub fn from_env() -> Result<Self> {
-        Ok(CiDir {
-            root: PathBuf::from(env_var("HOME")?).join("ci"),
-        })
+        Ok(CiDir { root: PathBuf::from(env_var("HOME")?).join("ci") })
     }
 
     pub fn root(&self) -> &Path {
@@ -67,9 +65,7 @@ impl CiDir {
 pub fn max_walltime() -> Minutes {
     let ours = caps::longest_walltime();
     let partitions = caps::partition_names().join(",");
-    let sinfo = Exec::new("sinfo")
-        .args(["-h", "-p", &partitions, "-o", "%l"])
-        .output();
+    let sinfo = Exec::new("sinfo").args(["-h", "-p", &partitions, "-o", "%l"]).output();
     match sinfo {
         Ok(out) => out
             .lines()
@@ -92,20 +88,13 @@ pub fn reap_grace() -> Duration {
 pub fn resolve_bootstrap() -> Result<(PathBuf, String)> {
     let target =
         std::fs::read_link(BOOTSTRAP_LINK).with_context(|| format!("readlink {BOOTSTRAP_LINK}"))?;
-    let dir = if target.is_absolute() {
-        target
-    } else {
-        Path::new(PROJECT_DIR).join(target)
-    };
+    let dir = if target.is_absolute() { target } else { Path::new(PROJECT_DIR).join(target) };
     let version = dir
         .file_name()
         .and_then(|n| n.to_str())
         .and_then(|n| n.strip_prefix(BOOTSTRAP_PREFIX))
         .with_context(|| {
-            format!(
-                "{BOOTSTRAP_LINK} points at {}, not a {BOOTSTRAP_PREFIX}N dir",
-                dir.display()
-            )
+            format!("{BOOTSTRAP_LINK} points at {}, not a {BOOTSTRAP_PREFIX}N dir", dir.display())
         })?
         .to_owned();
     Ok((dir, version))

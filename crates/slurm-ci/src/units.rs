@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
@@ -19,10 +19,7 @@ impl MiB {
         let (num, unit) = s.split_at(digits_end);
         let n: u64 = num.parse().with_context(|| format!("bad mem {s:?}"))?;
         let unit = unit.trim().to_ascii_lowercase();
-        let unit = unit
-            .strip_suffix("ib")
-            .or(unit.strip_suffix('b'))
-            .unwrap_or(&unit);
+        let unit = unit.strip_suffix("ib").or(unit.strip_suffix('b')).unwrap_or(&unit);
         let mib = match unit {
             "" | "m" => n,
             "k" => n / 1024,
@@ -66,10 +63,8 @@ impl Minutes {
             Some((d, r)) => (d.parse::<u64>().with_context(err)?, r),
             None => (0, s),
         };
-        let parts: Vec<u64> = rest
-            .split(':')
-            .map(|p| p.parse::<u64>().with_context(err))
-            .collect::<Result<_>>()?;
+        let parts: Vec<u64> =
+            rest.split(':').map(|p| p.parse::<u64>().with_context(err)).collect::<Result<_>>()?;
         let minutes = match (days > 0, parts.as_slice()) {
             (false, [m]) => *m,
             (true, [h]) => h * 60,

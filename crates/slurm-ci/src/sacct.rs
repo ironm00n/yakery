@@ -6,7 +6,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 pub const FIELDS: &str = "JobID,State,ExitCode,NodeList,Partition,Submit,Start,End,Elapsed,Timelimit,AllocCPUS,ReqMem,TotalCPU,MaxRSS";
@@ -20,14 +20,8 @@ pub struct ExitCode {
 impl FromStr for ExitCode {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self> {
-        let (c, sig) = s
-            .trim()
-            .split_once(':')
-            .with_context(|| format!("bad ExitCode {s:?}"))?;
-        Ok(ExitCode {
-            code: c.parse()?,
-            signal: sig.parse()?,
-        })
+        let (c, sig) = s.trim().split_once(':').with_context(|| format!("bad ExitCode {s:?}"))?;
+        Ok(ExitCode { code: c.parse()?, signal: sig.parse()? })
     }
 }
 
@@ -141,13 +135,7 @@ mod tests {
         let r = SacctRecord::parse("9442675", TIMEOUT).unwrap().unwrap();
         assert_eq!(r.state, "TIMEOUT");
         assert_eq!(r.alloc_exit, Some(ExitCode { code: 0, signal: 0 }));
-        assert_eq!(
-            r.batch_exit,
-            Some(ExitCode {
-                code: 0,
-                signal: 15
-            })
-        );
+        assert_eq!(r.batch_exit, Some(ExitCode { code: 0, signal: 15 }));
         assert_eq!(r.max_rss.as_deref(), Some("183917204K"));
         assert_eq!(r.total_cpu.as_deref(), Some("4-06:52:31"));
         assert_eq!(r.req_mem.as_deref(), Some("126000M"));
@@ -173,13 +161,7 @@ mod tests {
         let out = "5|CANCELLED by 1000|0:0|d1|short|a|b|c|d|e|1|1M||\n5.batch|CANCELLED|0:15|d1||a|b|c|d||1||x|y\n";
         let r = SacctRecord::parse("5", out).unwrap().unwrap();
         assert_eq!(r.state, "CANCELLED");
-        assert_eq!(
-            r.wrapper_exit(),
-            Some(ExitCode {
-                code: 0,
-                signal: 15
-            })
-        );
+        assert_eq!(r.wrapper_exit(), Some(ExitCode { code: 0, signal: 15 }));
     }
 
     #[test]

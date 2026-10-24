@@ -5,16 +5,16 @@
 
 use std::io::{Read, Write};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::cluster::rundir::{self, JobFile, RunDir};
 use crate::cluster::site::{self, CiDir};
 use crate::ids::Token;
-use crate::proc::{env_var, Exec};
+use crate::proc::{Exec, env_var};
 use crate::report::{BuildReport, EffRecord};
-use crate::sacct::{SacctRecord, FIELDS};
+use crate::sacct::{FIELDS, SacctRecord};
 use crate::spec::caps;
-use crate::verbs::{JobId, Submit, Verb, REFUSED};
+use crate::verbs::{JobId, REFUSED, Submit, Verb};
 
 pub const COMMENT_PREFIX: &str = "slurm-ci:";
 /// The last 4 MiB of `job.out` is what the fallback path ships to Forgejo.
@@ -59,10 +59,7 @@ fn dispatch() -> Result<()> {
         Verb::Eff { job, run } => {
             let dir = RunDir::verify(&ci.runs_root(), &run, &job)?;
             if let Some(sacct) = sacct(&job)? {
-                let rec = EffRecord {
-                    build: BuildReport::read(dir.path())?,
-                    sacct,
-                };
+                let rec = EffRecord { build: BuildReport::read(dir.path())?, sacct };
                 println!("{}", serde_json::to_string(&rec)?);
                 dir.mark_done()?;
             }
@@ -83,16 +80,10 @@ fn submit(ci: &CiDir, s: &Submit, token: &Token) -> Result<JobId> {
     rundir::prune(&ci.runs_root(), caps::QUEUE_DEADLINE + reap_grace).context("prune run dirs")?;
     let inflight = count_inflight()?;
     if inflight >= caps::MAX_INFLIGHT {
-        bail!(
-            "{inflight} slurm-ci jobs already queued or running (cap {})",
-            caps::MAX_INFLIGHT
-        );
+        bail!("{inflight} slurm-ci jobs already queued or running (cap {})", caps::MAX_INFLIGHT);
     }
 
-    let job = JobFile {
-        submit: s.clone(),
-        reap_grace_secs: reap_grace.as_secs(),
-    };
+    let job = JobFile { submit: s.clone(), reap_grace_secs: reap_grace.as_secs() };
     let dir = RunDir::create(&ci.runs_root(), &job, token)?;
     let bin = ci.bin()?;
     let mut args: Vec<String> = vec![
@@ -105,10 +96,7 @@ fn submit(ci: &CiDir, s: &Submit, token: &Token) -> Result<JobId> {
         format!("--cpus-per-task={}", s.spec.cores),
         format!("--mem={}", s.spec.mem.slurm()),
         format!("--time={}", s.spec.time.0),
-        format!(
-            "--deadline=now+{}minutes",
-            caps::QUEUE_DEADLINE.as_secs() / 60
-        ),
+        format!("--deadline=now+{}minutes", caps::QUEUE_DEADLINE.as_secs() / 60),
         format!("--output={}", dir.output_file().display()),
     ];
     if let Some(c) = &s.spec.constraint {
@@ -137,19 +125,12 @@ fn submit(ci: &CiDir, s: &Submit, token: &Token) -> Result<JobId> {
 
 /// Our queued/running jobs, by comment tag. One `squeue` per submit.
 fn count_inflight() -> Result<usize> {
-    let out = Exec::new("squeue")
-        .args(["--me", "-h", "-o", "%k"])
-        .output()?;
-    Ok(out
-        .lines()
-        .filter(|l| l.trim().starts_with(COMMENT_PREFIX))
-        .count())
+    let out = Exec::new("squeue").args(["--me", "-h", "-o", "%k"]).output()?;
+    Ok(out.lines().filter(|l| l.trim().starts_with(COMMENT_PREFIX)).count())
 }
 
 fn sacct(job: &JobId) -> Result<Option<SacctRecord>> {
-    let out = Exec::new("sacct")
-        .args(["-j", job.as_str(), "-n", "-P", "-o", FIELDS])
-        .output()?;
+    let out = Exec::new("sacct").args(["-j", job.as_str(), "-n", "-P", "-o", FIELDS]).output()?;
     SacctRecord::parse(job.as_str(), &out)
 }
 
@@ -181,9 +162,6 @@ fn submit_rebake(ci: &CiDir) -> Result<JobId> {
 
 fn read_stdin_token() -> Result<Token> {
     let mut s = String::new();
-    std::io::stdin()
-        .take(1024)
-        .read_to_string(&mut s)
-        .context("read token from stdin")?;
+    std::io::stdin().take(1024).read_to_string(&mut s).context("read token from stdin")?;
     Token::parse(s.trim()).context("callback token on stdin")
 }

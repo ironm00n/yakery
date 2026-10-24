@@ -8,11 +8,11 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::time::SystemTime;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
-use crate::cluster::build::{install_term_forwarding, run_relayed, self_exe, Sink, Workspace};
+use crate::cluster::build::{Sink, Workspace, install_term_forwarding, run_relayed, self_exe};
 use crate::cluster::ns;
-use crate::cluster::site::{self, CiDir, BOOTSTRAP_LINK, BOOTSTRAP_PREFIX, CACHE_DIR, PROJECT_DIR};
+use crate::cluster::site::{self, BOOTSTRAP_LINK, BOOTSTRAP_PREFIX, CACHE_DIR, CiDir, PROJECT_DIR};
 
 pub fn main() -> Result<i32> {
     let ci = CiDir::from_env()?;
@@ -24,10 +24,8 @@ pub fn main() -> Result<i32> {
         bail!("bootstrap.pin is empty");
     }
     let (lower, version) = site::resolve_bootstrap()?;
-    let next: u32 = version
-        .parse::<u32>()
-        .with_context(|| format!("bootstrap version {version:?}"))?
-        + 1;
+    let next: u32 =
+        version.parse::<u32>().with_context(|| format!("bootstrap version {version:?}"))? + 1;
     let candidate = Path::new(PROJECT_DIR).join(format!("{BOOTSTRAP_PREFIX}{next}"));
     fs::create_dir(&candidate).with_context(|| format!("create {}", candidate.display()))?;
     install_term_forwarding()?;
@@ -72,9 +70,7 @@ pub fn main() -> Result<i32> {
     let code = run_relayed(build, &sink)?;
     ws.remove();
     if code != 0 {
-        sink.line(format!(
-            "rebake build failed ({code}); discarding candidate"
-        ));
+        sink.line(format!("rebake build failed ({code}); discarding candidate"));
         let _ = ns::force_remove(&candidate);
         return Ok(code);
     }
@@ -94,11 +90,8 @@ pub fn main() -> Result<i32> {
         if v == next.to_string() {
             continue;
         }
-        let old_enough = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(|m| m < cutoff)
-            .unwrap_or(false);
+        let old_enough =
+            entry.metadata().and_then(|m| m.modified()).map(|m| m < cutoff).unwrap_or(false);
         if old_enough {
             sink.line(format!("rebake: reaping {name}"));
             if let Err(e) = ns::force_remove(&entry.path()) {

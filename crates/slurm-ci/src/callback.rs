@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::frame::Frame;
-use crate::ids::{hex, RunId, Token};
+use crate::ids::{RunId, Token, hex};
 use crate::verbs::JobId;
 
 pub const PORT: u16 = 443;
@@ -59,10 +59,9 @@ mod kind {
 impl Msg {
     pub fn to_frame(&self) -> Frame {
         match self {
-            Msg::Hello(h) => Frame::new(
-                kind::HELLO,
-                serde_json::to_vec(h).expect("hello serialises"),
-            ),
+            Msg::Hello(h) => {
+                Frame::new(kind::HELLO, serde_json::to_vec(h).expect("hello serialises"))
+            }
             Msg::Data(d) => Frame::new(kind::DATA, d.clone()),
             Msg::Heartbeat => Frame::new(kind::HEARTBEAT, Vec::new()),
             Msg::Exit(c) => Frame::new(kind::EXIT, c.to_be_bytes().to_vec()),
@@ -89,9 +88,7 @@ pub fn fingerprint(cert: &CertificateDer<'_>) -> String {
 
 fn provider() -> Arc<CryptoProvider> {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    CryptoProvider::get_default()
-        .expect("provider installed")
-        .clone()
+    CryptoProvider::get_default().expect("provider installed").clone()
 }
 
 /// The listener's self-signed identity, persisted so a restart keeps the
@@ -117,11 +114,7 @@ impl Identity {
             .context("parse key.pem")?
             .context("key.pem holds no private key")?;
         let fingerprint = fingerprint(certs.first().context("cert.pem is empty")?);
-        Ok(Identity {
-            certs,
-            key,
-            fingerprint,
-        })
+        Ok(Identity { certs, key, fingerprint })
     }
 
     pub fn server_config(&self) -> Result<Arc<ServerConfig>> {
@@ -168,9 +161,7 @@ impl ServerCertVerifier for Pinned {
         if fingerprint(end_entity) == self.fingerprint {
             Ok(ServerCertVerified::assertion())
         } else {
-            Err(rustls::Error::General(
-                "callback cert fingerprint mismatch".into(),
-            ))
+            Err(rustls::Error::General("callback cert fingerprint mismatch".into()))
         }
     }
 
@@ -203,9 +194,7 @@ impl ServerCertVerifier for Pinned {
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.provider
-            .signature_verification_algorithms
-            .supported_schemes()
+        self.provider.signature_verification_algorithms.supported_schemes()
     }
 }
 
@@ -245,10 +234,7 @@ pub fn connect(host: &str, port: u16, fingerprint: &str) -> Result<ClientStream>
     let conn = ClientConnection::new(Arc::new(cfg), name)?;
     let mut stream = StreamOwned::new(conn, tcp);
     // Complete the handshake now so a pin mismatch surfaces at the gate.
-    stream
-        .conn
-        .complete_io(&mut stream.sock)
-        .context("TLS handshake")?;
+    stream.conn.complete_io(&mut stream.sock).context("TLS handshake")?;
     Ok(stream)
 }
 
@@ -260,9 +246,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(stream: ClientStream) -> Arc<Self> {
-        Arc::new(Client {
-            stream: Mutex::new(Some(stream)),
-        })
+        Arc::new(Client { stream: Mutex::new(Some(stream)) })
     }
 
     pub fn send(&self, msg: &Msg) -> bool {
@@ -379,10 +363,7 @@ mod tests {
             node: "n".into(),
         };
         let mut stream = connect("127.0.0.1", port, &id.fingerprint).unwrap();
-        Msg::Hello(hello.clone())
-            .to_frame()
-            .write_to(&mut stream)
-            .unwrap();
+        Msg::Hello(hello.clone()).to_frame().write_to(&mut stream).unwrap();
         Msg::Exit(0).to_frame().write_to(&mut stream).unwrap();
         close(stream);
         let (got, next) = server.join().unwrap();

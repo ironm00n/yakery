@@ -14,20 +14,20 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
-use crate::callback::{self, Hello, Identity, Msg, HEARTBEAT};
+use crate::callback::{self, HEARTBEAT, Hello, Identity, Msg};
 use crate::frame::Frame;
 use crate::ids::{RunId, Token};
 use crate::proc::env_or;
-use crate::report::{mem_overshoot, JsonlRecord};
+use crate::report::{JsonlRecord, mem_overshoot};
 use crate::sacct::SacctRecord;
-use crate::verbs::{check_commit, check_ref, check_repo, JobId, Submit};
-use crate::verdict::{exit, Verdict};
+use crate::verbs::{JobId, Submit, check_commit, check_ref, check_repo};
+use crate::verdict::{Verdict, exit};
 use crate::vps::cluster::Cluster;
 use crate::vps::forge::Forge;
-use crate::vps::ipc::{Task, ToDaemon, ToRun, DEFAULT_SOCKET};
-use crate::vps::registry::{now, RunRecord, StateDir};
+use crate::vps::ipc::{DEFAULT_SOCKET, Task, ToDaemon, ToRun};
+use crate::vps::registry::{RunRecord, StateDir, now};
 
 pub const DEFAULT_STATE_DIR: &str = "/var/lib/slurm-ci";
 const PROBE_MAX: Duration = Duration::from_secs(30 * 60);
@@ -80,10 +80,7 @@ impl Client {
         }
     }
     fn attached(&self) -> bool {
-        self.stream
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some()
+        self.stream.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 }
 
@@ -94,20 +91,15 @@ pub fn main() -> Result<()> {
     let daemon = Arc::new(Daemon {
         state,
         probe_min: Duration::from_secs(
-            env_or("CI_PROBE_MIN_SECS", "60")
-                .parse()
-                .context("CI_PROBE_MIN_SECS")?,
+            env_or("CI_PROBE_MIN_SECS", "60").parse().context("CI_PROBE_MIN_SECS")?,
         ),
         cluster: Cluster::from_env()?,
         forge: Forge::from_env()?,
         fingerprint: identity.fingerprint.clone(),
         callback_host: crate::proc::env_var("CI_CALLBACK_HOST")?,
-        repo_allowlist: std::env::var("CI_REPO_ALLOWLIST").ok().map(|s| {
-            s.split(',')
-                .map(|r| r.trim().to_owned())
-                .filter(|r| !r.is_empty())
-                .collect()
-        }),
+        repo_allowlist: std::env::var("CI_REPO_ALLOWLIST")
+            .ok()
+            .map(|s| s.split(',').map(|r| r.trim().to_owned()).filter(|r| !r.is_empty()).collect()),
         runs: Mutex::new(HashMap::new()),
     });
 
@@ -121,10 +113,7 @@ pub fn main() -> Result<()> {
     }
 
     for rec in daemon.state.load_all()? {
-        eprintln!(
-            "reconcile: re-attaching run {} (job {:?})",
-            rec.run, rec.job
-        );
+        eprintln!("reconcile: re-attaching run {} (job {:?})", rec.run, rec.job);
         let daemon = daemon.clone();
         thread::spawn(move || drive(&daemon, rec, None));
     }
@@ -171,19 +160,13 @@ impl Daemon {
                 return;
             };
             if r.claimed || !r.token.matches(&hello.token) {
-                eprintln!(
-                    "callback for run {} refused (claimed={})",
-                    hello.run, r.claimed
-                );
+                eprintln!("callback for run {} refused (claimed={})", hello.run, r.claimed);
                 return;
             }
             r.claimed = true;
             r.tx.clone()
         };
-        let _ = tx.send(Event::Hello {
-            job: hello.job,
-            node: hello.node,
-        });
+        let _ = tx.send(Event::Hello { job: hello.job, node: hello.node });
         loop {
             match callback::read_next(&mut stream) {
                 Ok(Some(Msg::Data(d))) => {
@@ -208,32 +191,20 @@ impl Daemon {
         let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
         runs.insert(
             rec.run.clone(),
-            Registered {
-                token: rec.token.clone(),
-                claimed: rec.claimed,
-                tx,
-            },
+            Registered { token: rec.token.clone(), claimed: rec.claimed, tx },
         );
     }
 
     fn unregister(&self, run: &RunId) {
-        self.runs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(run);
+        self.runs.lock().unwrap_or_else(|e| e.into_inner()).remove(run);
     }
 }
 
 fn handle_client(daemon: &Daemon, stream: UnixStream) -> Result<()> {
     stream.set_read_timeout(Some(TASK_TIMEOUT))?;
     let mut reader = stream.try_clone()?;
-    let client = Arc::new(Client {
-        stream: Mutex::new(Some(stream)),
-    });
-    let task = match Frame::read_from(&mut reader)?
-        .map(ToDaemon::from_frame)
-        .transpose()?
-    {
+    let client = Arc::new(Client { stream: Mutex::new(Some(stream)) });
+    let task = match Frame::read_from(&mut reader)?.map(ToDaemon::from_frame).transpose()? {
         Some(ToDaemon::Task(t)) => t,
         other => bail!("expected TASK, got {other:?}"),
     };
@@ -242,10 +213,7 @@ fn handle_client(daemon: &Daemon, stream: UnixStream) -> Result<()> {
     let rec = match daemon.admit(&task) {
         Ok(rec) => rec,
         Err(e) => {
-            client.send(&ToRun::Exit {
-                status: 1,
-                verdict: format!("refused: {e:#}"),
-            });
+            client.send(&ToRun::Exit { status: 1, verdict: format!("refused: {e:#}") });
             return Err(e);
         }
     };
@@ -253,15 +221,17 @@ fn handle_client(daemon: &Daemon, stream: UnixStream) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     {
         let tx = tx.clone();
-        thread::spawn(move || loop {
-            match Frame::read_from(&mut reader).map(|f| f.map(ToDaemon::from_frame)) {
-                Ok(Some(Ok(ToDaemon::Cancel))) => {
-                    let _ = tx.send(Event::Cancel);
-                }
-                Ok(Some(Ok(ToDaemon::Task(_)))) => {}
-                Ok(Some(Err(_))) | Ok(None) | Err(_) => {
-                    let _ = tx.send(Event::ClientGone);
-                    return;
+        thread::spawn(move || {
+            loop {
+                match Frame::read_from(&mut reader).map(|f| f.map(ToDaemon::from_frame)) {
+                    Ok(Some(Ok(ToDaemon::Cancel))) => {
+                        let _ = tx.send(Event::Cancel);
+                    }
+                    Ok(Some(Ok(ToDaemon::Task(_)))) => {}
+                    Ok(Some(Err(_))) | Ok(None) | Err(_) => {
+                        let _ = tx.send(Event::ClientGone);
+                        return;
+                    }
                 }
             }
         });
@@ -351,10 +321,7 @@ fn drive_with(
             if let Err(e) = daemon.state.save(&rec) {
                 say(client, &rec.run, format!("registry write failed: {e:#}"));
             }
-            match daemon
-                .cluster
-                .submit(&daemon.submit_spec(&rec, exclude.take()), &rec.token)
-            {
+            match daemon.cluster.submit(&daemon.submit_spec(&rec, exclude.take()), &rec.token) {
                 Ok(job) => {
                     say(
                         client,
@@ -506,10 +473,7 @@ fn wait(
                 rec.cancelled = true;
                 let _ = daemon.state.save(rec);
                 if let Some(c) = client {
-                    c.send(&ToRun::Exit {
-                        status: 1,
-                        verdict: "cancelled".into(),
-                    });
+                    c.send(&ToRun::Exit { status: 1, verdict: "cancelled".into() });
                 }
                 next_probe = Instant::now() + daemon.probe_min.min(Duration::from_secs(20));
                 backoff = daemon.probe_min;
@@ -608,22 +572,14 @@ fn finalize(
                     "warning: MaxRSS exceeded ReqMem; raise `mem` in .slurm-ci.toml".into(),
                 ));
             }
-            c.send(&ToRun::Exit {
-                status: verdict.exit_status(),
-                verdict: verdict.to_string(),
-            });
+            c.send(&ToRun::Exit { status: verdict.exit_status(), verdict: verdict.to_string() });
         }
     }
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
-        if let Some(s) = self
-            .stream
-            .get_mut()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_mut()
-        {
+        if let Some(s) = self.stream.get_mut().unwrap_or_else(|e| e.into_inner()).as_mut() {
             let _ = s.flush();
         }
     }
