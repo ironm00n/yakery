@@ -21,6 +21,8 @@ const answer =
 const STOCK = { version: '2.1.287' }
 const VIEWPORT = { columns: 80, rows: 24, isFullscreen: false }
 
+const POOLED = { switch: 'on', through: 'pool', seen: true } as const
+
 function stubSession(on: On, version: { version: string; patches?: readonly string[] } = STOCK) {
   on(
     'session.usage',
@@ -229,5 +231,33 @@ test("a subagent on the session's model borrows the session's window", async ($,
   const row = await $.ui.mount(hintRow(''))
   expect(await row.find({ type: 'Text', text: '/1m (' })).toBeDefined()
   expect(await row.find({ type: 'Text', text: '3%' })).toBeDefined()
+  await row.unmount()
+})
+
+test('a session on the pool names it before the windows, which are then the pool’s', () => {
+  const runs = status({ ...SNAPSHOT, route: POOLED })
+  expect(text(runs)).toContain(' · \u{f051f} 42m · pool · 5h 86% ')
+  expect(runs.find((r) => r.text === 'pool')).toMatchObject({ color: 'ansi256(6)' })
+  for (const route of [undefined, { ...POOLED, through: null }, { ...POOLED, seen: false }, { unavailable: 'no tap' }]) {
+    expect(text(status({ ...SNAPSHOT, route }))).not.toContain('pool')
+  }
+})
+
+const POOL_ON = {
+  name: 'pool',
+  register(on: On) {
+    on('session.start', async ($, e, next) => {
+      await $.state.set({ plugin: 'pool', key: 'route' }, { switch: 'on', through: 'pool', seen: true })
+      return next(e)
+    })
+  },
+}
+
+test('the drawn row names the route the pool mod keeps', { plugins: [POOL_ON] }, async ($, on) => {
+  stubSession(on)
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: `${HOME}/proj`, surface: 'terminal', isInteractive: true })
+  const row = await $.ui.mount(hintRow(''))
+  expect(await row.find({ type: 'Text', text: 'pool' })).toBeDefined()
   await row.unmount()
 })

@@ -92,6 +92,9 @@ const windows = ({ rateLimits, now }) =>
     return [{ text: `${label} ${percent}%`, color: heat(percent) }, ...reset]
   })
 
+// right before the windows, which are the pool's while it takes the session's turns
+const route = ({ route }) => (route?.seen && route.through ? [{ text: route.through, color: SGR.cyan }] : [])
+
 const version = ({ version }) => [{ text: `v${version}` }]
 
 const KEY_ONLY_ACTIONS = ['for shortcuts', 'to interrupt', 'to copy', 'for agents', 'to manage']
@@ -127,7 +130,7 @@ const dimUncolored = (run) => (run.color === undefined ? { ...run, dimColor: tru
  * view.
  */
 export const status = (snapshot) =>
-  [dirs(snapshot), model(snapshot), context(snapshot), cache(snapshot), ...windows(snapshot), version(snapshot), hint(snapshot)]
+  [dirs(snapshot), model(snapshot), context(snapshot), cache(snapshot), route(snapshot), ...windows(snapshot), version(snapshot), hint(snapshot)]
     .filter((runs) => runs.length > 0)
     .flatMap((runs, i) => (i === 0 ? runs : [SEPARATOR, ...runs]))
     .map(dimUncolored)
