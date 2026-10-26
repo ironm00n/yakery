@@ -1,13 +1,13 @@
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 
-function env(name: string): string {
+export function env(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is unset`);
   return value;
 }
 
-type Role = 'reader' | 'sender';
+type Role = 'reader' | 'sender' | 'admin';
 const read = (path: string) => readFileSync(path, 'utf8').trim();
 const accounts: Record<Role, { address: string; passwordFile: string }> = JSON.parse(read(env('ACCOUNTS')));
 const password = (role: Role) => read(accounts[role].passwordFile);
@@ -115,10 +115,10 @@ export class Thread {
   }
 }
 
-export async function signIn(page: Page): Promise<void> {
+export async function signIn(page: Page, role: Role = 'reader'): Promise<void> {
   await page.goto('/');
-  await page.locator('#username').fill(accounts.reader.address);
-  await page.locator('#password').fill(password('reader'));
+  await page.locator('#username').fill(accounts[role].address);
+  await page.locator('#password').fill(password(role));
   await page.locator('button[type="submit"]').click();
   await expect(page.locator('[data-testid="account-switcher"]').first()).toBeVisible();
 }
