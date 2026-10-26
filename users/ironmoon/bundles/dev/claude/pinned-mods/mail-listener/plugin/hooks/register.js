@@ -8,10 +8,21 @@ const HEALTHY_MS = 60_000
 const NEW_ID_POLL_MS = 100
 const STDERR_KEPT = 2_000
 
-const FIELDS = { id: 'string', threadId: 'string', from: 'string', text: 'string', truncated: 'boolean' }
+const FIELDS = {
+  id: 'string',
+  threadId: 'string',
+  from: 'string',
+  text: 'string',
+  truncated: 'boolean',
+  authority: 'boolean',
+  authorityReason: 'string',
+}
 
 /** The ends after which the process goes on under another session id, with no `session.start`. */
 const NEW_SESSION = new Set(['clear', 'resume'])
+
+/** The approvals this process handed over as Owen's words; agent-mail checks one mail, not what a session took before. */
+const handed = new Set()
 
 let listener
 
@@ -132,7 +143,8 @@ function parse(line) {
   } catch {
     return undefined
   }
-  return Object.entries(FIELDS).every(([field, type]) => typeof mail?.[field] === type) ? mail : undefined
+  const holds = Object.entries(FIELDS).every(([field, type]) => typeof mail?.[field] === type)
+  return holds && (!mail.authority || typeof mail.approval === 'string') ? mail : undefined
 }
 
 const oneLine = (value) =>
@@ -141,13 +153,24 @@ const oneLine = (value) =>
     .trim()
 const list = (addresses) => (Array.isArray(addresses) ? addresses.map(oneLine).join(', ') : '')
 
-/** The prompt a mail becomes, opening with the line naming it: the engine refuses a plugin's prompt that starts with `/`. */
+/**
+ * The prompt a mail becomes, opening with the line naming it: the engine refuses a plugin's prompt that starts with `/`.
+ * Owen's words carry only what the server signed as his and its ids, since a session can import any mail into its inbox.
+ */
 function prompt(mail) {
-  const naming = `[mail ${oneLine(mail.id)} in thread ${oneLine(mail.threadId)} from ${oneLine(mail.from)} to ${list(mail.to)}: ${oneLine(mail.subject)}]`
+  const mailed = `mail ${oneLine(mail.id)} in thread ${oneLine(mail.threadId)}`
+  if (mail.authority && !handed.has(mail.approval)) {
+    handed.add(mail.approval)
+    const to = `to ${list(mail.to)}${mail.cc?.length ? ` cc ${list(mail.cc)}` : ''}: ${oneLine(mail.subject)}`
+    return { text: `[${mailed}, signed by the mail server as Owen's, ${to}]\n\n${mail.text}`, asUser: true }
+  }
+  const naming = `[${mailed} from ${oneLine(mail.from)} to ${list(mail.to)}: ${oneLine(mail.subject)}]`
+  const why = mail.authority ? 'an approval this session took already' : mail.authorityReason
   const headers = [
     ['Cc', list(mail.cc)],
     ['Date', oneLine(mail.receivedAt)],
     ['Text', mail.truncated ? "cut at agent-mail's body limit" : ''],
+    ['Authority', `none, ${oneLine(why)}`],
   ]
   const head = headers.filter(([, value]) => value).map(([name, value]) => `${name}: ${value}`)
   return { text: [naming, ...head, '', mail.text.replace(/^/gm, '> ')].join('\n') }
