@@ -23,6 +23,12 @@ let
     ;
 
   cfg = config.services.bulwark;
+  stateDirectory = "bulwark";
+  stateDir = name: "/var/lib/${stateDirectory}/${name}";
+  absoluteDir = lib.types.pathWith {
+    absolute = true;
+    inStore = false;
+  };
 in
 {
   options.services.bulwark = {
@@ -114,8 +120,8 @@ in
             '';
           };
           data_dir = mkOption {
-            type = str;
-            default = "/var/lib/bulwark/settings";
+            type = absoluteDir;
+            default = stateDir "settings";
             description = "Directory for storing encrypted settings files.";
           };
         };
@@ -138,8 +144,8 @@ in
             '';
           };
           data_dir = mkOption {
-            type = str;
-            default = "/var/lib/bulwark/telemetry";
+            type = absoluteDir;
+            default = stateDir "telemetry";
             description = "Directory for telemetry state: instance id, consent, login HMACs.";
           };
         };
@@ -150,8 +156,8 @@ in
     };
 
     admin_data_dir = mkOption {
-      type = str;
-      default = "/var/lib/bulwark/admin";
+      type = absoluteDir;
+      default = stateDir "admin";
       description = ''
         Directory for admin dashboard state: config overrides, admin password hash,
         installed plugins/themes, and audit logs.
@@ -368,7 +374,7 @@ in
         DynamicUser = true;
 
         AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
-        StateDirectory = "bulwark";
+        StateDirectory = stateDirectory;
         BindReadOnlyPaths = [
           "/nix/store"
         ];
@@ -411,7 +417,6 @@ in
         ALLOW_CUSTOM_JMAP_ENDPOINT = if cfg.allow_custom_jmap_endpoint then "true" else "false";
         STALWART_FEATURES = if cfg.stalwart_features then "true" else "false";
         SESSION_SECRET_FILE = cfg.session_secret_file;
-        ADMIN_DATA_DIR = cfg.admin_data_dir;
         BULWARK_TELEMETRY = if cfg.telemetry.enabled then "on" else "off";
         HOSTNAME = cfg.hostname;
         PORT = toString cfg.port;
@@ -431,9 +436,9 @@ in
         LOGIN_IMPRINT_URL = cfg.branding.login.imprint_url;
         LOGIN_PRIVACY_POLICY_URL = cfg.branding.login.privacy_policy_url;
         LOGIN_WEBSITE_URL = cfg.branding.login.website_url;
-        ADMIN_CONFIG_DIR="/var/lib/bulwark/admin";
-        ADMIN_STATE_DIR="var/lib/bulwark/admin-state";
-        VERSION_CHECK_DATA_DIR="/var/lib/bulwark/version-check";
+        ADMIN_CONFIG_DIR = cfg.admin_data_dir;
+        ADMIN_STATE_DIR = stateDir "admin-state";
+        VERSION_CHECK_DATA_DIR = stateDir "version-check";
         SETTINGS_DATA_DIR = cfg.settings_sync.data_dir;
         TELEMETRY_DATA_DIR = cfg.telemetry.data_dir;
       }
