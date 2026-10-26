@@ -14,7 +14,7 @@ test('a Stalwart admin opens the admin dashboard without its password', async ({
   await page.locator('a[title="Admin"]').click();
 
   const response = await login;
-  expect(response.status(), await response.text()).toBe(200);
+  expect(response.status(), await response.text().catch(() => 'body gone: the page had already navigated')).toBe(200);
   await expect(page.getByText('Recent Activity')).toBeVisible();
   await shot(page, 'dashboard');
   expect(new Set(statuses)).toEqual(new Set([200]));
