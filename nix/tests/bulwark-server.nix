@@ -14,11 +14,14 @@ let
   inherit (my-lib.stalwart) update upsertOn ref;
 
   hostName = "hetzner-cx33-1";
-  roles = {
+  # the accounts the test makes, and root, the bundle's own Admin account
+  users = {
     reader = "alice";
     sender = "bob";
   };
-  users = lib.attrValues roles;
+  roles = users // {
+    admin = "root";
+  };
   address = user: "${user}@${domain}";
   unavailableFlag = "/run/s3-unavailable";
   # what nbg1 answered Stalwart with, Code and Message as logged
@@ -110,7 +113,12 @@ in
         secretFiles
       ];
       _module.args = {
-        inherit my-lib;
+        # the browser here reaches /admin from the test network, which nginx serves only to NetBird
+        my-lib = my-lib // {
+          netbird = my-lib.netbird // {
+            overlayCidrs = my-lib.netbird.overlayCidrs ++ [ "${config.networking.primaryIPAddress}/32" ];
+          };
+        };
         inputs.secrets = {
           # sopsFile values, unread with sops-nix out
           lib = {
@@ -146,7 +154,7 @@ in
       services.stalwart.plan.sequence = lib.mkAfter (
         [
           (upsertOn "Account" [ "name" "domainId" ] (
-            lib.genAttrs users (name: {
+            lib.genAttrs (lib.attrValues users) (name: {
               "@type" = "User";
               inherit name;
               domainId = ref "ironmoon";
@@ -166,7 +174,7 @@ in
           }
         )
       );
-      services.stalwart.appPasswords = lib.genAttrs (map address users) (_: {
+      services.stalwart.appPasswords = lib.genAttrs (map address (lib.attrValues roles)) (_: {
         allowedIps = [ "${config.networking.primaryIPAddress}/32" ];
       });
 
@@ -243,6 +251,7 @@ in
             JMAP_URL = config.services.bulwark.jmap_server_url;
             ACCOUNTS = pkgs.writeText "accounts.json" (builtins.toJSON account);
             S3_UNAVAILABLE = unavailableFlag;
+            inherit (config.systemd.services.bulwark.environment) ADMIN_STATE_DIR;
           };
           # Chromium trusts what its NSS database does, not the system's bundle
           text = ''
