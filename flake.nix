@@ -289,6 +289,7 @@
         backup = import ./nix/tests/backup.nix { pkgs = pkgs-map.${system}; };
         zitadel = import ./nix/tests/zitadel.nix { pkgs = pkgs-map.${system}; };
         initrd-network = import ./nix/tests/initrd-network.nix { pkgs = pkgs-map.${system}; };
+        bulwark = import ./nix/tests/bulwark.nix { pkgs = pkgs-map.${system}; };
         desktop-boot = import ./nix/tests/desktop-boot.nix {
           pkgs = pkgs-map.${system};
           inherit inputs my-lib;
