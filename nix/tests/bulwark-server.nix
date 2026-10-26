@@ -8,7 +8,7 @@ let
   domain = "example.test";
   my-lib = real-lib // {
     ironmoon = lib.mapAttrsRecursive (
-      _: lib.replaceStrings [ real-lib.ironmoon.domain ] [ domain ]
+      _: v: if lib.isString v then lib.replaceStrings [ real-lib.ironmoon.domain ] [ domain ] v else v
     ) real-lib.ironmoon;
   };
   inherit (my-lib.stalwart) update upsertOn ref;
