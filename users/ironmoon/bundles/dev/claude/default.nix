@@ -20,14 +20,11 @@ let
   inherit (pkgs-master) claude-code;
   cfg = config.bundles.dev.claude;
   inherit (my-lib) ironmoon;
-  agent-mail = pkgs.callPackage ../../../../../crates/agent-mail/package.nix {
-    deployment = ironmoon;
-    correspondents = inputs.secrets.data.mail.agentCorrespondents;
-    correspondentsFor = inputs.secrets.data.mail.agentCorrespondentsFor;
+  agent-mail = import ../../../../../crates/agent-mail/deployed.nix {
+    inherit (pkgs) callPackage;
+    inherit my-lib;
+    inherit (inputs) secrets;
   };
-
-  # built, unlike ./mods, to carry agent-mail's store path
-  mail-listener = pkgs.callPackage ./pinned-mods/mail-listener/package.nix { inherit agent-mail; };
 
   # claude code loads any ~/.claude/skills/<name> holding a .claude-plugin/ as a plugin
   mods = mapAttrs' (
@@ -56,7 +53,9 @@ in
       ".claude/settings.json".source = symlink ./settings.json;
       ".claude/hooks/".source = symlink ./hooks;
       ".claude/my-marketplaces".source = symlink ./marketplaces;
-      ".claude/skills/mail-listener".source = mail-listener;
+      # the tap's profile entry ships the mail-listener its Claude Code trusts, so this reaches exactly that build
+      ".claude/skills/mail-listener".source =
+        config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.nix-profile/share/claude/trusted-prompt-mod";
     }
     // mods;
   };
