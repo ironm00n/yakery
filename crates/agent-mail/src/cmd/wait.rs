@@ -18,6 +18,8 @@ use crate::{
 
 const RECHECK: Duration = Duration::from_secs(150);
 const BACKOFF: Duration = Duration::from_secs(5);
+// A wait that cannot finish a scan for this long gives up, so whoever runs it hears that mail is not arriving.
+const STALE: Duration = Duration::from_secs(300);
 
 // Every open inbox mail is matched on these alone, since Stalwart parses each message for an Email's attachments, and
 // a few hundred of those outlast a request.
@@ -71,6 +73,7 @@ struct Watch<'a> {
     deadline: Option<Instant>,
     cursor: Cursor,
     lost: HashSet<String>,
+    scanned: Instant,
 }
 
 impl Watch<'_> {
@@ -179,9 +182,10 @@ impl Watch<'_> {
                 note!("seen but unanswered: {} more", fresh.len() - 20);
             }
             reminded.extend(fresh.into_iter().map(|m| m.id));
-            match claimed? {
-                claimed if !claimed.is_empty() => return Ok(Some(claimed)),
-                _ => {}
+            let claimed = claimed?;
+            self.scanned = Instant::now();
+            if !claimed.is_empty() {
+                return Ok(Some(claimed));
             }
             let wait = self.remaining().map_or(RECHECK, |left| left.min(RECHECK));
             if wait.is_zero() {
@@ -208,6 +212,11 @@ impl Watch<'_> {
                 Ok(wake) => return Ok(wake),
                 Err(e) => e,
             };
+            if self.scanned.elapsed() >= STALE {
+                return Err(
+                    e.context(format!("no scan finished in {} minutes", STALE.as_secs() / 60))
+                );
+            }
             let pause = match Failure::of(&e) {
                 Failure::Idle => {
                     backoff = BACKOFF;
@@ -260,7 +269,8 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
     let (inbox, sent, starts) =
         (mail.mailbox("inbox")?, mail.mailbox("sent")?, args.thread.clone());
     let (deadline, cursor, lost) = (deadline.transpose()?, Cursor::default(), HashSet::new());
-    let mut watch = Watch { mail, inbox, sent, topics, starts, deadline, cursor, lost };
+    let scanned = Instant::now();
+    let mut watch = Watch { mail, inbox, sent, topics, starts, deadline, cursor, lost, scanned };
     for start in &args.thread {
         ensure!(mail.current(start).await?.is_some(), "no email {start}");
     }
