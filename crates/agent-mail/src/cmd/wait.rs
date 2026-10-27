@@ -9,7 +9,8 @@ use text::Address;
 
 use crate::{
     address::Topic,
-    mail::{Body, Email, Keyword, Mail, Mark},
+    jmap::wire,
+    mail::{Addr, Body, Email, Keyword, Mail, Mark},
     out::{Asked, Outbox, is_receipt},
     prelude::*,
     show::{message, out, reminder, utc},
@@ -17,6 +18,18 @@ use crate::{
 
 const RECHECK: Duration = Duration::from_secs(150);
 const BACKOFF: Duration = Duration::from_secs(5);
+
+// Every open inbox mail is matched on these alone, since Stalwart parses each message for an Email's attachments, and
+// a few hundred of those outlast a request.
+wire! {
+    views {
+        Addressed in "Email/get" {
+            id: String = "id", thread: String = "threadId", to: Vec<Addr> = "to",
+            cc: Vec<Addr> = "cc", mailboxes: HashMap<String, bool> = "mailboxIds",
+        }
+    }
+    objects {}
+}
 
 #[derive(clap::Args)]
 #[command(group(ArgGroup::new("watched").required(true).multiple(true).args(["topic", "thread"])))]
@@ -44,9 +57,9 @@ pub fn timeout(s: &str) -> Result<Duration> {
 
 /// To and Cc are matched here rather than by the server, which answers them from its full-text index, built after
 /// ingest.
-pub fn covers(topics: &[Address], threads: &HashSet<String>, m: &Email) -> bool {
-    let addressed = |a: &crate::mail::Addr| a.email.parse().is_ok_and(|a| topics.contains(&a));
-    threads.contains(&m.thread) || m.to.iter().chain(&m.cc).any(addressed)
+pub fn covers(topics: &[Address], threads: &HashSet<String>, m: &Addressed) -> bool {
+    let watched = |a: &Addr| a.email.parse().is_ok_and(|a| topics.contains(&a));
+    threads.contains(&m.thread) || m.to.iter().chain(&m.cc).any(watched)
 }
 
 struct Watch<'a> {
@@ -100,10 +113,12 @@ impl Watch<'_> {
     ) -> Result<(Scan, BTreeSet<String>)> {
         ids.extend(self.mail.members(&threads.iter().collect::<Vec<_>>()).await?);
         let (login, inbox) = (self.mail.login(), &self.inbox);
-        let found: Vec<Email> = self.mail.get(&ids.into_iter().collect::<Vec<_>>()).await?;
-        let watched =
-            |m: &Email| m.mailboxes.contains_key(inbox) && covers(&self.topics, threads, m);
-        let open: Vec<Email> = found.into_iter().filter(|m| watched(m) && open(login, m)).collect();
+        let all: Vec<Addressed> = self.mail.get(&ids.into_iter().collect::<Vec<_>>()).await?;
+        let watched = all
+            .into_iter()
+            .filter(|m| m.mailboxes.contains_key(inbox) && covers(&self.topics, threads, m));
+        let found: Vec<Email> = self.mail.get(&watched.map(|m| m.id).collect::<Vec<_>>()).await?;
+        let open: Vec<Email> = found.into_iter().filter(|m| open(login, m)).collect();
         let answered = self.answered_from_sent(&open).await?;
         let (remind, due): (Vec<Email>, Vec<Email>) = open
             .into_iter()

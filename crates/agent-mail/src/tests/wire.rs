@@ -175,6 +175,8 @@ pub struct Stalwart {
     refresh_refused: bool,
     pub session: Value,
     pub log: Vec<String>,
+    /// Ids an Email/get asked attachments of, which Stalwart parses the message for.
+    parsed: BTreeSet<String>,
     opened: Vec<Duration>,
     start: Option<Instant>,
 }
@@ -303,6 +305,10 @@ impl Stalwart {
                     Some(ids) => ids.iter().filter_map(under).collect(),
                     None => self.emails.clone(),
                 };
+                let asked = args["properties"].as_array().cloned().unwrap_or_default();
+                if asked.contains(&json!("attachments")) {
+                    self.parsed.extend(list.iter().map(|m| m["id"].as_str().unwrap().to_owned()));
+                }
                 json!({ "state": state, "list": list })
             }
             "Email/query" => {
@@ -596,6 +602,17 @@ async fn a_wait_signs_in_again_when_its_token_expires_and_then_claims() {
     assert!(server.log.iter().any(|l| l.starts_with("POST /oauth/v2/token")));
     assert!(server.log.iter().any(|l| l == "POST /jmap/ Email/set @t2"));
     assert_eq!(server.emails[0]["keywords"]["$seen"], true);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_wait_has_stalwart_parse_only_the_mail_it_watches() {
+    let dir = Scratch::new("wait-parsed");
+    let other =
+        |id| email(id, json!({ "threadId": id, "to": [{ "email": "agent+other@example.org" }] }));
+    let stalwart = Stalwart::new(vec![other("o1"), email("a1", json!({})), other("o2")]);
+    let (_wire, server, mail) = mail(&dir, stalwart).await;
+    assert_eq!(wait::watch(&mail.unwrap(), watching(600)).await.unwrap(), ExitCode::SUCCESS);
+    assert_eq!(server.borrow().parsed, BTreeSet::from(["a1".to_owned()]));
 }
 
 #[tokio::test(start_paused = true)]
