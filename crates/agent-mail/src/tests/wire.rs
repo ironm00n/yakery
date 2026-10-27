@@ -179,6 +179,8 @@ pub struct Stalwart {
     parsed: BTreeSet<String>,
     opened: Vec<Duration>,
     start: Option<Instant>,
+    /// Seconds after the start during which every request to the mail host is answered 503.
+    down: std::ops::Range<u64>,
 }
 
 pub type Shared = Rc<RefCell<Stalwart>>;
@@ -206,6 +208,10 @@ impl Stalwart {
 
     fn answer(&mut self, r: &Request) -> Reply {
         self.log.push(seen(r));
+        let down = self.down.contains(&self.start.unwrap().elapsed().as_secs());
+        if down && r.url().host_str() == Some("mail.example.org") {
+            return reply(503, "");
+        }
         let token = r.headers().get("authorization").map(|t| t.to_str().unwrap()[7..].to_owned());
         if token.as_ref().is_some_and(|t| self.refused.contains(t)) {
             return reply(401, "");
@@ -686,4 +692,46 @@ async fn a_busy_server_is_checked_again_in_30_s_and_a_config_error_ends_the_wait
     (server.borrow_mut().expire_on_stream, server.borrow_mut().refresh_refused) = (true, true);
     let ended = wait::watch(&mail, watching(600)).await.unwrap_err();
     assert!(Failure::of(&ended).permanent(), "{ended:#}");
+}
+
+/// How a wait ends, and when, with every request to the mail host failing over `down`.
+async fn through_outage(
+    emails: Vec<Value>,
+    down: std::ops::Range<u64>,
+    timeout: u64,
+) -> (u64, String) {
+    let dir = Scratch::new("wait-outage");
+    let (_wire, server, mail) = mail(&dir, Stalwart::new(emails)).await;
+    server.borrow_mut().down = down;
+    let start = Instant::now();
+    let ended = match wait::watch(&mail.unwrap(), watching(timeout)).await {
+        Ok(code) if code == ExitCode::SUCCESS => "delivered".into(),
+        Ok(code) => format!("{code:?}"),
+        Err(e) => format!("error: {e:#}"),
+    };
+    (start.elapsed().as_secs(), ended)
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_wait_fails_once_no_scan_has_finished_for_5_minutes_and_rides_out_a_shorter_outage() {
+    let failed = "error: no scan finished in 5 minutes: stalwart: /jmap/eventsource/: HTTP 503 Service Unavailable";
+    assert_eq!(through_outage(vec![], 0..u64::MAX, 3600).await, (300, failed.into()));
+    assert_eq!(
+        through_outage(vec![], 200..u64::MAX, 3600).await,
+        (450, failed.into()),
+        "5 minutes after the scan at 150 s"
+    );
+    assert_eq!(
+        through_outage(vec![email("a1", json!({}))], 0..250, 3600).await,
+        (300, "delivered".into()),
+        "the retry due at 315 s comes at the bound instead"
+    );
+    assert_eq!(
+        through_outage(vec![], 0..u64::MAX, 60).await,
+        (
+            60,
+            "error: the wait timed out before any scan finished: stalwart: /jmap/eventsource/: HTTP 503 Service Unavailable"
+                .into()
+        )
+    );
 }
