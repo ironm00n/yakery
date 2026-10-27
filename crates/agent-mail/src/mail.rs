@@ -23,13 +23,12 @@ wire! {
             subject: String = "subject", keywords: HashMap<String, bool> = "keywords",
             mailboxes: HashMap<String, bool> = "mailboxIds", message_id: Vec<String> = "messageId",
             in_reply_to: Vec<String> = "inReplyTo", references: Vec<String> = "references",
-            preview: String = "preview", attachments: Vec<Part> = "attachments",
-            content_type: String = "header:Content-Type",
+            preview: String = "preview", content_type: String = "header:Content-Type",
             notify: Vec<Addr> = "header:Disposition-Notification-To:asAddresses",
             original_recipient: String = "header:Original-Recipient:asText",
         }
         Body in "Email/get" with ("fetchTextBodyValues", MAX_BODY_BYTES) {
-            id: String = "id", text: Vec<Part> = "textBody",
+            id: String = "id", text: Vec<Part> = "textBody", attachments: Vec<Part> = "attachments",
             values: HashMap<String, Text> = "bodyValues", structure: Part = "bodyStructure",
         }
         Thread in "Thread/get" { emails: Vec<String> = "emailIds" }

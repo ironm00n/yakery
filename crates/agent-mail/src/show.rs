@@ -6,7 +6,7 @@ use std::io::Write;
 use chrono::{DateTime, SecondsFormat};
 
 use crate::{
-    mail::{Addr, Body, Email, Keyword, MAX_BODY_BYTES},
+    mail::{Addr, Body, Email, Keyword, MAX_BODY_BYTES, Part},
     prelude::*,
 };
 
@@ -36,16 +36,17 @@ fn head(m: &Email) -> String {
     format!("{}  {}  {} -> {}", plain(&m.id), plain(&m.received), emails(&m.from), emails(&m.to))
 }
 
-pub fn inbox_line(m: &Email) -> String {
+pub fn inbox_line(m: &Email, files: &[Part]) -> String {
     let unread = if m.has(Keyword::Seen) { ' ' } else { '*' };
     let cc = if m.cc.is_empty() { String::new() } else { format!(" cc {}", emails(&m.cc)) };
     let files: String =
-        m.attachments.iter().map(|a| format!(" [{} {}B]", plain(&a.name), a.size)).collect();
+        files.iter().map(|a| format!(" [{} {}B]", plain(&a.name), a.size)).collect();
     format!("{unread} {}{cc}  {}{files}\n    {}", head(m), plain(&m.subject), preview(m, 160))
 }
 
 pub fn message(m: &Email, body: Option<&Body>) -> String {
-    let files: String = m.attachments.iter().map(|a| format!(" [{}]", plain(&a.name))).collect();
+    let files = body.iter().flat_map(|b| &b.attachments);
+    let files: String = files.map(|a| format!(" [{}]", plain(&a.name))).collect();
     let values: Vec<_> =
         body.iter().flat_map(|b| b.text.iter().filter_map(|p| b.values.get(&p.part))).collect();
     let shown = &values[..values.len().min(MAX_PARTS)];

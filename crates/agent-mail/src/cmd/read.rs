@@ -41,6 +41,7 @@ wire! {
             attachments: Vec<Part> = "attachments", text: Vec<Part> = "textBody",
             html: Vec<Part> = "htmlBody", values: HashMap<String, Text> = "bodyValues",
         }
+        Attached in "Email/get" { id: String = "id", attachments: Vec<Part> = "attachments" }
     }
     objects {}
 }
@@ -148,8 +149,10 @@ pub async fn inbox(args: Inbox) -> Result<ExitCode> {
     let sort = [json!({ "property": "receivedAt", "isAscending": false })];
     let found =
         mail.call(QUERY, json!({ "filter": filter, "sort": sort, "limit": args.limit })).await?;
+    let files: Vec<Attached> = mail.get(&found.ids).await?;
     for m in mail.get::<Email>(&found.ids).await? {
-        out(&inbox_line(&m))?;
+        let files = files.iter().find(|f| f.id == m.id).map_or(&[][..], |f| &f.attachments);
+        out(&inbox_line(&m, files))?;
     }
     Ok(ExitCode::SUCCESS)
 }
