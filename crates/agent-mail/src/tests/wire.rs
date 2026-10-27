@@ -605,10 +605,9 @@ async fn a_wait_signs_in_again_when_its_token_expires_and_then_claims() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_wait_has_stalwart_parse_only_the_mail_it_watches() {
+async fn a_wait_has_stalwart_parse_only_the_mail_it_delivers() {
     let dir = Scratch::new("wait-parsed");
-    let other =
-        |id| email(id, json!({ "threadId": id, "to": [{ "email": "agent+other@example.org" }] }));
+    let other = |id| email(id, json!({ "to": [{ "email": "agent+other@example.org" }] }));
     let stalwart = Stalwart::new(vec![other("o1"), email("a1", json!({})), other("o2")]);
     let (_wire, server, mail) = mail(&dir, stalwart).await;
     assert_eq!(wait::watch(&mail.unwrap(), watching(600)).await.unwrap(), ExitCode::SUCCESS);
