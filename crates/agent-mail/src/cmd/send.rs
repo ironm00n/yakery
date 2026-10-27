@@ -83,7 +83,7 @@ pub struct Session {
     pub bridge_session_id: Option<String>,
 }
 
-fn session() -> Option<Session> {
+pub fn session() -> Option<Session> {
     let socket = PathBuf::from(std::env::var_os("CLAUDE_CODE_MESSAGING_SOCKET")?);
     let name = socket.file_name()?.to_str()?;
     let config = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
@@ -309,6 +309,15 @@ pub async fn run(args: Args) -> Result<ExitCode> {
                 let id = answered.as_str();
                 warn!("sent, but marking {id} answered failed, so wait will remind of it: {e:#}");
             }
+        }
+    }
+    if let Some(s) = session() {
+        let topics = login.topic(&to.from.to_string()).into_iter().collect();
+        let recorded = s.session_id.parse().and_then(|id| {
+            mail.conn.auth.store.records()?.record(&id, topics, vec![draft.as_str().to_owned()])
+        });
+        if let Err(e) = recorded {
+            warn!("sent, but recording its topic and thread for this session failed: {e:#}");
         }
     }
     let everyone: Vec<String> = to.everyone().map(Address::to_string).collect();

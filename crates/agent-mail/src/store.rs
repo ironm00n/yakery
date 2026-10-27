@@ -8,7 +8,11 @@ use std::{
 
 use private::{Dir, Mode, Replace, Secret};
 
-use crate::{policy::Login, prelude::*};
+use crate::{
+    address::{SessionId, Topic},
+    policy::Login,
+    prelude::*,
+};
 
 pub fn home() -> Result<PathBuf> {
     env::var_os("HOME").map(PathBuf::from).context("HOME is not set")
@@ -168,6 +172,37 @@ pub struct Held {
     _file: File,
 }
 
+/// What each Claude Code session watches, as its sends and subscribes recorded it, beside the locks, so
+/// `wait --session` finds the same record whatever its environment.
+pub struct Records(Dir);
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct Watched {
+    pub topics: BTreeSet<Topic>,
+    pub threads: BTreeSet<String>,
+}
+
+impl Records {
+    pub fn of(&self, session: &SessionId) -> Result<Watched> {
+        self.0.load(&format!("{session}.json"))
+    }
+
+    pub fn record(
+        &self,
+        session: &SessionId,
+        topics: Vec<Topic>,
+        threads: Vec<String>,
+    ) -> Result<()> {
+        let lock = self.0.file("lock")?;
+        lock.lock().context("locking the session records")?;
+        let name = format!("{session}.json");
+        let mut watched: Watched = self.0.load(&name)?;
+        watched.topics.extend(topics);
+        watched.threads.extend(threads);
+        self.0.save(&name, &watched)
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Access {
     pub token: Secret,
@@ -239,6 +274,10 @@ impl Store {
             }
         }
         bail!("another agent-mail has held {path} for over 120 s")
+    }
+
+    pub fn records(&self) -> Result<Records> {
+        Ok(Records(Dir::open(&self.locks, &["agent-mail", "sessions"])?))
     }
 
     pub async fn held(&self) -> Result<Held> {
