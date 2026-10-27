@@ -1,0 +1,5 @@
+{
+  "name": "mail-listener",
+  "version": "0.1.0",
+  "description": "Keeps one agent-mail wait running for the session's life and hands each mail it prints to the session as a prompt"
+}
