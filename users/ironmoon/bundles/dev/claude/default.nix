@@ -26,6 +26,9 @@ let
     correspondentsFor = inputs.secrets.data.mail.agentCorrespondentsFor;
   };
 
+  # built, unlike ./mods, to carry agent-mail's store path
+  mail-listener = pkgs.callPackage ./pinned-mods/mail-listener/package.nix { inherit agent-mail; };
+
   # claude code loads any ~/.claude/skills/<name> holding a .claude-plugin/ as a plugin
   mods = mapAttrs' (
     name: _: nameValuePair ".claude/skills/${name}" { source = symlink (./mods + "/${name}"); }
@@ -53,6 +56,7 @@ in
       ".claude/settings.json".source = symlink ./settings.json;
       ".claude/hooks/".source = symlink ./hooks;
       ".claude/my-marketplaces".source = symlink ./marketplaces;
+      ".claude/skills/mail-listener".source = mail-listener;
     }
     // mods;
   };
