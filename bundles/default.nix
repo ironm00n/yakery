@@ -24,6 +24,7 @@
     ./backup.nix
     ./zitadel.nix
     ./claude-code.nix
+    ./agent-slack.nix
 
     ./displaylink
   ];
