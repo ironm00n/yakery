@@ -13,7 +13,7 @@ pkgs.testers.runNixOSTest {
   defaults.virtualisation.graphics = false;
 
   nodes.server = server.node;
-  nodes.client = { };
+  nodes.client = server.client;
 
   testScript = server.python + ''
     start_all()

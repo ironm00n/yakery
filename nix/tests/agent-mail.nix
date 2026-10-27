@@ -1,10 +1,11 @@
-# agent-mail against ZITADEL and Stalwart set up as in production, on one server behind nginx:
+# agent-mail against ZITADEL and cx33-1's Stalwart, each on its own server as in production:
 # host1 and host2 share the login agent@, and owner@ on host1 mails it.
 { pkgs }:
 let
   inherit (pkgs) lib;
-  my-lib = import ../../lib { inherit lib; };
-  inherit (my-lib.ironmoon) domain auth mail;
+  stalwart = import ./stalwart-server.nix { inherit pkgs; };
+  inherit (stalwart) my-lib domain;
+  inherit (my-lib.ironmoon) auth mail;
   logins = {
     agent = "${mail.agents.sharedLocalPart}@${domain}";
     owner = "owner@${domain}";
@@ -12,31 +13,19 @@ let
   password = "Agent-mail-test-1";
   # where the redirect tests send agent-mail; nothing may reach it
   evil = "evil.test";
-  zitadel = import ./zitadel-server.nix { inherit pkgs; };
-  stalwart = import ./stalwart-server.nix { inherit pkgs domain; };
+  zitadel = import ./zitadel-server.nix { inherit pkgs my-lib; };
 
   tls = pkgs.runCommand "agent-mail-test-tls" { nativeBuildInputs = [ pkgs.minica ]; } ''
     mkdir $out && cd $out
     minica --domains ${auth.host}
-    minica --domains ${mail.host}
-    minica --domains ${evil}
   '';
-  certificate = host: {
-    enableACME = lib.mkForce false;
-    sslCertificate = "${tls}/${host}/cert.pem";
-    sslCertificateKey = "${tls}/${host}/key.pem";
-  };
 
   # agent-mail drops SSL_CERT_FILE and the like, so the CA has to be in the system store
   network =
     { nodes, ... }:
     {
       security.pki.certificateFiles = [ "${tls}/minica.pem" ];
-      networking.hosts.${nodes.server.networking.primaryIPAddress} = [
-        auth.host
-        mail.host
-        evil
-      ];
+      networking.hosts.${nodes.auth.networking.primaryIPAddress} = [ auth.host ];
     };
 
   zitadelServer = {
@@ -49,7 +38,11 @@ let
       cores = 2;
     };
     services.zitadel.settings.DefaultInstance.Features.LoginV2.Required = false;
-    services.nginx.virtualHosts.${auth.host} = certificate auth.host;
+    services.nginx.virtualHosts.${auth.host} = {
+      enableACME = lib.mkForce false;
+      sslCertificate = "${tls}/${auth.host}/cert.pem";
+      sslCertificateKey = "${tls}/${auth.host}/key.pem";
+    };
   };
 
   # ZITADEL picks every client id itself, so a seeded instance is dumped once and restored for each run
@@ -58,17 +51,17 @@ let
 
     defaults.virtualisation.graphics = false;
 
-    nodes.server = zitadelServer;
+    nodes.auth = zitadelServer;
 
     testScript =
       { nodes, ... }:
       zitadel.python
       + ''
-        zitadel = server
+        zitadel = auth
         https = "curl -fsS https://${auth.host}"
 
-        server.wait_for_unit("nginx.service")
-        server.wait_until_succeeds(f"{https}/debug/ready", timeout=300)
+        auth.wait_for_unit("nginx.service")
+        auth.wait_until_succeeds(f"{https}/debug/ready", timeout=300)
         pat = admin_pat()
         project = api("POST", "/management/v1/projects", pat, {"name": "ironmoon"})["id"]
 
@@ -106,13 +99,13 @@ let
             "userIds": {login: human(login) for login in ${builtins.toJSON (lib.attrValues logins)}},
             "adminPat": pat,
         }
-        server.succeed(
+        auth.succeed(
             "systemctl stop zitadel",
-            "${nodes.server.bundles.backup.services.zitadel.dumpCommand} > /tmp/zitadel.dump",
+            "${nodes.auth.bundles.backup.services.zitadel.dumpCommand} > /tmp/zitadel.dump",
             f"echo '{json.dumps(ids)}' > /tmp/ids.json",
         )
-        server.copy_from_machine("/tmp/zitadel.dump")
-        server.copy_from_machine("/tmp/ids.json")
+        auth.copy_from_machine("/tmp/zitadel.dump")
+        auth.copy_from_machine("/tmp/ids.json")
       '';
   };
 
@@ -128,40 +121,11 @@ let
         '';
       });
 
-  # Stalwart validates tokens with the production bundle's own directory, roles and HTTP settings
-  bundle =
-    (pkgs.nixos {
-      imports = [ ../../bundles/stalwart ];
-      # only the plan is read, so the options the bundle sets for sops, knot and nginx needn't exist
-      _module.check = false;
-      _module.args = {
-        inherit my-lib;
-        inputs = { };
-      };
-      bundles.stalwart.enable = true;
-    }).config.services.stalwart;
-  fromBundle = lib.filter (
-    step:
-    lib.elem step.object [
-      "Directory"
-      "Role"
-      "Authentication"
-      "Jmap"
-      "Http"
-      "BlobStore"
-    ]
-  ) bundle.plan.sequence;
-  s3 = {
-    user = "stalwart";
-    secret = "stalwart-blobs";
-    inherit
-      ((lib.findFirst (s: s.object == "BlobStore") (throw "no BlobStore") bundle.plan.sequence).value)
-      bucket
-      ;
-  };
-
   client = users: {
-    imports = [ network ];
+    imports = [
+      network
+      stalwart.client
+    ];
     environment.systemPackages = [
       agent-mail
       pkgs.curl
@@ -204,17 +168,13 @@ pkgs.testers.runNixOSTest {
   defaults.virtualisation.graphics = false;
 
   nodes = {
-    server =
-      { config, nodes, ... }:
+    auth =
+      { config, ... }:
       let
         postgres = config.services.postgresql.package;
       in
       {
-        imports = [
-          zitadelServer
-          stalwart.node
-        ];
-
+        imports = [ zitadelServer ];
         systemd.services.zitadel-restore = {
           requiredBy = [ "zitadel.service" ];
           before = [ "zitadel.service" ];
@@ -232,14 +192,20 @@ pkgs.testers.runNixOSTest {
             fi
           '';
         };
+      };
+
+    server =
+      { config, ... }:
+      {
+        imports = [
+          (stalwart.node { tlsHosts = [ evil ]; })
+          network
+        ];
+
         # Stalwart fetches ZITADEL's discovery document and keys only as it starts
         systemd.services.zitadel-ready = {
           requiredBy = [ "stalwart.service" ];
           before = [ "stalwart.service" ];
-          after = [
-            "zitadel.service"
-            "nginx.service"
-          ];
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
@@ -247,67 +213,55 @@ pkgs.testers.runNixOSTest {
           script = "until ${lib.getExe pkgs.curl} -fsS -o /dev/null https://${auth.host}/oauth/v2/keys; do sleep 1; done";
         };
 
-        # a virtual-hosted bucket is a subdomain of its endpoint
-        networking.hosts.${nodes.blobs.networking.primaryIPAddress} = [ "${s3.bucket}.blobs" ];
-        services.stalwart = {
-          inherit (bundle) environmentFile;
-          credentials = {
-            s3_access_key = "${pkgs.writeText "s3-access-key" s3.user}";
-            s3_secret_key = "${pkgs.writeText "s3-secret-key" s3.secret}";
+        # cx33-1's blob store is a round trip of about 25 ms away; Stalwart's S3 calls are all that
+        # reach nginx's port 443 over loopback here, and each waits that long on the way out
+        boot.kernelModules = [
+          "sch_prio"
+          "sch_netem"
+          "cls_u32"
+        ];
+        systemd.services.s3-latency = {
+          requiredBy = [ "stalwart.service" ];
+          before = [ "stalwart.service" ];
+          path = [ pkgs.iproute2 ];
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
           };
-          plan.sequence = lib.mkMerge [
-            (lib.mkBefore [
-              (my-lib.stalwart.upsertOn1 "Domain" "agent-domain" [ "name" ] {
-                name = mail.agents.domain;
-                dkimManagement."@type" = "Manual";
-              })
-            ])
-            fromBundle
-            [
-              (my-lib.stalwart.update "BlobStore" {
-                region = {
-                  "@type" = "Custom";
-                  customEndpoint = "http://blobs:9000";
-                  customRegion = "nbg1";
-                };
-              })
-            ]
-            # Stalwart trusts a bearer it has checked for this long, whatever its exp, so the 75 s tokens of the
-            # expiry test need a shorter hold than the hour it defaults to (http/src/auth/authenticate.rs:31-48).
-            # An update must name the provider's own keys, which Stalwart's sign-in, unused here, would sign with.
-            [
-              (my-lib.stalwart.update "OidcProvider" {
-                accessTokenExpiry = 30 * 1000;
-                encryptionKey = {
-                  "@type" = "Value";
-                  secret = "agent-mail-test-encryption";
-                };
-                signatureAlgorithm = "hs256";
-                signatureKey = {
-                  "@type" = "Text";
-                  secret = "agent-mail-test-signature";
-                };
-              })
-            ]
-          ];
+          script = ''
+            tc qdisc add dev lo root handle 1: prio bands 4
+            tc qdisc add dev lo parent 1:4 handle 40: netem delay 25ms
+            tc filter add dev lo parent 1: protocol ip u32 match ip dport 443 0xffff flowid 1:4
+          '';
         };
 
-        bundles.reverse-proxy.hosts.${mail.host} = {
-          port = 8080;
-          forwardedFor = "overwrite";
-          listenAddresses = [ config.networking.primaryIPAddress ];
-          locations = {
-            "/jmap/eventsource".extraConfig = "proxy_buffering off;";
-            # switched on by a file, for the redirect tests
-            "= /.well-known/jmap".extraConfig = ''
-              if (-f /run/redirect/off) { return 302 https://${evil}/collect; }
-              if (-f /run/redirect/loop) { return 302 /.well-known/jmap; }
-            '';
-            "= /jmap/".extraConfig = "if (-f /run/redirect/api) { return 307 /jmap/; }";
-          };
+        # Stalwart trusts a bearer it has checked for this long, whatever its exp, so the 75 s tokens of the
+        # expiry test need a shorter hold than the hour it defaults to (http/src/auth/authenticate.rs:31-48).
+        # An update must name the provider's own keys, which Stalwart's sign-in, unused here, would sign with.
+        services.stalwart.plan.sequence = lib.mkAfter [
+          (my-lib.stalwart.update "OidcProvider" {
+            accessTokenExpiry = 30 * 1000;
+            encryptionKey = {
+              "@type" = "Value";
+              secret = "agent-mail-test-encryption";
+            };
+            signatureAlgorithm = "hs256";
+            signatureKey = {
+              "@type" = "Text";
+              secret = "agent-mail-test-signature";
+            };
+          })
+        ];
+
+        # switched on by a file, for the redirect tests
+        bundles.reverse-proxy.hosts.${mail.host}.locations = {
+          "= /.well-known/jmap".extraConfig = ''
+            if (-f /run/redirect/off) { return 302 https://${evil}/collect; }
+            if (-f /run/redirect/loop) { return 302 /.well-known/jmap; }
+          '';
+          "= /jmap/".extraConfig = "if (-f /run/redirect/api) { return 307 /jmap/; }";
         };
-        services.nginx.virtualHosts.${mail.host} = certificate mail.host;
-        services.nginx.virtualHosts.${evil} = certificate evil // {
+        services.nginx.virtualHosts.${evil} = {
           onlySSL = true;
           listenAddresses = [ config.networking.primaryIPAddress ];
           extraConfig = "access_log /var/log/nginx/evil.log;";
@@ -319,21 +273,6 @@ pkgs.testers.runNixOSTest {
       "owner"
     ];
     host2 = client [ "agent" ];
-    # production keeps messages in object storage a round trip of about 25 ms away
-    blobs = {
-      services.minio = {
-        enable = true;
-        # abandoned upstream, hence insecure; here it only holds the test's messages, on the test's network
-        package = pkgs.minio.overrideAttrs (old: {
-          meta = old.meta // {
-            knownVulnerabilities = [ ];
-          };
-        });
-        rootCredentialsFile = pkgs.writeText "minio-root" "MINIO_ROOT_USER=${s3.user}\nMINIO_ROOT_PASSWORD=${s3.secret}\nMINIO_REGION=nbg1\nMINIO_DOMAIN=blobs\n";
-      };
-      environment.systemPackages = [ pkgs.minio-client ];
-      networking.firewall.allowedTCPPorts = [ 9000 ];
-    };
   };
 
   testScript = stalwart.python + ''
@@ -352,12 +291,6 @@ pkgs.testers.runNixOSTest {
         return found.group(1)
 
     start_all()
-    blobs.wait_for_open_port(9000)
-    blobs.succeed(
-        "mc alias set blobs http://localhost:9000 ${s3.user} ${s3.secret}",
-        "mc mb blobs/${s3.bucket}",
-        "modprobe sch_netem && tc qdisc add dev eth1 root netem delay 25ms",
-    )
     wait_for_stalwart()
 
     with subtest("the build compiled in the seeded client id"):

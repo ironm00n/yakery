@@ -1,35 +1,18 @@
-# A Stalwart node for the scheduler's VM tests: the owner, one program account per counted
+# cx33-1's Stalwart for the scheduler's VM tests: the owner, one program account per counted
 # calendar, schedule@ for Bookings, and an SMTP sink standing in for every other server; and
 # Python helpers for JMAP and the owner's calendars.
 { pkgs }:
 let
   inherit (pkgs) lib;
-  my-lib = import ../../lib { inherit lib; };
-  inherit (my-lib.stalwart) update upsertOn1 toSet;
   stalwart = import ./stalwart-server.nix { inherit pkgs; };
+  inherit (stalwart.my-lib.stalwart) update upsertOn1;
   sink = {
     port = 2525;
     dir = "/var/lib/sink";
   };
-  programAccount =
-    name: permissions:
-    upsertOn1 "Account" name [ "name" "domainId" ] {
-      "@type" = "User";
-      inherit name;
-      domainId = "#domain";
-      permissions = {
-        "@type" = "Merge";
-        enabledPermissions = toSet permissions;
-      };
-      roles = {
-        "@type" = "Custom";
-        roleIds = { };
-      };
-      encryptionAtRest."@type" = "Disabled";
-    };
 in
 rec {
-  inherit (stalwart) domain;
+  inherit (stalwart) domain client;
   calendarAccounts = [
     "work"
     "personal"
@@ -68,12 +51,11 @@ rec {
     });
 
   node = {
-    imports = [ stalwart.node ];
-    services.stalwart.plan.sequence = [
-      (stalwart.account "owen" { })
-    ]
-    ++ lib.mapAttrsToList programAccount programAccounts
-    ++ [
+    imports = [ (stalwart.node { users = [ "owen" ]; }) ];
+    bundles.stalwart.programAccounts = lib.mapAttrs (_: permissions: {
+      inherit permissions;
+    }) programAccounts;
+    services.stalwart.plan.sequence = lib.mkAfter [
       (upsertOn1 "MtaRoute" "sink" [ "name" ] {
         "@type" = "Relay";
         name = "sink";
@@ -121,13 +103,12 @@ rec {
             failures.append(key)
 
     def http(node, auth, method, path, body=None, ctype="application/json", headers=()):
-        host = "127.0.0.1" if node is server else "server"
         args = [f"-X {method}", "-H " + shlex.quote("Authorization: " + auth)]
         args += ["-H " + shlex.quote(h) for h in headers]
         if body is not None:
             data = body if isinstance(body, str) else json.dumps(body)
             args += ["-H " + shlex.quote("Content-Type: " + ctype), "--data-binary " + shlex.quote(data)]
-        out = node.succeed(f"curl -s -w '\\n%{{http_code}}' {' '.join(args)} http://{host}:8080{path}")
+        out = node.succeed(f"curl -s -w '\\n%{{http_code}}' {' '.join(args)} {origin(node)}{path}")
         payload, status = out.rsplit("\n", 1)
         return int(status), payload
 

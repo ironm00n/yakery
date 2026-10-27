@@ -10,8 +10,8 @@ let
   forcedCommand = "${borg} serve --append-only --restrict-to-repository /home/u/stalwart";
 
   stalwart = import ./stalwart-server.nix { inherit pkgs; };
-  inherit (stalwart) domain account;
-  vandelay = pkgs.callPackage ../../packages/vandelay { };
+  inherit (stalwart) domain;
+  inherit (stalwart.my-lib.stalwart) upsertOn1 ref;
 in
 pkgs.testers.runNixOSTest {
   name = "stalwart-backup";
@@ -19,83 +19,51 @@ pkgs.testers.runNixOSTest {
   defaults.virtualisation.graphics = false;
 
   nodes = {
-    box = box.node;
+    box = {
+      imports = [
+        box.node
+        stalwart.client
+      ];
+    };
 
-    server =
-      { config, ... }:
-      {
-        imports = [
-          stalwart.node
-          ../../bundles/backup.nix
-          # sops-nix stays out of tests; the services here name plain files instead
-          { options.sops.secrets = pkgs.lib.mkOption { type = pkgs.lib.types.attrs; }; }
-        ];
-        _module.args = {
-          my-lib = import ../../lib { inherit (pkgs) lib; };
-          inputs = { };
-        };
+    server = {
+      imports = [ (stalwart.node { users = [ "alice" ]; }) ];
 
-        services.stalwart.plan.sequence = [
-          (account "alice" { })
-          (account "backup" {
-            roles = {
-              "@type" = "Custom";
-              roleIds = { };
-            };
-            permissions = {
-              "@type" = "Merge";
-              enabledPermissions = pkgs.lib.genAttrs config.services.stalwart.backup.permissions (_: true);
-            };
-          })
-          {
-            "@type" = "upsert";
-            object = "Account";
-            matchOn = [
-              "name"
-              "domainId"
-            ];
-            value.team = {
-              "@type" = "Group";
-              name = "team";
-              domainId = "#domain";
-              permissions."@type" = "Inherit";
-              roles = {
-                "@type" = "Custom";
-                roleIds = { };
-              };
-            };
-          }
-        ];
-
-        services.stalwart.backup = {
-          enable = true;
-          package = vandelay;
-          account = "backup@${domain}";
-        };
-
-        environment.etc."backup/passphrase".text = "correct horse battery staple";
-        environment.etc."backup/ssh-key" = {
-          source = snakeOilEd25519PrivateKey;
-          mode = "0600";
-        };
-        environment.systemPackages = [ pkgs.sqlite ];
-
-        bundles.backup = {
-          target = {
-            host = "box";
-            user = "u";
-            hostPublicKey = box.hostKey.public;
-            remotePath = borg;
+      services.stalwart.plan.sequence = pkgs.lib.mkAfter [
+        (upsertOn1 "Account" "team" [ "name" "domainId" ] {
+          "@type" = "Group";
+          name = "team";
+          domainId = ref "ironmoon";
+          permissions."@type" = "Inherit";
+          roles = {
+            "@type" = "Custom";
+            roleIds = { };
           };
-          services.stalwart = {
-            secretsFile = null;
-            passphraseFile = "/etc/backup/passphrase";
-            sshKeyFile = "/etc/backup/ssh-key";
-            inherit (config.services.stalwart.backup) dumpCommand;
-            readWritePaths = [ config.services.stalwart.backup.stateDir ];
-          };
+        })
+      ];
+
+      environment.etc."backup/passphrase".text = "correct horse battery staple";
+      environment.etc."backup/ssh-key" = {
+        source = snakeOilEd25519PrivateKey;
+        mode = "0600";
+      };
+      environment.systemPackages = [ pkgs.sqlite ];
+
+      # the repository is the box's, with the box's key
+      bundles.backup = {
+        target = {
+          host = "box";
+          user = "u";
+          hostPublicKey = box.hostKey.public;
+          remotePath = borg;
+        };
+        services.stalwart = {
+          secretsFile = null;
+          passphraseFile = "/etc/backup/passphrase";
+          sshKeyFile = "/etc/backup/ssh-key";
         };
       };
+    };
   };
 
   testScript =
