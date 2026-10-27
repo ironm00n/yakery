@@ -735,3 +735,28 @@ async fn a_wait_fails_once_no_scan_has_finished_for_5_minutes_and_rides_out_a_sh
         )
     );
 }
+
+#[tokio::test]
+async fn change_lists_that_do_not_read_or_do_not_move_and_queries_whose_pages_keep_moving_fail() {
+    let dir = Scratch::new("pages");
+    let changes = |reply: Value| ("Email/changes", Canned::Answer(reply));
+    let mut stalwart = Stalwart::new(vec![]);
+    stalwart.canned.extend([
+        changes(json!({ "created": [1], "updated": [], "newState": "s1" })),
+        changes(json!({ "created": [], "updated": [], "newState": "s0", "hasMoreChanges": true })),
+    ]);
+    let moved = || ("Email/query", Canned::Error("anchorNotFound", false));
+    stalwart.canned.extend((0..10).map(|_| moved()));
+    let (_wire, _server, mail) = mail(&dir, stalwart).await;
+    let mail = mail.unwrap();
+    let changed = async || shown(mail.changes("s0").await.map(|c| format!("{c:?}")));
+    assert_eq!(
+        changed().await,
+        "error: stalwart's Email/changes reply: invalid type: integer `1`, expected a string"
+    );
+    assert_eq!(changed().await, "error: stalwart's Email/changes has more past s0");
+    assert_eq!(
+        shown(mail.query(json!({})).await.map(|ids| ids.len())),
+        "error: the mail kept changing under Email/query's pages"
+    );
+}

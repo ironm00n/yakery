@@ -14,6 +14,7 @@ use crate::{
 
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
 const PAGE: usize = 256;
+const RESTARTS: usize = 10;
 
 wire! {
     views {
@@ -308,7 +309,7 @@ impl Mail {
 
     /// Every id the filter matches, unsorted, since a sort is answered from the full-text index, which lags ingest.
     pub async fn query(&self, filter: Value) -> Result<Vec<String>> {
-        let mut ids: Vec<String> = vec![];
+        let (mut ids, mut restarts): (Vec<String>, usize) = (vec![], 0);
         loop {
             let at = match ids.last() {
                 Some(last) => {
@@ -317,6 +318,8 @@ impl Mail {
                 None => json!({ "filter": filter, "limit": PAGE, "position": 0 }),
             };
             let Some(page) = self.answer(false, QUERY, at).await? else {
+                restarts += 1;
+                ensure!(restarts < RESTARTS, "the mail kept changing under Email/query's pages");
                 ids.clear();
                 continue;
             };
@@ -355,12 +358,15 @@ impl Mail {
             let args = json!({ "sinceState": state, "maxChanges": PAGE });
             let Some(changed) = self.answer(false, CHANGES, args).await? else { return Ok(None) };
             for list in [changed.created, changed.updated] {
-                ids.extend(serde_json::from_value::<Vec<String>>(list).unwrap_or_default());
+                let list: Option<Vec<String>> =
+                    serde_json::from_value(list).context("stalwart's Email/changes reply")?;
+                ids.extend(list.unwrap_or_default());
             }
-            state = changed.new_state;
             if !changed.more {
-                return Ok(Some((ids.into_iter().collect(), state)));
+                return Ok(Some((ids.into_iter().collect(), changed.new_state)));
             }
+            ensure!(changed.new_state != state, "stalwart's Email/changes has more past {state}");
+            state = changed.new_state;
         }
     }
 
