@@ -111,7 +111,8 @@ commands! {
     #[command(about = read::ATTACHMENTS_HELP)]
     Attachments(read::One) => read::attachments,
     /// Wait for watched mail from others that is unseen, unanswered and not done; claim it as seen, print it, and
-    /// send any read receipt it asks for. Exits 2 at --timeout, and fails when no scan has finished for 5 minutes. Seen mail still unanswered is listed on stderr.
+    /// send any read receipt it asks for. Exits 2 at --timeout, but fails once no scan has finished for 5 minutes or
+    /// at a --timeout no scan finished before. Seen mail still unanswered is listed on stderr.
     Wait(wait::Args) => wait::run,
     /// Mark mail handled, so wait neither delivers it nor lists it again.
     Done(read::Many) => read::done,

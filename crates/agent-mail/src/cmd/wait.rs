@@ -73,7 +73,8 @@ struct Watch<'a> {
     deadline: Option<Instant>,
     cursor: Cursor,
     lost: HashSet<String>,
-    scanned: Instant,
+    started: Instant,
+    scanned: Option<Instant>,
 }
 
 impl Watch<'_> {
@@ -183,7 +184,7 @@ impl Watch<'_> {
             }
             reminded.extend(fresh.into_iter().map(|m| m.id));
             let claimed = claimed?;
-            self.scanned = Instant::now();
+            self.scanned = Some(Instant::now());
             if !claimed.is_empty() {
                 return Ok(Some(claimed));
             }
@@ -208,50 +209,50 @@ impl Watch<'_> {
     async fn until_due(&mut self) -> Result<Option<Vec<Email>>> {
         let (mut backoff, mut reminded) = (BACKOFF, HashSet::new());
         loop {
+            let before = self.scanned;
             let e = match self.settle(&mut reminded).await {
                 Ok(wake) => return Ok(wake),
                 Err(e) => e,
             };
-            if self.scanned.elapsed() >= STALE {
+            if self.scanned != before {
+                backoff = BACKOFF;
+            }
+            let since = self.scanned.unwrap_or(self.started).elapsed();
+            if since >= STALE {
                 return Err(
                     e.context(format!("no scan finished in {} minutes", STALE.as_secs() / 60))
                 );
             }
-            let pause = match Failure::of(&e) {
-                Failure::Idle => {
-                    backoff = BACKOFF;
-                    continue;
-                }
-                Failure::Dropped => {
-                    warn!("{e:#}; reopening the push stream");
-                    Duration::from_secs(1)
-                }
+            let sign_in = |why: String| (backoff, true, format!("{why}; signing in again"));
+            let (pause, reconnect, why) = match Failure::of(&e) {
+                Failure::Idle => continue,
                 Failure::Config | Failure::PasswordRefused => return Err(e),
+                Failure::Dropped => {
+                    (Duration::from_secs(1), false, format!("{e:#}; reopening the push stream"))
+                }
                 Failure::Busy => {
-                    warn!("stalwart stays over its request limit; checking again in 30s");
-                    Duration::from_secs(30)
+                    let why = "stalwart stays over its request limit; checking again";
+                    (Duration::from_secs(30), false, why.into())
                 }
-                kind @ (Failure::TokenRefused | Failure::Unprocessed | Failure::Transient) => {
-                    let why = match kind {
-                        Failure::TokenRefused => "the access token expired".into(),
-                        _ => format!("{e:#}"),
-                    };
-                    warn!("{why}; signing in again in {}s", backoff.as_secs());
-                    let pause = backoff;
-                    backoff = (backoff * 2).min(Duration::from_secs(300));
-                    if !self.pause(pause).await {
-                        return Ok(None);
-                    }
-                    match self.mail.reconnect().await {
-                        Err(e) if Failure::of(&e).permanent() => return Err(e),
-                        Err(e) => warn!("{e:#}"),
-                        Ok(()) => note!("signed in again; waiting"),
-                    }
-                    continue;
-                }
+                Failure::TokenRefused => sign_in("the access token expired".into()),
+                Failure::Unprocessed | Failure::Transient => sign_in(format!("{e:#}")),
             };
+            // The last attempt comes at the bound, so an outage shorter than it is waited out.
+            let pause = pause.min(STALE - since);
+            warn!("{why} in {}s", pause.as_secs());
             if !self.pause(pause).await {
-                return Ok(None);
+                return match self.scanned {
+                    Some(_) => Ok(None),
+                    None => Err(e.context("the wait timed out before any scan finished")),
+                };
+            }
+            if reconnect {
+                backoff *= 2;
+                match self.mail.reconnect().await {
+                    Err(e) if Failure::of(&e).permanent() => return Err(e),
+                    Err(e) => warn!("{e:#}"),
+                    Ok(()) => note!("signed in again; waiting"),
+                }
             }
         }
     }
@@ -269,8 +270,9 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
     let (inbox, sent, starts) =
         (mail.mailbox("inbox")?, mail.mailbox("sent")?, args.thread.clone());
     let (deadline, cursor, lost) = (deadline.transpose()?, Cursor::default(), HashSet::new());
-    let scanned = Instant::now();
-    let mut watch = Watch { mail, inbox, sent, topics, starts, deadline, cursor, lost, scanned };
+    let (started, scanned) = (Instant::now(), None);
+    let mut watch =
+        Watch { mail, inbox, sent, topics, starts, deadline, cursor, lost, started, scanned };
     for start in &args.thread {
         ensure!(mail.current(start).await?.is_some(), "no email {start}");
     }
