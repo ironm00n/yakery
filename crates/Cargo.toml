@@ -6,6 +6,7 @@ members = [
     "agent-proto",
     "agentd",
     "agent-host",
+    "agent-slack",
     "lib/text",
     "lib/private",
     "lib/log",
@@ -27,6 +28,7 @@ bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 comrak = { version = "0.56", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 getrandom = { version = "0.4", features = ["std"] }
 http = "1"
 http-body = "1"
@@ -41,6 +43,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 rustix = { version = "1", features = ["fs", "process"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
+rustls-platform-verifier = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -48,6 +51,8 @@ signal-hook = "0.3"
 subtle = { version = "2.6", default-features = false }
 tempfile = "3"
 tokio = "1"
+tokio-rustls = { version = "0.26", default-features = false }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 tokio-vsock = "0.7"
 toml = "0.8"
 

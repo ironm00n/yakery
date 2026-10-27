@@ -1,0 +1,43 @@
+[package]
+name = "agent-slack"
+version = "0.1.0"
+description = "One agent session's Slack: a daemon holding Socket Mode and an inbox, and the command that waits, sends and reads"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-slackd"
+path = "src/bin/agent-slackd.rs"
+
+[[bin]]
+name = "agent-slack"
+path = "src/bin/agent-slack.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+private.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+text.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tokio-rustls.workspace = true
+tokio-tungstenite.workspace = true
+yakery-log.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
