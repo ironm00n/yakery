@@ -136,6 +136,8 @@ struct Fake {
     connections: Mutex<usize>,
     /// apps.connections.open answers this error instead of a URL.
     refused: Mutex<Option<&'static str>>,
+    /// conversations.history always has more.
+    endless: Mutex<bool>,
 }
 
 impl Fake {
@@ -164,7 +166,9 @@ impl Fake {
             "conversations.history" => {
                 let mut top = after(&self.history.lock().unwrap());
                 top.reverse();
-                json!({ "ok": true, "messages": top, "has_more": false })
+                let more = *self.endless.lock().unwrap();
+                let cursor = json!({ "next_cursor": "more" });
+                json!({ "ok": true, "messages": top, "has_more": more, "response_metadata": cursor })
             }
             "conversations.replies" => {
                 let thread =
@@ -516,4 +520,14 @@ async fn a_connection_that_answers_no_ping_is_dropped_and_another_opened() {
     let start = Instant::now();
     h.connected(2).await;
     assert!(start.elapsed() >= 2 * QUICK.ping, "{:?}", start.elapsed());
+}
+
+#[tokio::test]
+async fn history_that_always_has_more_ends_at_its_page_bound() {
+    let fake = Arc::new(Fake { endless: Mutex::new(true), ..Fake::default() });
+    let paged = slack(fake).await.history(&HOME.parse().unwrap(), ts("1.000001")).await;
+    assert_eq!(
+        paged.unwrap_err().to_string(),
+        "conversations.history: still more after 1000 pages"
+    );
 }

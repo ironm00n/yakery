@@ -16,6 +16,8 @@ use crate::{Channel, Raw, Ts, User};
 
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 const RATE_LIMITED_TRIES: usize = 5;
+const MAX_PAGES: usize = 1000;
+const LONGEST_RETRY_AFTER: u64 = 60;
 
 pub struct Slack {
     http: Client,
@@ -68,7 +70,10 @@ impl Slack {
                 .with_context(|| format!("calling {method}"))?;
             if response.status() == StatusCode::TOO_MANY_REQUESTS {
                 let after = response.headers().get(header::RETRY_AFTER);
-                let secs = after.and_then(|v| v.to_str().ok()?.parse().ok()).unwrap_or(1);
+                let secs = after
+                    .and_then(|v| v.to_str().ok()?.parse().ok())
+                    .unwrap_or(1)
+                    .min(LONGEST_RETRY_AFTER);
                 tokio::time::sleep(Duration::from_secs(secs)).await;
                 continue;
             }
@@ -102,7 +107,7 @@ impl Slack {
     async fn pages(&self, method: &str, form: Vec<(&str, String)>) -> Result<Vec<Raw>> {
         let mut out = Vec::new();
         let mut cursor = None;
-        loop {
+        for _ in 0..MAX_PAGES {
             let mut form = form.clone();
             form.push(("limit", "200".into()));
             form.extend(cursor.take().map(|c| ("cursor", c)));
@@ -113,6 +118,7 @@ impl Slack {
                 return Ok(out);
             }
         }
+        bail!("{method}: still more after {MAX_PAGES} pages")
     }
 
     /// The channel's top-level messages after `since`, its channel filled in.
