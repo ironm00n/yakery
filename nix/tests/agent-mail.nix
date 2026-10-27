@@ -511,5 +511,37 @@ pkgs.testers.runNixOSTest {
         host1.succeed(f"echo after the refresh | {owner} send --to agent+expiring@${domain} --subject expiring")
         host2.wait_until_succeeds("grep -q 'after the refresh' /tmp/expiring.out", timeout=120)
         access_tokens_last("43200s")
+
+    # a wait as agent on host1, its exit status written beside its output once it ends
+    def waiting(unit, timeout):
+        host1.succeed(
+            f"systemd-run --uid=agent -E PATH=/run/current-system/sw/bin --unit={unit} -p StandardOutput=file:/tmp/{unit}.out"
+            f" -p StandardError=file:/tmp/{unit}.err sh -c 'agent-mail wait --topic {unit} --timeout {timeout}; echo $? > /tmp/{unit}.status'"
+        )
+        host1.wait_until_succeeds(f"grep -q 'waiting for' /tmp/{unit}.err", timeout=30)
+
+    with subtest("a wait rides out Stalwart restarting for a few seconds"):
+        waiting("restarted", "10m")
+        # most of a recheck period after its last scan, so the restart comes as long after one as it can
+        time.sleep(140)
+        server.succeed("systemctl restart stalwart")
+        wait_for_stalwart()
+        host1.succeed(f"echo after the restart | {owner} send --to agent+restarted@${domain} --subject restarted")
+        host1.wait_until_succeeds("test -e /tmp/restarted.status", timeout=180)
+        err = host1.succeed("cat /tmp/restarted.err")
+        assert host1.succeed("cat /tmp/restarted.status").strip() == "0" and "no scan finished" not in err, err
+        host1.succeed("grep -q 'after the restart' /tmp/restarted.out")
+
+    with subtest("a wait that finishes no scan for 5 minutes fails, after warning of each failed try"):
+        waiting("stopped", "15m")
+        server.succeed("systemctl stop stalwart")
+        stopped = time.time()
+        host1.wait_until_succeeds("test -e /tmp/stopped.status", timeout=420)
+        took = time.time() - stopped
+        err = host1.succeed("cat /tmp/stopped.err")
+        print(f"the wait failed {took:.0f} s after Stalwart stopped:\n{err}")
+        assert host1.succeed("cat /tmp/stopped.status").strip() != "0", err
+        failed = err.index("no scan finished in 5 minutes")
+        assert "signing in again in" in err[:failed] and took < 6 * 60, (took, err)
   '';
 }
