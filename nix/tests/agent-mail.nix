@@ -148,8 +148,17 @@ let
       "Authentication"
       "Jmap"
       "Http"
+      "BlobStore"
     ]
   ) bundle.plan.sequence;
+  s3 = {
+    user = "stalwart";
+    secret = "stalwart-blobs";
+    inherit
+      ((lib.findFirst (s: s.object == "BlobStore") (throw "no BlobStore") bundle.plan.sequence).value)
+      bucket
+      ;
+  };
 
   client = users: {
     imports = [ network ];
@@ -196,7 +205,7 @@ pkgs.testers.runNixOSTest {
 
   nodes = {
     server =
-      { config, ... }:
+      { config, nodes, ... }:
       let
         postgres = config.services.postgresql.package;
       in
@@ -238,8 +247,14 @@ pkgs.testers.runNixOSTest {
           script = "until ${lib.getExe pkgs.curl} -fsS -o /dev/null https://${auth.host}/oauth/v2/keys; do sleep 1; done";
         };
 
+        # a virtual-hosted bucket is a subdomain of its endpoint
+        networking.hosts.${nodes.blobs.networking.primaryIPAddress} = [ "${s3.bucket}.blobs" ];
         services.stalwart = {
           inherit (bundle) environmentFile;
+          credentials = {
+            s3_access_key = "${pkgs.writeText "s3-access-key" s3.user}";
+            s3_secret_key = "${pkgs.writeText "s3-secret-key" s3.secret}";
+          };
           plan.sequence = lib.mkMerge [
             (lib.mkBefore [
               (my-lib.stalwart.upsertOn1 "Domain" "agent-domain" [ "name" ] {
@@ -248,6 +263,15 @@ pkgs.testers.runNixOSTest {
               })
             ])
             fromBundle
+            [
+              (my-lib.stalwart.update "BlobStore" {
+                region = {
+                  "@type" = "Custom";
+                  customEndpoint = "http://blobs:9000";
+                  customRegion = "nbg1";
+                };
+              })
+            ]
             # Stalwart trusts a bearer it has checked for this long, whatever its exp, so the 75 s tokens of the
             # expiry test need a shorter hold than the hour it defaults to (http/src/auth/authenticate.rs:31-48).
             # An update must name the provider's own keys, which Stalwart's sign-in, unused here, would sign with.
@@ -295,6 +319,21 @@ pkgs.testers.runNixOSTest {
       "owner"
     ];
     host2 = client [ "agent" ];
+    # production keeps messages in object storage a round trip of about 25 ms away
+    blobs = {
+      services.minio = {
+        enable = true;
+        # abandoned upstream, hence insecure; here it only holds the test's messages, on the test's network
+        package = pkgs.minio.overrideAttrs (old: {
+          meta = old.meta // {
+            knownVulnerabilities = [ ];
+          };
+        });
+        rootCredentialsFile = pkgs.writeText "minio-root" "MINIO_ROOT_USER=${s3.user}\nMINIO_ROOT_PASSWORD=${s3.secret}\nMINIO_REGION=nbg1\nMINIO_DOMAIN=blobs\n";
+      };
+      environment.systemPackages = [ pkgs.minio-client ];
+      networking.firewall.allowedTCPPorts = [ 9000 ];
+    };
   };
 
   testScript = stalwart.python + ''
@@ -313,6 +352,12 @@ pkgs.testers.runNixOSTest {
         return found.group(1)
 
     start_all()
+    blobs.wait_for_open_port(9000)
+    blobs.succeed(
+        "mc alias set blobs http://localhost:9000 ${s3.user} ${s3.secret}",
+        "mc mb blobs/${s3.bucket}",
+        "modprobe sch_netem && tc qdisc add dev eth1 root netem delay 25ms",
+    )
     wait_for_stalwart()
 
     with subtest("the build compiled in the seeded client id"):
@@ -459,6 +504,26 @@ pkgs.testers.runNixOSTest {
     def offset(node):
         sent = time.time()
         return float(node.succeed("date +%s.%N")) - (sent + time.time()) / 2
+
+    with subtest("a wait scans an inbox of production's size, each message a round trip away in S3, within a request's bound"):
+        def stored(n):
+            raw = (
+                f"From: ${logins.owner}\r\nTo: agent+other{n % 20}@${domain}\r\nSubject: open {n}\r\nMIME-Version: 1.0\r\n"
+                "Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\n"
+                f"open {n}\r\n--b\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=n.txt\r\n\r\n{n}\r\n--b--\r\n"
+            )
+            return json.loads(host1.succeed(f"printf %s {shlex.quote(raw)} | {upload}"))["blobId"]
+
+        stored_ids = [stored(n) for n in range(600)]
+        for at in range(0, len(stored_ids), 100):
+            emails = {str(i): {"blobId": b, "mailboxIds": {inbox: True}} for i, b in enumerate(stored_ids[at:at + 100])}
+            created = jmap(tokens[0], "Email/import", {"accountId": account, "emails": emails})["created"]
+            assert len(created) == len(emails), created
+        # so every message comes from the bucket, as months-old mail does
+        server.succeed("systemctl restart stalwart")
+        wait_for_stalwart()
+        status, out = host1.execute(f"{agent} wait --topic quiet --timeout 40s 2>&1")
+        assert status == 2 and "timed out" not in out, out
 
     with subtest("waits on two hosts claim each mail of a topic once"):
         both = "agent+both@${domain}"
