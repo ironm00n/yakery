@@ -15,6 +15,7 @@
   ];
 
   bundles = {
+    agent-slack.enable = true;
     displaylink.enable = true;
     gaming.enable = true;
     virtualisation = {
