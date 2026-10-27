@@ -1,9 +1,12 @@
 # A ZITADEL node from bundles/zitadel.nix, with its secrets as plain files under secretsDir, a PAT
-# for the first instance's machine user, and Python helpers for its API.
-{ pkgs }:
+# for the first instance's machine user, and Python helpers for its API. `my-lib` is the facts it is
+# deployed with, for a test on another domain.
+{
+  pkgs,
+  my-lib ? import ../../lib { inherit (pkgs) lib; },
+}:
 let
   inherit (pkgs) lib;
-  my-lib = import ../../lib { inherit lib; };
   secretsDir = "/etc/zitadel-test";
 in
 {
