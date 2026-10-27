@@ -4,8 +4,9 @@ use private::{Mode, PARTIAL_EXPIRY, Replace, Secret};
 
 use super::*;
 use crate::{
+    address::SessionId,
     cmd::read::folder,
-    store::{Access, PasswordFile, Store, Tokens},
+    store::{Access, PasswordFile, Store, Tokens, Watched},
 };
 
 fn mode(path: &Path) -> u32 {
@@ -105,4 +106,25 @@ async fn a_password_is_staged_beside_its_file_and_promoted_once() {
     file.promote(&b, &held).unwrap();
     assert!(file.promote(&Secret::new("other"), &held).is_err());
     assert_eq!((dir.file("pw"), dir.file("pw.new")), (Some("new-b".into()), None));
+}
+
+#[test]
+fn a_sessions_records_add_up_privately_and_stay_its_own() {
+    let dir = Scratch::new("records");
+    let records = store(&dir, "agent@example.org").records().unwrap();
+    let (a, b): (SessionId, SessionId) = ("a-1".parse().unwrap(), "b-2".parse().unwrap());
+    records.record(&a, vec!["pool".parse().unwrap()], vec![]).unwrap();
+    records.record(&a, vec!["pool".parse().unwrap()], vec!["e1".into()]).unwrap();
+    let Watched { topics, threads } = records.of(&a).unwrap();
+    assert_eq!(
+        (
+            topics.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+            threads.into_iter().collect::<Vec<_>>()
+        ),
+        (vec!["pool".into()], vec!["e1".into()])
+    );
+    assert!(records.of(&b).unwrap().topics.is_empty());
+    let sessions = dir.0.join("locks/agent-mail/sessions");
+    assert_eq!((mode(&sessions), mode(&sessions.join("a-1.json"))), (0o700, 0o600));
+    rows!(parsed::<SessionId>; "../a", "", "a/b", &"a".repeat(65) => "refused"; "0f3c-9a" => "0f3c-9a");
 }

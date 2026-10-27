@@ -682,3 +682,28 @@ fn attachments_take_inline_media_once_and_the_images_the_html_embeds() {
     let [read::Source::Embedded(Err(e))] = &read::sources(&cut)[..] else { panic!() };
     assert_eq!(e.to_string(), "its HTML runs past 209715200 bytes, so no image in it was read");
 }
+
+#[test]
+fn a_wait_line_is_one_json_object_holding_the_whole_text_and_whether_it_was_cut() {
+    let line = |text: &str, cut: bool| {
+        let m = email(
+            "a1",
+            json!({
+                "subject": "deploy", "textBody": [{ "partId": "1", "type": "text/plain" }],
+                "bodyValues": { "1": { "value": text, "isTruncated": cut } },
+            }),
+        );
+        wait::line(&view(m.clone()), &view(m))
+    };
+    let text = "yes\r\n\u{2028}> ok?\r\n";
+    let whole = line(text, false);
+    assert!(!whole.contains('\n'), "{whole}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&whole).unwrap(),
+        json!({
+            "id": "a1", "threadId": "T", "receivedAt": "2026-10-01T00:00:00Z", "from": HIM, "to": [POOL], "cc": [],
+            "subject": "deploy", "text": text, "truncated": false,
+        })
+    );
+    assert_eq!(serde_json::from_str::<Value>(&line("ye", true)).unwrap()["truncated"], json!(true));
+}

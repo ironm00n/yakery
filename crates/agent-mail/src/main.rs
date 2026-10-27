@@ -114,6 +114,8 @@ commands! {
     /// send any read receipt it asks for. Exits 2 at --timeout, but fails once no scan has finished for 5 minutes or
     /// at a --timeout no scan finished before. Seen mail still unanswered is listed on stderr.
     Wait(wait::Args) => wait::run,
+    /// Record topics and threads for this Claude Code session's `wait --session`, without sending.
+    Subscribe(wait::Subscribe) => wait::subscribe,
     /// Mark mail handled, so wait neither delivers it nor lists it again.
     Done(read::Many) => read::done,
     /// Sign in if needed and show when the access token expires.

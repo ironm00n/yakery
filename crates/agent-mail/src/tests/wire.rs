@@ -589,9 +589,10 @@ async fn delivery_keeps_the_copy_only_while_it_may_have_gone_out() {
 
 fn watching(timeout: u64) -> wait::Args {
     wait::Args {
-        topic: vec!["pool".parse().unwrap()],
-        thread: vec![],
+        watching: wait::Watching { topic: vec!["pool".parse().unwrap()], thread: vec![] },
+        session: None,
         timeout: Some(Duration::from_secs(timeout)),
+        json: false,
     }
 }
 
