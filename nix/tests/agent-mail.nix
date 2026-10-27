@@ -109,11 +109,20 @@ let
       '';
   };
 
+  # a recheck period outlasts one of Stalwart's pings, which it sends 30 s apart at the most often, and the stale bound
+  # outlasts a restart late in a recheck period
+  periods = {
+    recheck = 45;
+    backoff = 1;
+    stale = 90;
+  };
+
   agent-mail =
     (pkgs.callPackage ../../crates/agent-mail/package.nix {
       deployment = my-lib.ironmoon;
       correspondents = [ ];
       correspondentsFor = { };
+      inherit periods;
     }).overrideAttrs
       (old: {
         preBuild = (old.preBuild or "") + ''
@@ -161,11 +170,6 @@ let
       ) users
     );
   };
-in
-pkgs.testers.runNixOSTest {
-  name = "agent-mail";
-
-  defaults.virtualisation.graphics = false;
 
   nodes = {
     auth =
@@ -235,9 +239,10 @@ pkgs.testers.runNixOSTest {
           '';
         };
 
-        # Stalwart trusts a bearer it has checked for this long, whatever its exp, so the 75 s tokens of the
-        # expiry test need a shorter hold than the hour it defaults to (http/src/auth/authenticate.rs:31-48).
-        # An update must name the provider's own keys, which Stalwart's sign-in, unused here, would sign with.
+        # Stalwart trusts a bearer it has checked for this long, whatever its exp, so the expiry test's tokens, which
+        # last a little less than a recheck period, need a shorter hold than the hour it defaults to
+        # (http/src/auth/authenticate.rs:31-48). An update must name the provider's own keys, which Stalwart's sign-in,
+        # unused here, would sign with.
         services.stalwart.plan.sequence = lib.mkAfter [
           (my-lib.stalwart.update "OidcProvider" {
             accessTokenExpiry = 30 * 1000;
@@ -275,14 +280,14 @@ pkgs.testers.runNixOSTest {
     host2 = client [ "agent" ];
   };
 
-  testScript = stalwart.python + ''
-    import collections
+  prelude = stalwart.python + ''
     import re
     import time
 
     ids = json.load(open("${seed}/ids.json"))
     agent, owner = "runuser -u agent -- agent-mail", "runuser -u owner -- agent-mail"
     topic = "agent+smoke@${domain}"
+    periods = ${builtins.toJSON periods}
 
     # the email id agent-mail prints after a prefix: "sent" for send, "===" for each mail of wait
     def email_id(prefix, output):
@@ -313,6 +318,20 @@ pkgs.testers.runNixOSTest {
         for node, user in [(host1, agent), (host2, agent), (host1, owner)]:
             node.succeed(f"{user} login", f"{user} inbox")
 
+    bearer = lambda node: json.loads(node.succeed("cat /home/agent/.local/state/agent-mail/tokens.json"))["access"]["token"]
+    using = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"]
+    json_type = "-H 'Content-Type: application/json'"
+
+    def jmap(token, method, args):
+        body = shlex.quote(json.dumps({"using": using, "methodCalls": [[method, args, "c"]]}))
+        out = host1.succeed(f"curl -fsS -H 'Authorization: Bearer {token}' {json_type} --data {body} https://${mail.host}/jmap/")
+        return json.loads(out)["methodResponses"][0][1]
+  '';
+
+  # the commands and the mail they move, an inbox of production's size, and two hosts on one login
+  flows = ''
+    import collections
+
     with subtest("wait prints owner's mail to the topic and sends a read receipt"):
         sent = host1.succeed(f"echo '**smoke** test' | {owner} send --to {topic} --subject smoke")
         sent_id = email_id("sent", sent)
@@ -332,7 +351,7 @@ pkgs.testers.runNixOSTest {
 
     with subtest("done keeps the mail from wait, which times out with 2, and finds no email under an id Stalwart can't read"):
         host1.succeed(f"{agent} done {smoke_id}")
-        status, _ = host1.execute(f"{agent} wait --topic smoke --timeout 20s")
+        status, _ = host1.execute(f"{agent} wait --topic smoke --timeout 3s")
         assert status == 2, status
         status, refused = host1.execute(f"{agent} done x_y 2>&1")
         assert status == 1 and "no email x_y" in refused, refused
@@ -384,15 +403,6 @@ pkgs.testers.runNixOSTest {
         server.succeed("test ! -s /var/log/nginx/evil.log")
         host1.succeed(f"{agent} inbox")
 
-    bearer = lambda node: json.loads(node.succeed("cat /home/agent/.local/state/agent-mail/tokens.json"))["access"]["token"]
-    using = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail"]
-    json_type = "-H 'Content-Type: application/json'"
-
-    def jmap(token, method, args):
-        body = shlex.quote(json.dumps({"using": using, "methodCalls": [[method, args, "c"]]}))
-        out = host1.succeed(f"curl -fsS -H 'Authorization: Bearer {token}' {json_type} --data {body} https://${mail.host}/jmap/")
-        return json.loads(out)["methodResponses"][0][1]
-
     with subtest("of two hosts' marks racing for one mail Stalwart writes one, the only one a claim takes"):
         tokens = [bearer(host1), bearer(host2)]
         discovered = json.loads(host1.succeed(f"curl -fsSL -H 'Authorization: Bearer {tokens[0]}' https://${mail.host}/.well-known/jmap"))
@@ -439,15 +449,22 @@ pkgs.testers.runNixOSTest {
         return float(node.succeed("date +%s.%N")) - (sent + time.time()) / 2
 
     with subtest("a wait scans an inbox of production's size, each message a round trip away in S3, within a request's bound"):
-        def stored(n):
-            raw = (
-                f"From: ${logins.owner}\r\nTo: agent+other{n % 20}@${domain}\r\nSubject: open {n}\r\nMIME-Version: 1.0\r\n"
-                "Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\n"
-                f"open {n}\r\n--b\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=n.txt\r\n\r\n{n}\r\n--b--\r\n"
-            )
-            return json.loads(host1.succeed(f"printf %s {shlex.quote(raw)} | {upload}"))["blobId"]
-
-        stored_ids = [stored(n) for n in range(600)]
+        # a printf format for mail n, of n % 20, n, n and n
+        raw = shlex.quote(
+            "From: ${logins.owner}\r\nTo: agent+other%d@${domain}\r\nSubject: open %d\r\nMIME-Version: 1.0\r\n"
+            "Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\n"
+            "open %d\r\n--b\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=n.txt\r\n\r\n%d\r\n--b--\r\n"
+        )
+        # uploaded from host1 itself, as one driver command each would take minutes, 4 at a time, as many as Stalwart
+        # takes from one account by default
+        stored = host1.succeed(
+            "mkdir /tmp/stored && for n in $(seq 0 599); do"
+            f" printf {raw} $((n % 20)) $n $n $n | {upload} -o /tmp/stored/$n.json &"
+            " if [ $((n % 4)) = 3 ]; then wait; fi; done; wait;"
+            " for n in $(seq 0 599); do cat /tmp/stored/$n.json; echo; done"
+        )
+        stored_ids = [json.loads(line)["blobId"] for line in stored.splitlines() if line]
+        assert len(stored_ids) == 600, len(stored_ids)
         for at in range(0, len(stored_ids), 100):
             emails = {str(i): {"blobId": b, "mailboxIds": {inbox: True}} for i, b in enumerate(stored_ids[at:at + 100])}
             created = jmap(tokens[0], "Email/import", {"accountId": account, "emails": emails})["created"]
@@ -455,7 +472,7 @@ pkgs.testers.runNixOSTest {
         # so every message comes from the bucket, as months-old mail does
         server.succeed("systemctl restart stalwart")
         wait_for_stalwart()
-        status, out = host1.execute(f"{agent} wait --topic quiet --timeout 40s 2>&1")
+        status, out = host1.execute(f"{agent} wait --topic quiet --timeout 20s 2>&1")
         assert status == 2 and "timed out" not in out, out
 
     with subtest("waits on two hosts claim each mail of a topic once"):
@@ -471,7 +488,7 @@ pkgs.testers.runNixOSTest {
                 at = int((start + ahead) * 1e9)
                 node.succeed(
                     f"systemd-run --uid=agent -E PATH=/run/current-system/sw/bin --unit=both-{round} -p StandardOutput=file:/tmp/both-{round}.out"
-                    f" sh -c 'while [ $(date +%s%N) -lt {at} ]; do :; done; exec agent-mail wait --topic both --timeout 15s'"
+                    f" sh -c 'while [ $(date +%s%N) -lt {at} ]; do :; done; exec agent-mail wait --topic both --timeout 5s'"
                 )
             claimed = []
             for node in [host1, host2]:
@@ -479,7 +496,10 @@ pkgs.testers.runNixOSTest {
                 claimed.append(re.findall(r"^=== (\S+) ", node.succeed(f"cat /tmp/both-{round}.out"), re.M))
             print(f"round {round}: host1 claimed {claimed[0]}, host2 {claimed[1]}")
             assert not set(claimed[0]) & set(claimed[1]) and len(claimed[0]) + len(claimed[1]) == 4, claimed
+  '';
 
+  # a wait's periods running out
+  timing = ''
     with subtest("a wait signs in again when its token expires, and Stalwart's pings wake nothing meanwhile"):
         def access_tokens_last(lifetime):
             lifetimes = {"idTokenLifetime": "43200s", "refreshTokenIdleExpiration": "2592000s", "refreshTokenExpiration": "7776000s"}
@@ -489,7 +509,10 @@ pkgs.testers.runNixOSTest {
                 f" -H 'Authorization: Bearer {ids['adminPat']}' --data {body}"
             )
 
-        access_tokens_last("75s")
+        # a token that expires before the first recheck, which comes after a quiet window holding one of the pings
+        quiet_for = periods["recheck"] - 10
+        assert quiet_for > 30, quiet_for
+        access_tokens_last(f"{periods['recheck'] - 5}s")
         # Stalwart pings every 30 s at the most often, as agent-mail asks
         pings = f"curl -sN -H 'Authorization: Bearer {bearer(host2)}' 'https://${mail.host}/jmap/eventsource/?types=Email&closeafter=no&ping=30'"
         # read through a process substitution, since under pipefail the killed curl would fail a pipe
@@ -500,13 +523,13 @@ pkgs.testers.runNixOSTest {
             " -p StandardError=file:/tmp/expiring.err agent-mail wait --topic expiring --timeout 8m"
         )
         host2.wait_until_succeeds("grep -q 'waiting for' /tmp/expiring.err", timeout=30)
-        time.sleep(10)
+        time.sleep(5)
         address = host2.succeed("ip -4 -o addr show eth1 | awk '{print $4}' | cut -d/ -f1").strip()
         before = int(server.succeed("wc -l < /var/log/nginx/access.log"))
-        time.sleep(120)
+        time.sleep(quiet_for)
         quiet = server.succeed(f"tail -n +{before + 1} /var/log/nginx/access.log | grep -c '^{address} .*POST /jmap/' || true")
         assert quiet.strip() == "0", quiet
-        host2.wait_until_succeeds("grep -q 'the access token expired; signing in again in 5s' /tmp/expiring.err", timeout=120)
+        host2.wait_until_succeeds(f"grep -q 'the access token expired; signing in again in {periods['backoff']}s' /tmp/expiring.err", timeout=60)
         host2.wait_until_succeeds("grep -q 'signed in again; waiting' /tmp/expiring.err", timeout=60)
         host1.succeed(f"echo after the refresh | {owner} send --to agent+expiring@${domain} --subject expiring")
         host2.wait_until_succeeds("grep -q 'after the refresh' /tmp/expiring.out", timeout=120)
@@ -523,7 +546,7 @@ pkgs.testers.runNixOSTest {
     with subtest("a wait rides out Stalwart restarting for a few seconds"):
         waiting("restarted", "10m")
         # most of a recheck period after its last scan, so the restart comes as long after one as it can
-        time.sleep(140)
+        time.sleep(periods["recheck"] - 10)
         server.succeed("systemctl restart stalwart")
         wait_for_stalwart()
         host1.succeed(f"echo after the restart | {owner} send --to agent+restarted@${domain} --subject restarted")
@@ -532,16 +555,28 @@ pkgs.testers.runNixOSTest {
         assert host1.succeed("cat /tmp/restarted.status").strip() == "0" and "no scan finished" not in err, err
         host1.succeed("grep -q 'after the restart' /tmp/restarted.out")
 
-    with subtest("a wait that finishes no scan for 5 minutes fails, after warning of each failed try"):
+    with subtest("a wait that finishes no scan for its stale bound fails, after warning of each failed try"):
         waiting("stopped", "15m")
         server.succeed("systemctl stop stalwart")
         stopped = time.time()
-        host1.wait_until_succeeds("test -e /tmp/stopped.status", timeout=420)
+        host1.wait_until_succeeds("test -e /tmp/stopped.status", timeout=periods["stale"] + 60)
         took = time.time() - stopped
         err = host1.succeed("cat /tmp/stopped.err")
         print(f"the wait failed {took:.0f} s after Stalwart stopped:\n{err}")
         assert host1.succeed("cat /tmp/stopped.status").strip() != "0", err
-        failed = err.index("no scan finished in 5 minutes")
-        assert "signing in again in" in err[:failed] and took < 6 * 60, (took, err)
+        failed = err.index(f"no scan finished in {periods['stale']}s")
+        assert "signing in again in" in err[:failed] and took < periods["stale"] + 30, (took, err)
   '';
-}
+in
+# each group boots its own nodes, so Nix runs them side by side
+pkgs.linkFarm "agent-mail" (
+  lib.mapAttrs (
+    name: script:
+    pkgs.testers.runNixOSTest {
+      name = "agent-mail-${name}";
+      defaults.virtualisation.graphics = false;
+      inherit nodes;
+      testScript = prelude + script;
+    }
+  ) { inherit flows timing; }
+)
