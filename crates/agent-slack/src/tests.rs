@@ -309,6 +309,8 @@ impl Harness {
         let (read, write) = UnixStream::connect(&self.socket).await.unwrap().into_split();
         let mut line = Line::new(read, write);
         line.send(&request).await.unwrap();
+        let accepted = timeout(SOON, line.next()).await.unwrap().unwrap();
+        assert!(matches!(accepted, Some(Reply::Accepted)), "{accepted:?}");
         line
     }
 
@@ -529,5 +531,18 @@ async fn history_that_always_has_more_ends_at_its_page_bound() {
     assert_eq!(
         paged.unwrap_err().to_string(),
         "conversations.history: still more after 1000 pages"
+    );
+}
+
+#[tokio::test]
+async fn a_client_whose_request_no_daemon_takes_up_fails_at_its_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("api.sock");
+    let _queued_forever = UnixListener::bind(&path).unwrap();
+    let (read, write) = UnixStream::connect(&path).await.unwrap().into_split();
+    let asked = Line::new(read, write).request(&Request::Wait, Duration::from_millis(200)).await;
+    assert_eq!(
+        asked.unwrap_err().to_string(),
+        "agent-slackd took up no request in 200ms; is agent-slackd.service running?"
     );
 }

@@ -280,12 +280,13 @@ impl Daemon {
         let (read, write) = stream.into_split();
         let mut line = Line::new(read, write);
         let served = async {
-            let reply = match line.next().await? {
-                None => return Ok(()),
-                Some(Request::Wait) => return self.wait(who, &mut line).await,
-                Some(Request::Send { to, thread, body }) => self.send(to, thread, &body).await,
-                Some(Request::Read { to, thread }) => self.read(to, thread).await,
-                Some(Request::Taken(_)) => Err(anyhow!("nothing was handed over to take")),
+            let Some(request) = line.next().await? else { return Ok(()) };
+            line.send(&Reply::Accepted).await?;
+            let reply = match request {
+                Request::Wait => return self.wait(who, &mut line).await,
+                Request::Send { to, thread, body } => self.send(to, thread, &body).await,
+                Request::Read { to, thread } => self.read(to, thread).await,
+                Request::Taken(_) => Err(anyhow!("nothing was handed over to take")),
             };
             line.send(&reply.unwrap_or_else(|e| Reply::Refused(format!("{e:#}")))).await
         };

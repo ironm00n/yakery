@@ -6,7 +6,7 @@ use std::{
 
 use agent_slack::{
     Channel, Message, Ts,
-    api::{Line, Reply, Request, SOCKET, Said},
+    api::{ANSWER, Line, Reply, Request, SOCKET, Said},
     unescape,
 };
 use anyhow::{Context, Result, bail};
@@ -81,8 +81,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Read { thread, to } => Request::Read { to, thread },
     };
     let new_thread = matches!(request, Request::Send { thread: None, .. });
-    line.send(&request).await?;
-    match line.next().await?.context("agent-slackd closed the connection")? {
+    match line.request(&request, ANSWER).await? {
         Reply::Message(m) => {
             print(&shown(&m))?;
             line.send(&Request::Taken(m.key())).await?;
@@ -97,7 +96,7 @@ async fn run(cli: Cli) -> Result<()> {
         Reply::Sent(_) => Ok(()),
         Reply::Thread(thread) => print(&thread.iter().map(said).collect::<String>()),
         Reply::Refused(why) => bail!("{why}"),
-        Reply::Taken => bail!("agent-slackd answered out of turn"),
+        Reply::Accepted | Reply::Taken => bail!("agent-slackd answered out of turn"),
     }
 }
 
