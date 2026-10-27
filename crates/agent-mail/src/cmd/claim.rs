@@ -67,7 +67,10 @@ type Claimed = Vec<(Email, Current)>;
 
 async fn taken(server: &Mail, login: &Login, claimed: Claimed) -> Vec<Email> {
     let ids: Vec<&Current> = claimed.iter().map(|(_, id)| id).collect();
-    let now = server.get::<Email>(&ids).await.unwrap_or_default();
+    let now = server.get::<Email>(&ids).await.unwrap_or_else(|e| {
+        warn!("delivering without checking whether it was closed since the claim: {e:#}");
+        vec![]
+    });
     let closed = |m: &Email| now.iter().any(|n| n.id == m.id && !open(login, n));
     let mut claimed: Claimed = claimed.into_iter().filter(|(m, _)| !closed(m)).collect();
     let mut asked: Vec<&mut (Email, Current)> =
