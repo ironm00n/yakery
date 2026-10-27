@@ -289,6 +289,10 @@
         borg-hop = import ./nix/tests/borg-hop.nix { pkgs = pkgs-map.${system}; };
         backup = import ./nix/tests/backup.nix { pkgs = pkgs-map.${system}; };
         agentd = import ./nix/tests/agentd.nix { pkgs = pkgs-map.${system}; };
+        agent-slack = import ./nix/tests/agent-slack.nix {
+          pkgs = pkgs-map.${system};
+          inherit inputs;
+        };
         # every member's tests, the shared crates' included, which no package runs; agent-mail's load the system's roots
         crates = pkgs-map.${system}.callPackage ./crates/rust.nix {
           nativeCheckInputs = [ pkgs-map.${system}.cacert ];
