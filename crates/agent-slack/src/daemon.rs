@@ -1,10 +1,11 @@
 use std::{
+    convert::Infallible,
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use futures_util::{SinkExt, StreamExt};
 use private::Dir;
 use serde::Deserialize;
@@ -15,15 +16,16 @@ use tokio::{
         unix::{OwnedReadHalf, OwnedWriteHalf},
     },
     sync::Notify,
+    time::{Instant, timeout},
 };
 use tokio_tungstenite::tungstenite::Message as Frame;
-use yakery_log::{note, warn};
+use yakery_log::{fail, note, warn};
 
 use crate::{
     Channel, Entry, Inbox, Raw, Ts, User, admit,
     api::{Line, Reply, Request, Said},
     channels, chunks,
-    slack::Slack,
+    slack::{Slack, TIMEOUT},
 };
 
 const INBOX: &str = "inbox";
@@ -31,13 +33,31 @@ const INBOX: &str = "inbox";
 pub const MAX_MARKDOWN: usize = 12_000;
 /// Slack's pace for posts to one conversation.
 pub const PACE: Duration = Duration::from_secs(1);
-pub const RECONNECT: Duration = Duration::from_secs(1);
+
+/// How long the daemon may go with no live connection before it refuses every request, so whichever the session runs
+/// next hears that Slack is not reaching it; how often a waiting request looks again; the pause between connections;
+/// and how long a connection may stay silent before it is pinged, and as long again before it is dropped.
+#[derive(Clone, Copy)]
+pub struct Bounds {
+    pub down: Duration,
+    pub recheck: Duration,
+    pub reconnect: Duration,
+    pub ping: Duration,
+}
+
+pub const BOUNDS: Bounds = Bounds {
+    down: Duration::from_secs(120),
+    recheck: Duration::from_secs(5),
+    reconnect: Duration::from_secs(1),
+    ping: Duration::from_secs(30),
+};
 
 pub struct Daemon {
     slack: Slack,
     dir: Dir,
     list: PathBuf,
     bot: User,
+    bounds: Bounds,
     state: Mutex<State>,
     arrived: Notify,
 }
@@ -45,6 +65,8 @@ pub struct Daemon {
 struct State {
     inbox: Inbox,
     waiter: Option<String>,
+    /// Since when no connection has been live, that is open and caught up, and the last reason; `None` while one is.
+    down: Option<(Instant, String)>,
 }
 
 #[derive(Deserialize)]
@@ -68,36 +90,51 @@ impl Drop for Waiting<'_> {
 }
 
 impl Daemon {
-    pub async fn start(slack: Slack, dir: Dir, list: PathBuf) -> Result<Arc<Daemon>> {
+    pub async fn start(
+        slack: Slack,
+        dir: Dir,
+        list: PathBuf,
+        bounds: Bounds,
+    ) -> Result<Arc<Daemon>> {
         let bot = slack.bot_user().await.context("asking Slack who the bot is")?;
         let held = dir.read(INBOX)?.map(String::from_utf8).transpose()?.unwrap_or_default();
         let inbox = Inbox::replay(&held).context("replaying the inbox")?;
-        let state = Mutex::new(State { inbox, waiter: None });
-        Ok(Arc::new(Daemon { slack, dir, list, bot, state, arrived: Notify::new() }))
+        let down = Some((Instant::now(), "not connected yet".into()));
+        let state = Mutex::new(State { inbox, waiter: None, down });
+        Ok(Arc::new(Daemon { slack, dir, list, bot, bounds, state, arrived: Notify::new() }))
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Reread every time, so root's edits take effect at once; an unreadable list counts as empty.
-    fn listed(&self) -> Vec<Channel> {
-        let read = std::fs::read_to_string(&self.list).map_err(anyhow::Error::from);
-        read.and_then(|list| channels(&list)).unwrap_or_else(|e| {
-            warn!("{}: {e:#}; listening nowhere", self.list.display());
-            Vec::new()
-        })
+    /// Reread every time, so root's edits take effect at once.
+    fn listed(&self) -> Result<Vec<Channel>> {
+        let list = std::fs::read_to_string(&self.list).map_err(anyhow::Error::from);
+        let listed = list.and_then(|list| channels(&list)).and_then(|listed| {
+            ensure!(!listed.is_empty(), "it lists no channel");
+            Ok(listed)
+        });
+        listed.with_context(|| format!("the channel list {}", self.list.display()))
+    }
+
+    /// The listed channels, unless the daemon cannot hear Slack.
+    fn hearing(&self) -> Result<Vec<Channel>> {
+        if let Some((since, why)) = &self.state().down
+            && since.elapsed() >= self.bounds.down
+        {
+            let secs = since.elapsed().as_secs();
+            bail!("agent-slackd has had no live Socket Mode connection for {secs}s: {why}");
+        }
+        self.listed()
     }
 
     fn target(&self, to: Option<Channel>) -> Result<Channel> {
-        let listed = self.listed();
+        let listed = self.hearing()?;
         match to {
             Some(c) if listed.contains(&c) => Ok(c),
             Some(c) => Err(anyhow!("{c} is not on {}", self.list.display())),
-            None => listed
-                .into_iter()
-                .next()
-                .with_context(|| format!("{} is empty", self.list.display())),
+            None => listed.into_iter().next().context("no channel is listed"),
         }
     }
 
@@ -125,29 +162,72 @@ impl Daemon {
         admit(raw, listed, &self.bot).map_or(Ok(()), |m| self.record(Entry::Message(m)))
     }
 
-    pub async fn run(self: Arc<Self>, listener: UnixListener) {
-        tokio::join!(self.clone().serve(listener), self.socket_mode());
+    /// Ends only when accepting a local client fails, so systemd restarts the daemon with the socket's queue intact.
+    pub async fn run(self: Arc<Self>, listener: UnixListener) -> Result<()> {
+        tokio::select! {
+            served = self.clone().serve(listener) => served,
+            never = self.socket_mode() => match never {},
+        }
     }
 
-    async fn socket_mode(&self) {
+    /// Records the connection down for `why`, from now unless it was down already; whether it was live, and for how
+    /// long it has been down.
+    fn went_down(&self, why: String) -> (bool, Duration) {
+        let mut state = self.state();
+        let live = state.down.is_none();
+        let since = state.down.as_ref().map_or_else(Instant::now, |d| d.0);
+        state.down = Some((since, why));
+        (live, since.elapsed())
+    }
+
+    async fn socket_mode(&self) -> Infallible {
+        let mut told = false;
         loop {
-            match self.connection().await {
-                Ok(()) => note!("Slack closed the connection; reconnecting"),
-                Err(e) => warn!("Socket Mode: {e:#}"),
+            let ended = self.connection().await;
+            let why =
+                ended.as_ref().map_or_else(|e| format!("{e:#}"), |()| "Slack closed it".into());
+            let (live, down) = self.went_down(why.clone());
+            told &= !live;
+            match ended {
+                Ok(()) => note!("Socket Mode: {why}; reconnecting"),
+                Err(_) if down >= self.bounds.down && !told => {
+                    told = true;
+                    fail!(
+                        "Socket Mode: down for {}s, so every request is refused: {why}",
+                        down.as_secs()
+                    )
+                }
+                Err(_) => warn!("Socket Mode: {why}"),
             }
-            tokio::time::sleep(RECONNECT).await;
+            tokio::time::sleep(self.bounds.reconnect).await;
         }
     }
 
     async fn connection(&self) -> Result<()> {
-        let mut socket = self.slack.connect().await?;
-        self.catch_up().await;
-        while let Some(frame) = socket.next().await {
-            let Frame::Text(text) = frame? else { continue };
+        let listed = self.listed()?;
+        let opened = timeout(TIMEOUT, self.slack.connect()).await;
+        let mut socket =
+            opened.with_context(|| format!("no connection in {}s", TIMEOUT.as_secs()))??;
+        self.catch_up(&listed).await?;
+        self.state().down = None;
+        let mut pinged = false;
+        loop {
+            let frame = match timeout(self.bounds.ping, socket.next()).await {
+                Ok(Some(frame)) => frame?,
+                Ok(None) => return Ok(()),
+                Err(_) if !pinged => {
+                    socket.send(Frame::Ping(Default::default())).await?;
+                    pinged = true;
+                    continue;
+                }
+                Err(_) => bail!("Slack answered no ping in {}s", self.bounds.ping.as_secs()),
+            };
+            pinged = false;
+            let Frame::Text(text) = frame else { continue };
             let envelope: Envelope = serde_json::from_str(&text)?;
             if envelope.kind == "events_api" {
                 match serde_json::from_value(envelope.payload["event"].clone()) {
-                    Ok(raw) => self.store(&raw, &self.listed())?,
+                    Ok(raw) => self.store(&raw, &self.listed()?)?,
                     Err(e) => warn!("dropping an event Slack sent malformed: {e}"),
                 }
             }
@@ -158,13 +238,11 @@ impl Daemon {
                 return Ok(());
             }
         }
-        Ok(())
     }
 
     /// Each listed channel since the newest message held from it, the replies of threads with newer ones included.
-    async fn catch_up(&self) {
-        let listed = self.listed();
-        for channel in &listed {
+    async fn catch_up(&self, listed: &[Channel]) -> Result<()> {
+        for channel in listed {
             let caught = async {
                 let Some(since) = self.state().inbox.newest(channel) else {
                     return self.record(Entry::Mark((channel.clone(), Ts::now())));
@@ -179,20 +257,17 @@ impl Daemon {
                     found.push(top);
                 }
                 found.sort_by_key(|r| r.ts);
-                found.iter().try_for_each(|raw| self.store(raw, &listed))
+                found.iter().try_for_each(|raw| self.store(raw, listed))
             };
-            if let Err(e) = caught.await {
-                warn!("catching up on {channel}: {e:#}");
-            }
+            caught.await.with_context(|| format!("catching up on {channel}"))?;
         }
+        Ok(())
     }
 
-    async fn serve(self: Arc<Self>, listener: UnixListener) {
+    async fn serve(self: Arc<Self>, listener: UnixListener) -> Result<()> {
         loop {
-            match listener.accept().await {
-                Ok((stream, _)) => drop(tokio::spawn(self.clone().client(stream))),
-                Err(e) => warn!("accepting a local client: {e}"),
-            }
+            let (stream, _) = listener.accept().await.context("accepting a local client")?;
+            drop(tokio::spawn(self.clone().client(stream)));
         }
     }
 
@@ -228,7 +303,8 @@ impl Daemon {
         Ok(Waiting(self))
     }
 
-    /// At least once: the message is taken only when the client confirms it printed it.
+    /// At least once: the message is taken only when the client confirms it printed it. Messages held already are
+    /// handed over first; with none, a daemon that cannot hear Slack refuses the wait.
     async fn wait(&self, who: String, line: &mut Client) -> Result<()> {
         let _waiting = match self.claim(who) {
             Ok(waiting) => waiting,
@@ -238,8 +314,12 @@ impl Daemon {
             if let Some(m) = self.state().inbox.next().cloned() {
                 break m;
             }
+            if let Err(e) = self.hearing() {
+                return line.send(&Reply::Refused(format!("{e:#}"))).await;
+            }
             tokio::select! {
                 () = self.arrived.notified() => {}
+                () = tokio::time::sleep(self.bounds.recheck) => {}
                 _ = line.next::<Request>() => return Ok(()),
             }
         };

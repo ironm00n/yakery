@@ -23,7 +23,7 @@ use tokio_tungstenite::tungstenite::Message as Frame;
 
 use crate::{
     api::{Line, Reply, Request},
-    daemon::{Daemon, MAX_MARKDOWN},
+    daemon::{Bounds, Daemon, MAX_MARKDOWN},
     slack::Slack,
     *,
 };
@@ -33,6 +33,12 @@ const OTHER: &str = "C0EXAMPLE2";
 const BOT: &str = "U0BOT";
 const PERSON: &str = "U0PERSON";
 const SOON: Duration = Duration::from_secs(5);
+const QUICK: Bounds = Bounds {
+    down: Duration::from_secs(1),
+    recheck: Duration::from_millis(50),
+    reconnect: Duration::from_millis(20),
+    ping: Duration::from_millis(200),
+};
 
 fn ts(s: &str) -> Ts {
     s.parse().unwrap()
@@ -128,11 +134,14 @@ struct Fake {
     history: Mutex<Vec<Value>>,
     replies: Mutex<HashMap<String, Vec<Value>>>,
     connections: Mutex<usize>,
+    /// apps.connections.open answers this error instead of a URL.
+    refused: Mutex<Option<&'static str>>,
 }
 
 impl Fake {
     fn answer(&self, method: &str, token: &str, form: HashMap<String, String>) -> Value {
         let app = method == "apps.connections.open";
+        let refused = *self.refused.lock().unwrap();
         assert_eq!(token, if app { "Bearer xapp-test" } else { "Bearer xoxb-test" }, "{method}");
         let oldest = form.get("oldest").map(|o| ts(o));
         let after = |list: &[Value]| -> Vec<Value> {
@@ -141,6 +150,9 @@ impl Fake {
         };
         match method {
             "auth.test" => json!({ "ok": true, "user_id": BOT }),
+            "apps.connections.open" if refused.is_some() => {
+                json!({ "ok": false, "error": refused })
+            }
             "apps.connections.open" => {
                 json!({ "ok": true, "url": format!("ws://{}/", self.ws.lock().unwrap().unwrap()) })
             }
@@ -191,7 +203,8 @@ async fn web(fake: Arc<Fake>) -> SocketAddr {
     addr
 }
 
-/// One connection at a time, as the daemon holds; `{"close": true}` ends the current one.
+/// One connection at a time, as the daemon holds; `{"close": true}` ends the current one, and `{"mute": true}` keeps it
+/// open, never read again, so it answers no ping, and takes the next.
 async fn socket_mode(
     fake: Arc<Fake>,
     mut send: mpsc::UnboundedReceiver<Value>,
@@ -200,27 +213,37 @@ async fn socket_mode(
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     *fake.ws.lock().unwrap() = Some(listener.local_addr().unwrap());
     tokio::spawn(async move {
+        let mut muted = Vec::new();
         loop {
             let (tcp, _) = listener.accept().await.unwrap();
             let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
             *fake.connections.lock().unwrap() += 1;
             ws.send(Frame::text(json!({ "type": "hello" }).to_string())).await.unwrap();
-            loop {
+            let mute = loop {
                 tokio::select! {
                     out = send.recv() => match out {
-                        Some(v) if v["close"] == true => break,
+                        Some(v) if v["close"] == true => break false,
+                        Some(v) if v["mute"] == true => break true,
                         Some(v) => ws.send(Frame::text(v.to_string())).await.unwrap(),
                         None => return,
                     },
                     back = ws.next() => match back {
                         Some(Ok(Frame::Text(t))) => acks.send(t.to_string()).unwrap(),
                         Some(Ok(_)) => {}
-                        _ => break,
+                        _ => break false,
                     },
                 }
+            };
+            if mute {
+                muted.push(ws);
             }
         }
     });
+}
+
+async fn slack(fake: Arc<Fake>) -> Slack {
+    let api: Url = format!("http://{}/api/", web(fake).await).parse().unwrap();
+    Slack::new(api, Secret::new("xoxb-test"), Secret::new("xapp-test")).unwrap()
 }
 
 type Client = Line<OwnedReadHalf, OwnedWriteHalf>;
@@ -252,10 +275,9 @@ impl Harness {
 
     /// A daemon on this harness's state, as after a restart.
     async fn start(&self) {
-        let api: Url = format!("http://{}/api/", web(self.fake.clone()).await).parse().unwrap();
-        let slack = Slack::new(api, Secret::new("xoxb-test"), Secret::new("xapp-test")).unwrap();
+        let slack = slack(self.fake.clone()).await;
         let inbox = Dir::open(&self.state.path().join("inbox"), &[]).unwrap();
-        let daemon = Daemon::start(slack, inbox, self.list.clone()).await.unwrap();
+        let daemon = Daemon::start(slack, inbox, self.list.clone(), QUICK).await.unwrap();
         let _ = std::fs::remove_file(&self.socket);
         tokio::spawn(daemon.run(UnixListener::bind(&self.socket).unwrap()));
     }
@@ -427,4 +449,71 @@ async fn send_posts_markdown_split_into_one_thread_and_read_prints_it() {
     let read: Vec<_> =
         read.iter().map(|s| (s.text.as_str(), s.user.as_ref().map(ToString::to_string))).collect();
     assert_eq!(read, [("start", Some(BOT.into())), ("answer", Some(PERSON.into()))]);
+}
+
+fn refused(reply: Reply) -> String {
+    match reply {
+        Reply::Refused(why) => why,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn post() -> Request {
+    Request::Send { to: None, thread: None, body: "x".into() }
+}
+
+#[tokio::test]
+async fn with_no_live_connection_past_the_bound_every_request_is_refused_until_one_is_back() {
+    let mut h = Harness::new().await;
+    h.connected(1).await;
+    let mut waiting = h.client(Request::Wait).await;
+    *h.fake.refused.lock().unwrap() = Some("internal_error");
+    h.send.send(json!({ "close": true })).unwrap();
+    assert!(matches!(h.ask(post()).await, Reply::Sent(_)), "below the bound");
+    let start = Instant::now();
+    let why = match timeout(SOON, waiting.next()).await.unwrap().unwrap() {
+        Some(Reply::Refused(why)) => why,
+        other => panic!("{other:?}"),
+    };
+    assert!(start.elapsed() < 2 * QUICK.down, "{:?}", start.elapsed());
+    let down = "agent-slackd has had no live Socket Mode connection for ";
+    assert!(why.starts_with(down), "{why}");
+    assert!(why.ends_with("s: apps.connections.open: internal_error"), "{why}");
+    assert!(refused(h.ask(post()).await).starts_with(down));
+    let thread = ts("1800000000.000001");
+    assert!(refused(h.ask(Request::Read { to: None, thread }).await).starts_with(down));
+    *h.fake.refused.lock().unwrap() = None;
+    h.message("back", json!({ "ts": "1900000001.000001" }));
+    assert_eq!(h.acked().await, "back");
+    assert_eq!(h.take().await.text, "back");
+    assert!(matches!(h.ask(post()).await, Reply::Sent(_)));
+}
+
+#[tokio::test]
+async fn a_channel_list_that_does_not_read_refuses_wait_and_send_at_once_and_loses_no_message() {
+    let mut h = Harness::new().await;
+    h.connected(1).await;
+    std::fs::write(&h.list, "not-a-channel\n").unwrap();
+    let why = refused(h.ask(Request::Wait).await);
+    assert!(why.starts_with(&format!("the channel list {}: ", h.list.display())), "{why}");
+    assert_eq!(refused(h.ask(post()).await), why);
+    std::fs::write(&h.list, "").unwrap();
+    assert!(refused(h.ask(post()).await).ends_with(": it lists no channel"));
+    h.fake.history.lock().unwrap().push(said("kept", "1900000001.000001", json!({})));
+    h.message("kept", json!({ "ts": "1900000001.000001" }));
+    let acked = timeout(Duration::from_millis(300), h.acks.recv()).await;
+    assert!(acked.is_err(), "unacked, so Slack still holds it: {acked:?}");
+    std::fs::write(&h.list, format!("{HOME}\n")).unwrap();
+    h.connected(2).await;
+    assert_eq!(h.take().await.text, "kept", "caught up from history");
+}
+
+#[tokio::test]
+async fn a_connection_that_answers_no_ping_is_dropped_and_another_opened() {
+    let h = Harness::new().await;
+    h.connected(1).await;
+    h.send.send(json!({ "mute": true })).unwrap();
+    let start = Instant::now();
+    h.connected(2).await;
+    assert!(start.elapsed() >= 2 * QUICK.ping, "{:?}", start.elapsed());
 }

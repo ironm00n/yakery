@@ -1,6 +1,9 @@
 use std::{path::PathBuf, process::ExitCode};
 
-use agent_slack::{daemon::Daemon, slack::Slack};
+use agent_slack::{
+    daemon::{BOUNDS, Daemon},
+    slack::Slack,
+};
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use private::{Dir, Secret, listen_fds};
@@ -49,9 +52,9 @@ fn main() -> ExitCode {
                 token(&args, "bot_token")?,
                 token(&args, "app_token")?,
             )?;
-            let daemon = Daemon::start(slack, Dir::open(&args.state, &[])?, args.channels).await?;
-            daemon.run(tokio::net::UnixListener::from_std(api)?).await;
-            Ok(())
+            let dir = Dir::open(&args.state, &[])?;
+            let daemon = Daemon::start(slack, dir, args.channels, BOUNDS).await?;
+            daemon.run(tokio::net::UnixListener::from_std(api)?).await
         })
     });
     yakery_log::exit_code(started.map(|()| ExitCode::SUCCESS))
