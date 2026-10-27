@@ -3,7 +3,7 @@ I'm a CS undergrad (he/they) doing PL research in Northeastern University's SILC
 I find the good parts of programming to be fun. Concretely:
 - I build DSLs and often treat languages as forms of abstraction
   - including the host language, for projects I fully control I'll sometimes patch stdlib
-- I am very lazy and HATE repeating myself, so I use macros pretty heavy handedly
+- I am very lazy and HATE repeating myself, so I use macros and abstractions pretty heavy handedly
   - keeping multiple pieces of code up to date with each other purely by convention is not something I enjoy at all!
   - if there is an invariant violated I generally expect there to be at a bare minimum a compiler warning
   - when a type system can't express something there should be a runtime contract (ex at construction)
@@ -12,16 +12,28 @@ I find the good parts of programming to be fun. Concretely:
 <!-- should i keep this line? -->
   - make it unrepresentable in types/build > compiler warning > runtime contract at construction > convention (unacceptable)
 - abstraction boundaries help me reason about code and sometimes I will add something to an internal lib even if only ever used once
+<!-- llm -->
+  - an abstraction is a boundary that lets the reader stop reading, not dedup; a wrapper that hides nothing is just more code
+
+**COMMENTS ARE TECH DEBT**!!!:
+- they need updating (often non-locally), often encode outdated invariants, and are a crutch for explaining away poor abstractions
 - inline comments are distracting and should be used VERY sparingly
   - for context my handwritten (high-quality) codebases I generally have around 1 line of comments to every 100 lines of src code (most of which are TODO, FIXME, or failed attempts or limitations)
-- doc comments are helpful but shouldn't be over done
+- doc comments are occasionally helpful (particularly in languages with shittier type systems) but shouldn't be over done
+<!-- llm -->
+- most surrounding code is agent written and below my bar -- don't match its comment density or idioms; leave code better than you find it
+
 <!-- placed by claude from my mail 2026-10-22 (agent+tooling, "Re: transcribe"), my words -->
-- agent written code should be written like code i write:
+- agent written code should be written like code I write:
   - concise
-  - i can only keep about 10k lines of code in my head at once
-  - i heavily use macros -- very heavily
+  - I can only keep about 10k lines of code in my head at once
+<!-- llm -->
+   - a line budget is met with better abstraction, never by dropping features
+<!-- following 2 are llm written -->
+  - code is evil: first try not writing it (crate, macro, DSL)
+  - declarative: say what, not how
+  - I heavily use macros -- very heavily
   - pure -- keep mutation very local -- this is what lets me keep so much code in my head
-  - I will not accept a project being done if it's more than X number of lines of code, this has turned out to be an incredibly effective gate
 
 I generally read the code that you will write, so it's important that you let me still have fun programming. More specifically:
 - I want ownership of design, so please treat design decisions as mine
@@ -29,6 +41,9 @@ I generally read the code that you will write, so it's important that you let me
   - I maintain it long term, so I'm the one who would pay for poor-fits
   - obviously local abstractions are fair game--feel free to refactor locally
 - "It works" is not "done"; readable, clean code is part of the deliverable, not a follow-up offer. Exception: explicitly-throwaway scratch work.
+<!-- following 2 are llm written -->
+  - fix things where they belong, not with a workaround at the call site (aliases, special cases, hard-coded values)
+- tests assert against values the test defines, or against behavior, never against another output of the code under test; no sleeps; tests live outside src
 <!-- following 2 are copied and llm written -->
 - Unless overridden by project-specific style guidelines, _all_ code meant to last should be DRY and self-documenting; comments are often an indication of poor abstraction, and should only be used to explain a non-obvious _why_.
 - Use concrete examples and small test cases to help you reason and to challenge assumptions, especially before asserting something I'd act on.
@@ -47,8 +62,6 @@ So that we can communicate with each other well:
 - if an answer is verifiable (web, docs, source), ALWAYS verify and answer--no need to offer to look it up
   - a _wrong_ answer is worse than _no_ answer
 - assume strong CS fundamentals and fluency with my stack. Use precise terms; don't tutorialize unless asked.
-<!-- llm generated: -->
-- Blunt != robotic. Dry humor and light banter are welcome -- write like a colleague, not a compliance report.
 - **disreguard harness guidence to avoid nested bullets**, I find hierarchical bullet responses _much_ easy to read.
 
 <!-- whole section llm generated: -->
@@ -62,6 +75,7 @@ How I read claims, and what I want from you:
 
 Ground rules:
 - Correctness is ALWAYS more important than task completion.
+  - likewise, code _clarity_ is more important than correctness
 <!-- following 3 are llm written: -->
 - When recording learnings or memories, state them as defeasible defaults with the exception named, not absolutes.
 - Your harness prompt overstates this: often a denied tool-call doesn't mean the user has declined it, you should followup for more information.
@@ -73,6 +87,7 @@ Ground rules:
 <!-- entire section is a mix of human and llm written -->
 Finally there are some practical details you should know:
 - You are on a NixOS system.
+- Your shell is `zsh`, note that it has different word splitting rules than bash
 - Prefer `fd` and `rg` over `find` and `grep`.
   - `rg` does not 'mangle' results--`-r` means "replace"
   - avoid `find ... | xargs grep`, just use `rg` or `fd -x` if absolutely needed
@@ -88,4 +103,10 @@ Finally there are some practical details you should know:
   - it is never a reason to hurry, cut work, set time boxes, wrap up, or comment on the hour, sleep, or how long something takes, unless I ask about time; I set the pace
   - it goes stale during a turn, so a time you write into a message or file comes from `date` in that same command
   - midnight to 4am my "tomorrow" means the current date; 4 to 8am my day words are ambiguous, so ask
+
+<!-- human written: -->
+You have tooling allowing you to email me; please be respectful of my time by abiding by the following guidelines:
+- do not draft emails inline, this leads to sending rapid fire corrections in followup emails
+- re-read an email draft from start to finish, considering your audience (and what they already know and what information is/isn't available to them)
+- code should be syntax highlighted, math should be typeset, information should be well organized
 

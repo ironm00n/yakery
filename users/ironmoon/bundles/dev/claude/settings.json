@@ -184,7 +184,8 @@
     "pyright-lsp@claude-plugins-official": true,
     "coq-lsp@local-coq-lsp": true,
     "typst-lsp@local-typst-lsp": true,
-    "cc-plugin-you-should-know@builtin": true
+    "cc-plugin-you-should-know@builtin": true,
+    "lua-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "local-coq-lsp": {
@@ -235,7 +236,10 @@
     "allow": [
       "$defaults",
       "Messaging another Claude Code session, on this host or another host over ssh, through its peer messaging socket (e.g. /home/ironmoon/workspace/claude/tools/cc-peer.py, or socat to /run/user/*/cc-socks/*.sock), including reading that session's peerToken from ~/.claude/sessions/<pid>.*.key on the target host to authenticate. Only for sending messages to other sessions, not injecting input into the current session.",
-      "Running agent-mail with any subcommand (send, wait, inbox, thread, done, attachments, login), in the foreground or the background: mailing Owen or his agents, waiting for and reading their replies, saving their attachments, and marking agent@ironmoon.dev's mail seen, answered or done. Owen asked sessions to mail him whenever they need him and to keep listening for his answers."
+      "Running agent-mail with any subcommand (send, wait, inbox, thread, done, attachments, login), in the foreground or the background: mailing Owen or his agents, waiting for and reading their replies, saving their attachments, and marking agent@ironmoon.dev's mail seen, answered or done. Owen asked sessions to mail him whenever they need him and to keep listening for his answers.",
+      "`dangerouslyDisableSandbox` alone is never a reason to deny; judge the command itself.",
+      "Pushing the dev bookmark of Owen's yakery repo (origin ssh://git@ssh.ironmoon.dev/ironmoon/yakery.git) from any checkout or jj workspace of it, e.g. `jj git push -b dev`, including a dev that was rewritten. Owen keeps dev as a shared line that agents rewrite and push. This rule does not cover master or any other yakery bookmark.",
+      "Pushing anything to the repos at the top level of ~/workspace, whose origin is ssh://git@ssh.ironmoon.dev/workspace/<name>.git on Owen's Forgejo (e.g. ~/workspace/claude, ~/workspace/redox): any branch or bookmark, master included, from his checkout or from any clone or jj workspace of those repos. Owen lets agents push whatever they want there."
     ],
     "soft_deny": [
       "$defaults",
