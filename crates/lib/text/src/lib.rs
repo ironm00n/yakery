@@ -110,6 +110,11 @@ impl Address {
         &self.1
     }
 
+    /// The local part without its `+detail`, which every subaddress of the address shares.
+    pub fn user(&self) -> &str {
+        self.0.split_once('+').map_or(&self.0, |(user, _)| user)
+    }
+
     pub fn subaddress(&self, detail: &impl std::fmt::Display) -> Result<Address> {
         format!("{}+{detail}@{}", self.0, self.1).parse()
     }
