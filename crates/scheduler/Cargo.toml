@@ -1,0 +1,37 @@
+[package]
+name = "scheduler"
+version = "0.1.0"
+description = "schedule.ironmoon.dev: a public page of busy times and one-time booking links on Stalwart"
+edition.workspace = true
+rust-version.workspace = true
+autotests = false
+
+[[bin]]
+name = "scheduler"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+bytes.workspace = true
+clap.workspace = true
+form_urlencoded.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["client"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1"] }
+jiff.workspace = true
+maud.workspace = true
+private.workspace = true
+ring.workspace = true
+yakery-log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+text.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt", "sync", "time"] }
+
+[features]
+# The core aborts once at the step SCHEDULER_CRASH names, for the VM test's crash points.
+crash-points = []
+
+[lints]
+workspace = true

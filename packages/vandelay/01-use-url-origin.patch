@@ -1,0 +1,519 @@
+Add --use-url-origin to JMAP import and export
+
+After session discovery every request went to the apiUrl, uploadUrl
+and downloadUrl the session advertises. A server reached over loopback
+advertises its public URL, so those requests left through the public
+address. With --use-url-origin the three URLs are moved onto the
+origin of --url, keeping their paths and templates. The field is on
+ConnectConfig, so each test literal names it.
+
+diff --git a/src/cli.rs b/src/cli.rs
+index 91855c6..700a5a6 100644
+--- a/src/cli.rs
++++ b/src/cli.rs
+@@ -28,6 +28,9 @@ use crate::sync::import_takeout::TakeoutImportConfig;
+ use crate::sync::{CommonConfig, ConnectConfig, ExportConfig, ImportConfig};
+ use crate::types::{ObjectType, parse_object_list};
+ 
++const USE_URL_ORIGIN_HELP: &str =
++    "Send API, upload and download requests to the origin of --url, not the session's";
++
+ #[derive(Parser)]
+ #[command(
+     name = "vandelay",
+@@ -132,6 +135,9 @@ struct JmapImportArgs {
+     #[arg(long, value_name = "URL", help = "Base URL or full JMAP session URL")]
+     url: String,
+ 
++    #[arg(long, help = USE_URL_ORIGIN_HELP)]
++    use_url_origin: bool,
++
+     #[arg(long, value_name = "USER", help = "HTTP Basic user")]
+     auth_basic: Option<String>,
+ 
+@@ -303,6 +309,9 @@ struct ExportArgs {
+     #[arg(long, value_name = "URL", help = "Base URL or full JMAP session URL")]
+     url: String,
+ 
++    #[arg(long, help = USE_URL_ORIGIN_HELP)]
++    use_url_origin: bool,
++
+     #[arg(long, value_name = "USER", help = "HTTP Basic user")]
+     auth_basic: Option<String>,
+ 
+@@ -759,6 +768,7 @@ fn resolve_jmap_import(args: JmapImportArgs) -> Result<Action, Error> {
+         ImportConfig {
+             connect: ConnectConfig {
+                 url: args.url,
++                use_url_origin: args.use_url_origin,
+                 auth,
+                 account,
+             },
+@@ -864,6 +874,7 @@ fn resolve_export(args: ExportArgs) -> Result<Action, Error> {
+         ExportConfig {
+             connect: ConnectConfig {
+                 url: args.url,
++                use_url_origin: args.use_url_origin,
+                 auth,
+                 account,
+             },
+diff --git a/src/jmap/connect.rs b/src/jmap/connect.rs
+index b9586d3..708b4f0 100644
+--- a/src/jmap/connect.rs
++++ b/src/jmap/connect.rs
+@@ -31,9 +31,16 @@ pub fn prepare(ctx: &Context, connect: &ConnectConfig) -> Result<Connected, Erro
+     ctx.client.set_logger(ctx.common.logger);
+ 
+     let session = Session::discover(&ctx.client, &connect.url)?;
+-    for mismatch in session.origin_mismatches(&connect.url) {
+-        ctx.common.logger.warn(&mismatch.to_string());
+-    }
++    let session = if connect.use_url_origin {
++        session.with_origin_of(&connect.url).ok_or_else(|| {
++            Error::Connection(format!("{} has no origin to send requests to", connect.url))
++        })?
++    } else {
++        for mismatch in session.origin_mismatches(&connect.url) {
++            ctx.common.logger.warn(&mismatch.to_string());
++        }
++        session
++    };
+     let limits = session.core_limits()?;
+     ctx.client.set_limits(&limits);
+     let account_id = account::resolve(&connect.account, &session, &ctx.client)?;
+diff --git a/src/jmap/session.rs b/src/jmap/session.rs
+index 6a1ccc1..445b21b 100644
+--- a/src/jmap/session.rs
++++ b/src/jmap/session.rs
+@@ -121,6 +121,11 @@ pub fn origin_of(url: &str) -> Option<String> {
+     Some(origin.ascii_serialization())
+ }
+ 
++fn after_authority(url: &str) -> Option<&str> {
++    let rest = url[scheme_end(url)? + 1..].strip_prefix("//")?;
++    Some(&rest[rest.find(['/', '?', '#']).unwrap_or(rest.len())..])
++}
++
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct OriginMismatch {
+     pub fields: Vec<&'static str>,
+@@ -212,6 +217,22 @@ impl Session {
+         mismatches
+     }
+ 
++    /// Moves the advertised URLs onto the origin of `connect_url`, keeping their paths
++    /// and templates. `None` when `connect_url` has no scheme, host and port.
++    pub fn with_origin_of(mut self, connect_url: &str) -> Option<Session> {
++        let origin = origin_of(connect_url)?;
++        for url in [
++            &mut self.api_url,
++            &mut self.upload_url,
++            &mut self.download_url,
++        ] {
++            if let Some(rest) = after_authority(url) {
++                *url = format!("{origin}{rest}");
++            }
++        }
++        Some(self)
++    }
++
+     fn ensure_authenticated(self) -> Result<Session, JmapError> {
+         if self.accounts.is_empty() {
+             return Err(JmapError::Auth(
+@@ -439,6 +460,32 @@ mod tests {
+         assert_eq!(mismatches[0].session_origin, "https://blobs.example");
+     }
+ 
++    #[test]
++    fn with_origin_of_moves_every_url_and_keeps_templates() {
++        let session = session_on("https://mail.example")
++            .with_origin_of("http://127.0.0.1:8080/jmap/session")
++            .expect("origin");
++        assert_eq!(session.api_url, "http://127.0.0.1:8080/jmap/");
++        assert_eq!(
++            session.upload_url_for("w"),
++            "http://127.0.0.1:8080/jmap/upload/w/"
++        );
++        assert_eq!(
++            session.download_url,
++            "http://127.0.0.1:8080/jmap/dl/{accountId}/{blobId}/{type}/{name}"
++        );
++        assert!(
++            session
++                .origin_mismatches("http://127.0.0.1:8080")
++                .is_empty()
++        );
++        assert!(
++            session_on("https://mail.example")
++                .with_origin_of("mail.example")
++                .is_none()
++        );
++    }
++
+     #[test]
+     fn resolve_reference_keeps_absolute_urls_verbatim() {
+         assert_eq!(
+diff --git a/src/sync/mod.rs b/src/sync/mod.rs
+index e01de3b..87bb5dc 100644
+--- a/src/sync/mod.rs
++++ b/src/sync/mod.rs
+@@ -54,6 +54,7 @@ pub struct CommonConfig {
+ 
+ pub struct ConnectConfig {
+     pub url: String,
++    pub use_url_origin: bool,
+     pub auth: Auth,
+     pub account: AccountSelector,
+ }
+diff --git a/tests/mock_jmap.rs b/tests/mock_jmap.rs
+index abc4fd7..1816325 100644
+--- a/tests/mock_jmap.rs
++++ b/tests/mock_jmap.rs
+@@ -1276,6 +1276,7 @@ fn import_aborts_with_exit_two_when_the_advertised_api_url_is_unreachable() {
+         vandelay::sync::ImportConfig {
+             connect: vandelay::sync::ConnectConfig {
+                 url: session_base.clone(),
++                use_url_origin: false,
+                 auth: Auth::Basic {
+                     user: "u".into(),
+                     password: "p".into(),
+diff --git a/tests/mock_sync.rs b/tests/mock_sync.rs
+index bd7fdfa..f6d03f8 100644
+--- a/tests/mock_sync.rs
++++ b/tests/mock_sync.rs
+@@ -146,6 +146,7 @@ fn export_email_already_exists_is_matched_not_failed() {
+         ExportConfig {
+             connect: ConnectConfig {
+                 url: base.clone(),
++                use_url_origin: false,
+                 auth: Auth::Basic {
+                     user: "u".into(),
+                     password: "p".into(),
+@@ -287,6 +288,7 @@ fn export_mailbox_name_collision_merges_without_create() {
+         ExportConfig {
+             connect: ConnectConfig {
+                 url: base.clone(),
++                use_url_origin: false,
+                 auth: Auth::Basic {
+                     user: "u".into(),
+                     password: "p".into(),
+@@ -445,6 +447,7 @@ fn export_mailbox_already_exists_maps_existing_id() {
+         ExportConfig {
+             connect: ConnectConfig {
+                 url: base.clone(),
++                use_url_origin: false,
+                 auth: Auth::Basic {
+                     user: "u".into(),
+                     password: "p".into(),
+@@ -791,6 +794,7 @@ fn import_cfg_objects(base: &str, objects: Vec<ObjectType>) -> ImportConfig {
+     ImportConfig {
+         connect: ConnectConfig {
+             url: base.to_owned(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: "u".into(),
+                 password: "p".into(),
+@@ -806,6 +810,7 @@ fn export_cfg_objects(base: &str, objects: Vec<ObjectType>) -> ExportConfig {
+     ExportConfig {
+         connect: ConnectConfig {
+             url: base.to_owned(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: "u".into(),
+                 password: "p".into(),
+@@ -4385,6 +4390,7 @@ fn run_export(archive: &Path, base: &str, max_retries: u32) -> sync::Summary {
+         ExportConfig {
+             connect: ConnectConfig {
+                 url: base.to_owned(),
++                use_url_origin: false,
+                 auth: Auth::Basic {
+                     user: "u".into(),
+                     password: "p".into(),
+diff --git a/tests/sync_caldav.rs b/tests/sync_caldav.rs
+index 2559816..0912ba3 100644
+--- a/tests/sync_caldav.rs
++++ b/tests/sync_caldav.rs
+@@ -78,6 +78,7 @@ fn export_cfg(base_url: &str, domain: &str, localpart: &str, account_id: &str) -
+     ExportConfig {
+         connect: ConnectConfig {
+             url: base_url.to_owned(),
++            use_url_origin: false,
+             auth: jmap_basic(localpart, domain),
+             account: AccountSelector::Id(account_id.to_owned()),
+         },
+@@ -96,6 +97,7 @@ fn jmap_import_cfg(
+     ImportConfig {
+         connect: ConnectConfig {
+             url: base_url.to_owned(),
++            use_url_origin: false,
+             auth: jmap_basic(localpart, domain),
+             account: AccountSelector::Id(account_id.to_owned()),
+         },
+diff --git a/tests/sync_carddav.rs b/tests/sync_carddav.rs
+index 49fd10e..e24e0b9 100644
+--- a/tests/sync_carddav.rs
++++ b/tests/sync_carddav.rs
+@@ -78,6 +78,7 @@ fn export_cfg(base_url: &str, domain: &str, localpart: &str, account_id: &str) -
+     ExportConfig {
+         connect: ConnectConfig {
+             url: base_url.to_owned(),
++            use_url_origin: false,
+             auth: jmap_basic(localpart, domain),
+             account: AccountSelector::Id(account_id.to_owned()),
+         },
+@@ -96,6 +97,7 @@ fn jmap_import_cfg(
+     ImportConfig {
+         connect: ConnectConfig {
+             url: base_url.to_owned(),
++            use_url_origin: false,
+             auth: jmap_basic(localpart, domain),
+             account: AccountSelector::Id(account_id.to_owned()),
+         },
+diff --git a/tests/sync_exchange_graph.rs b/tests/sync_exchange_graph.rs
+index 1d16a7e..5cc7893 100644
+--- a/tests/sync_exchange_graph.rs
++++ b/tests/sync_exchange_graph.rs
+@@ -352,6 +352,7 @@ fn graph_import_survives_a_full_export_to_stalwart() {
+         ExportConfig {
+             connect: ConnectConfig {
+                 url: base_url().to_owned(),
++                use_url_origin: false,
+                 auth: Auth::Basic {
+                     user: account.email.clone(),
+                     password: account.password.clone(),
+diff --git a/tests/sync_imap.rs b/tests/sync_imap.rs
+index 9946303..e6655f4 100644
+--- a/tests/sync_imap.rs
++++ b/tests/sync_imap.rs
+@@ -234,6 +234,7 @@ fn imap_and_jmap_imports_share_blob_set() {
+     let jmap_cfg = ImportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: acc.email.clone(),
+                 password: seeder::USER_PASSWORD.to_owned(),
+@@ -374,6 +375,7 @@ fn imap_imported_archive_exports_via_jmap() {
+     let export_cfg = ExportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: dst.email.clone(),
+                 password: seeder::USER_PASSWORD.to_owned(),
+@@ -398,6 +400,7 @@ fn imap_imported_archive_exports_via_jmap() {
+     let export_cfg2 = ExportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: dst.email.clone(),
+                 password: seeder::USER_PASSWORD.to_owned(),
+@@ -492,6 +495,7 @@ fn dovecot_noselect_parents_keep_the_tree_through_export() {
+         ExportConfig {
+             connect: ConnectConfig {
+                 url: fx.base_url.clone(),
++                use_url_origin: false,
+                 auth: Auth::Basic {
+                     user: dst.email.clone(),
+                     password: dst.password.clone(),
+diff --git a/tests/sync_jmap.rs b/tests/sync_jmap.rs
+index 83f0512..5c2255a 100644
+--- a/tests/sync_jmap.rs
++++ b/tests/sync_jmap.rs
+@@ -60,6 +60,7 @@ fn import_cfg(account: AccountSelector) -> ImportConfig {
+     ImportConfig {
+         connect: ConnectConfig {
+             url: base_url().to_owned(),
++            use_url_origin: false,
+             auth: basic("test1"),
+             account,
+         },
+@@ -94,6 +95,7 @@ fn import_test1_full_matches_seed_stats() {
+     let cfg = ImportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: basic("test1"),
+             account: AccountSelector::Id(acc.account_id.clone()),
+         },
+@@ -175,6 +177,7 @@ fn import_resolves_account_via_admin_principal_path() {
+     let cfg = ImportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: admin_fx.email.clone(),
+                 password: seeder::ADMIN_ACCOUNT_PASSWORD.to_owned(),
+@@ -233,6 +236,7 @@ fn export_cfg(localpart: &str, account_id: &str, prune: bool) -> ExportConfig {
+     ExportConfig {
+         connect: ConnectConfig {
+             url: base_url().to_owned(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: format!("{localpart}@{}", seeder::DOMAIN),
+                 password: seeder::USER_PASSWORD.to_owned(),
+@@ -387,6 +391,7 @@ fn import_export_deeply_nested_mailbox_tree() {
+     let imp = ImportConfig {
+         connect: ConnectConfig {
+             url: base_url().to_owned(),
++            use_url_origin: false,
+             auth: basic("test4"),
+             account: AccountSelector::Id(src.account_id.clone()),
+         },
+@@ -429,6 +434,7 @@ fn import_export_deeply_nested_mailbox_tree() {
+     let imp_again = ImportConfig {
+         connect: ConnectConfig {
+             url: base_url().to_owned(),
++            use_url_origin: false,
+             auth: basic("test5"),
+             account: AccountSelector::Id(tgt.account_id.clone()),
+         },
+@@ -467,6 +473,7 @@ fn import_export_deeply_nested_filenode_tree() {
+     let imp = ImportConfig {
+         connect: ConnectConfig {
+             url: base_url().to_owned(),
++            use_url_origin: false,
+             auth: basic("test4"),
+             account: AccountSelector::Id(src.account_id.clone()),
+         },
+@@ -511,6 +518,7 @@ fn import_export_deeply_nested_filenode_tree() {
+         ImportConfig {
+             connect: ConnectConfig {
+                 url: base_url().to_owned(),
++                use_url_origin: false,
+                 auth: basic("test5"),
+                 account: AccountSelector::Id(tgt.account_id.clone()),
+             },
+@@ -551,6 +559,7 @@ fn prune_multilevel_mailbox_tree_destroys_leaf_first() {
+         ImportConfig {
+             connect: ConnectConfig {
+                 url: base_url().to_owned(),
++                use_url_origin: false,
+                 auth: basic("test4"),
+                 account: AccountSelector::Id(src.account_id.clone()),
+             },
+@@ -592,6 +601,7 @@ fn prune_multilevel_mailbox_tree_destroys_leaf_first() {
+         ImportConfig {
+             connect: ConnectConfig {
+                 url: base_url().to_owned(),
++                use_url_origin: false,
+                 auth: basic("test6"),
+                 account: AccountSelector::Id(fx.account("test6").unwrap().account_id.clone()),
+             },
+@@ -640,6 +650,7 @@ fn prune_non_tree_type_contact_card() {
+         ImportConfig {
+             connect: ConnectConfig {
+                 url: base_url().to_owned(),
++                use_url_origin: false,
+                 auth: basic("test1"),
+                 account: AccountSelector::Id(src.account_id.clone()),
+             },
+@@ -859,6 +870,7 @@ fn export_round_trip_and_convergence() {
+     let imp = ImportConfig {
+         connect: ConnectConfig {
+             url: base_url().to_owned(),
++            use_url_origin: false,
+             auth: basic("test1"),
+             account: AccountSelector::Id(src.account_id.clone()),
+         },
+@@ -939,6 +951,7 @@ fn export_emails_in_multiple_import_batches() {
+     let imp = ImportConfig {
+         connect: ConnectConfig {
+             url: base_url().to_owned(),
++            use_url_origin: false,
+             auth: basic("test1"),
+             account: AccountSelector::Id(src.account_id.clone()),
+         },
+@@ -1015,6 +1028,7 @@ fn export_prune_destroys_unmatched() {
+         ImportConfig {
+             connect: ConnectConfig {
+                 url: base_url().to_owned(),
++                use_url_origin: false,
+                 auth: basic("test1"),
+                 account: AccountSelector::Id(big.account_id.clone()),
+             },
+@@ -1035,6 +1049,7 @@ fn export_prune_destroys_unmatched() {
+         ImportConfig {
+             connect: ConnectConfig {
+                 url: base_url().to_owned(),
++                use_url_origin: false,
+                 auth: basic("test3"),
+                 account: AccountSelector::Id(small.account_id.clone()),
+             },
+@@ -1070,6 +1085,7 @@ fn import_resume_converges_after_partial() {
+     let mk = || ImportConfig {
+         connect: ConnectConfig {
+             url: base_url().to_owned(),
++            use_url_origin: false,
+             auth: basic("test2"),
+             account: AccountSelector::Id(acc.account_id.clone()),
+         },
+diff --git a/tests/sync_maildir.rs b/tests/sync_maildir.rs
+index ad570e0..e455b27 100644
+--- a/tests/sync_maildir.rs
++++ b/tests/sync_maildir.rs
+@@ -544,6 +544,7 @@ fn maildir_and_jmap_imports_share_blob_bytes() {
+     let jmap_cfg = ImportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: acc.email.clone(),
+                 password: seeder::USER_PASSWORD.to_owned(),
+@@ -620,6 +621,7 @@ fn maildir_message_count_matches_jmap_for_same_corpus() {
+     let jmap_cfg = ImportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: acc.email.clone(),
+                 password: seeder::USER_PASSWORD.to_owned(),
+diff --git a/tests/sync_managesieve.rs b/tests/sync_managesieve.rs
+index 4050740..3637ef4 100644
+--- a/tests/sync_managesieve.rs
++++ b/tests/sync_managesieve.rs
+@@ -220,6 +220,7 @@ fn managesieve_and_jmap_imports_share_blob_bytes() {
+     let jmap_cfg = ImportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: acc.email.clone(),
+                 password: seeder::USER_PASSWORD.to_owned(),
+@@ -385,6 +386,7 @@ fn managesieve_round_trip_via_jmap_export_converges() {
+     let export_cfg = vandelay::sync::ExportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: dst.email.clone(),
+                 password: seeder::USER_PASSWORD.to_owned(),
+@@ -419,6 +421,7 @@ fn managesieve_round_trip_via_jmap_export_converges() {
+     let export_cfg2 = vandelay::sync::ExportConfig {
+         connect: ConnectConfig {
+             url: fx.base_url.clone(),
++            use_url_origin: false,
+             auth: Auth::Basic {
+                 user: dst.email.clone(),
+                 password: seeder::USER_PASSWORD.to_owned(),
+diff --git a/tests/sync_webdav.rs b/tests/sync_webdav.rs
+index e3e724e..a180756 100644
+--- a/tests/sync_webdav.rs
++++ b/tests/sync_webdav.rs
+@@ -78,6 +78,7 @@ fn export_cfg(base_url: &str, domain: &str, localpart: &str, account_id: &str) -
+     ExportConfig {
+         connect: ConnectConfig {
+             url: base_url.to_owned(),
++            use_url_origin: false,
+             auth: jmap_basic(localpart, domain),
+             account: AccountSelector::Id(account_id.to_owned()),
+         },
+@@ -96,6 +97,7 @@ fn jmap_import_cfg(
+     ImportConfig {
+         connect: ConnectConfig {
+             url: base_url.to_owned(),
++            use_url_origin: false,
+             auth: jmap_basic(localpart, domain),
+             account: AccountSelector::Id(account_id.to_owned()),
+         },

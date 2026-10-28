@@ -286,6 +286,7 @@
         oom = import ./nix/tests/oom.nix { pkgs = pkgs-map.${system}; };
         ksycoca = import ./nix/tests/ksycoca.nix { pkgs = pkgs-map.${system}; };
         ok-color = import ./nix/tests/ok-color.nix { pkgs = pkgs-map.${system}; };
+        stalwart-backup = import ./nix/tests/stalwart-backup.nix { pkgs = pkgs-map.${system}; };
         borg-hop = import ./nix/tests/borg-hop.nix { pkgs = pkgs-map.${system}; };
         backup = import ./nix/tests/backup.nix { pkgs = pkgs-map.${system}; };
         agentd = import ./nix/tests/agentd.nix { pkgs = pkgs-map.${system}; };
@@ -300,6 +301,11 @@
           builtins.seq (workspace.checked workspace.members) "touch $out"
         );
         treefmt = treefmtEval.${system}.config.build.check self;
+        zitadel = import ./nix/tests/zitadel.nix { pkgs = pkgs-map.${system}; };
+        bulwark = import ./nix/tests/bulwark.nix { pkgs = pkgs-map.${system}; };
+        scheduler-stalwart = import ./nix/tests/scheduler-stalwart.nix { pkgs = pkgs-map.${system}; };
+        scheduler-booking = import ./nix/tests/scheduler-booking.nix { pkgs = pkgs-map.${system}; };
+        scheduler-feeds = import ./nix/tests/scheduler-feeds.nix { pkgs = pkgs-map.${system}; };
         desktop-boot = import ./nix/tests/desktop-boot.nix {
           pkgs = pkgs-map.${system};
           inherit inputs my-lib;

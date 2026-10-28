@@ -86,11 +86,16 @@ pub struct Address(String, String);
 
 text! {
     Address(|s| match s.split_once('@') {
-        Some((local, domain)) if s.len() <= 254 && dot_atom(local) && ldh(domain) => {
+        Some((local, domain)) if s.len() <= Address::MOST && dot_atom(local) && ldh(domain) => {
             Ok(Address(local.into(), domain.into()))
         }
         _ => bail!("{} is not a plain email address", s.escape_debug()),
     }, |a| format!("{}@{}", a.0, a.1));
+}
+
+impl Address {
+    /// The longest address, in bytes, all ASCII.
+    pub const MOST: usize = 254;
 }
 
 impl PartialEq for Address {

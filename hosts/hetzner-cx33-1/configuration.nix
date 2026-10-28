@@ -7,6 +7,7 @@
   lib,
   pkgs,
   inputs,
+  my-lib,
   ...
 }:
 {
@@ -16,7 +17,30 @@
     ../common/hetzner-cloud
   ];
 
-  bundles.zitadel.enable = true;
+  bundles.stalwart = {
+    enable = true;
+    # agent-dispatch on desktop wakes the agents a delivery is addressed to
+    deliveryWebhooks = [ "http://${my-lib.netbird.peers.desktop.v4}:7310/" ];
+    receiving.enable = true;
+    sending.enable = true;
+    sharedMailboxes = [
+      "catchall"
+      "pool"
+    ];
+    catchAll = "catchall";
+    # the seat pool's signups, read by the pool on oracle-a1-flex-3
+    serviceMailboxes.join = {
+      senderDomain = "northeastern.edu";
+      mayMail = [ "ironmoon@ironmoon.dev" ];
+      allowedIps = [ "${inputs.secrets.data.ips.oracle-a1-flex-3.ipv4.address}/32" ];
+    };
+    inherit (inputs.secrets.data.mail) agentCorrespondents agentCorrespondentsFor;
+  };
+  bundles.bulwark.enable = true;
+  bundles.vpn.netbird = {
+    enable = true;
+    useSetupKey = true;
+  };
 
   boot.loader.grub = {
     enable = true;
