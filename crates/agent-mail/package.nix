@@ -5,6 +5,7 @@
   deployment,
   correspondents,
   correspondentsFor,
+  periods ? import ./periods.nix,
 }:
 callPackage ../rust.nix {
   crate = "agent-mail";
@@ -16,6 +17,7 @@ callPackage ../rust.nix {
       deployment
       correspondents
       correspondentsFor
+      periods
       ;
   };
 }
