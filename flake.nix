@@ -306,6 +306,7 @@
         scheduler-stalwart = import ./nix/tests/scheduler-stalwart.nix { pkgs = pkgs-map.${system}; };
         scheduler-booking = import ./nix/tests/scheduler-booking.nix { pkgs = pkgs-map.${system}; };
         scheduler-feeds = import ./nix/tests/scheduler-feeds.nix { pkgs = pkgs-map.${system}; };
+        submission-signer = import ./nix/tests/submission-signer.nix { pkgs = pkgs-map.${system}; };
         desktop-boot = import ./nix/tests/desktop-boot.nix {
           pkgs = pkgs-map.${system};
           inherit inputs my-lib;
