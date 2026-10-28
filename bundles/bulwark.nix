@@ -14,6 +14,16 @@ let
   ips = inputs.secrets.data.ips.${config.networking.hostName};
   address = "${ips.ipv6.prefix}::3";
 
+  # the mobile app looks for JMAP on the host the user signs in at, which is this one
+  jmap = {
+    inherit (mail.loopback) port;
+    extraConfig = ''
+      proxy_set_header Cookie "";
+      add_header Content-Security-Policy "sandbox" always;
+      add_header X-Content-Type-Options "nosniff" always;
+    '';
+  };
+
   bulwark-secrets =
     my-lib.sops.mkSecrets
       {
@@ -83,7 +93,11 @@ in
         locations = {
           "/admin".netbirdOnly = true;
           "/api/admin".netbirdOnly = true;
-        };
+          "/jmap/eventsource" = jmap // {
+            extraConfig = jmap.extraConfig + "proxy_buffering off;";
+          };
+        }
+        // lib.genAttrs [ "= /.well-known/jmap" "= /jmap" "/jmap/" ] (_: jmap);
       };
     };
   };

@@ -11,6 +11,8 @@ type Role = 'reader' | 'sender' | 'admin';
 const read = (path: string) => readFileSync(path, 'utf8').trim();
 const accounts: Record<Role, { address: string; passwordFile: string }> = JSON.parse(read(env('ACCOUNTS')));
 const password = (role: Role) => read(accounts[role].passwordFile);
+export const basicAuth = (role: Role) =>
+  `Basic ${Buffer.from(`${accounts[role].address}:${password(role)}`).toString('base64')}`;
 
 export const blobStore = {
   down: () => writeFileSync(env('S3_UNAVAILABLE'), ''),
@@ -27,7 +29,7 @@ class Jmap {
   ) {}
 
   static async as(role: Role): Promise<Jmap> {
-    const auth = `Basic ${Buffer.from(`${accounts[role].address}:${password(role)}`).toString('base64')}`;
+    const auth = basicAuth(role);
     const response = await fetch(`${env('JMAP_URL')}/jmap/session`, { headers: { Authorization: auth } });
     expect(response.status, 'JMAP session').toBe(200);
     const session = await response.json();
