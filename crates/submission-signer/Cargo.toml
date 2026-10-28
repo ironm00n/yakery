@@ -1,0 +1,29 @@
+[package]
+name = "submission-signer"
+version = "0.1.0"
+description = "Stalwart's hook for submitted mail: a From or Sender that isn't the sender's own is refused, and mail to a local domain gets a Submission-Signature"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "submission-signer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+mail-parser.workspace = true
+private.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+submission-signature.workspace = true
+text.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
+yakery-log.workspace = true
+
+[lints]
+workspace = true

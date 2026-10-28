@@ -1,0 +1,18 @@
+[package]
+name = "submission-signature"
+version = "0.1.0"
+description = "The Submission-Signature header: the account that submitted a message and its envelope sender, signed over the message as submitted"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+ring.workspace = true
+text.workspace = true
+
+[lints]
+workspace = true
