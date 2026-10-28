@@ -26,7 +26,7 @@ wire! {
             in_reply_to: Vec<String> = "inReplyTo", references: Vec<String> = "references",
             preview: String = "preview", content_type: String = "header:Content-Type",
             notify: Vec<Addr> = "header:Disposition-Notification-To:asAddresses",
-            original_recipient: String = "header:Original-Recipient:asText",
+            original_recipient: String = "header:Original-Recipient:asText", blob: String = "blobId",
         }
         Body in "Email/get" with ("fetchTextBodyValues", MAX_BODY_BYTES) {
             id: String = "id", text: Vec<Part> = "textBody", attachments: Vec<Part> = "attachments",
