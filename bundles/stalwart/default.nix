@@ -41,11 +41,14 @@ let
         prefix = "stalwart";
         separator = "-";
       }
-      [
-        "recovery_admin_password"
-        "s3_access_key"
-        "s3_secret_key"
-      ];
+      (
+        [
+          "recovery_admin_password"
+          "s3_access_key"
+          "s3_secret_key"
+        ]
+        ++ lib.optional cfg.signSubmissions "submission_seed"
+      );
   get-stalwart-secret = stalwart-secrets.get-path;
   credential = name: "/run/credentials/stalwart.service/${name}";
   certDir = config.security.acme.certs.${hostname}.directory;
@@ -237,7 +240,7 @@ let
     ) cfg.serviceMailboxes
   );
 
-  # mail an account here submits carries whatever From it writes
+  # unless signSubmissions is on, mail an account here submits carries whatever From it writes
   submitted = lib.concatStrings (
     [
       ''
@@ -337,6 +340,11 @@ in
       example = "catchall";
       description = "Shared mailbox that gets mail for addresses at ${domain} no account or alias holds.";
     };
+    signSubmissions = lib.mkEnableOption ''
+      the submission signer: mail an account submits is refused unless its From and Sender are the
+      account's own address, and mail with a recipient at ${domain} or ${agentDomain} gets a
+      `Submission-Signature` signed with the `submission_seed` secret
+    '';
     serviceMailboxes = lib.mkOption {
       type = lib.types.attrsOf (
         lib.types.submodule {
@@ -476,6 +484,12 @@ in
     ];
 
     sops.secrets = stalwart-secrets.secrets;
+
+    services.stalwart.submissionSigner = lib.mkIf cfg.signSubmissions {
+      enable = true;
+      seedFile = get-stalwart-secret "submission_seed";
+      domains = lib.attrValues domains;
+    };
 
     bundles.stalwart.programAccounts = {
       backup.permissions = config.services.stalwart.backup.permissions;

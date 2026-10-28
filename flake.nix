@@ -298,6 +298,7 @@
         scheduler-stalwart = import ./nix/tests/scheduler-stalwart.nix { pkgs = pkgs-map.${system}; };
         scheduler-booking = import ./nix/tests/scheduler-booking.nix { pkgs = pkgs-map.${system}; };
         scheduler-feeds = import ./nix/tests/scheduler-feeds.nix { pkgs = pkgs-map.${system}; };
+        submission-signer = import ./nix/tests/submission-signer.nix { pkgs = pkgs-map.${system}; };
         agentd = import ./nix/tests/agentd.nix { pkgs = pkgs-map.${system}; };
         agent-slack = import ./nix/tests/agent-slack.nix {
           pkgs = pkgs-map.${system};
