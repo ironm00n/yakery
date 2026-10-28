@@ -1,4 +1,5 @@
 mod auth;
+mod authority;
 mod claims;
 mod files;
 mod text;
@@ -54,7 +55,7 @@ pub fn email(id: &str, with: Value) -> Value {
         "mailboxIds": { "inbox": true }, "messageId": [format!("{id}@example.org")],
         "inReplyTo": [], "references": [], "preview": "", "attachments": [],
         "header:Content-Type": " text/plain", "header:Original-Recipient:asText": null,
-        "header:Disposition-Notification-To:asAddresses": null, "textBody": [], "bodyValues": {},
+        "header:Disposition-Notification-To:asAddresses": null, "textBody": [], "bodyValues": {}, "blobId": "B",
         "bodyStructure": {},
     });
     m.as_object_mut().unwrap().extend(with.as_object().unwrap().clone());

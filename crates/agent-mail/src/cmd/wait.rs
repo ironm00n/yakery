@@ -12,7 +12,9 @@ use private::{now, random::below};
 use text::Address;
 
 use crate::{
+    SUBMISSION_KEY,
     address::{SessionId, Topic},
+    authority::{self, Signed},
     jmap::wire,
     mail::{Addr, Body, Email, Keyword, Mail, Mark},
     out::{Asked, Outbox, is_receipt},
@@ -25,6 +27,7 @@ const RECHECK: Duration = Duration::from_secs(150);
 const BACKOFF: Duration = Duration::from_secs(5);
 // A wait that cannot finish a scan for this long gives up, so whoever runs it hears that mail is not arriving.
 const STALE: Duration = Duration::from_secs(300);
+const MAX_MESSAGE_BYTES: usize = 32 << 20;
 
 // Every open inbox mail is matched on these alone, since Stalwart parses each message for an Email's attachments, and
 // a few hundred of those outlast a request.
@@ -59,7 +62,8 @@ pub struct Args {
     /// Give up after <n>[smhd], at most 30d; minutes when the unit is left out.
     #[arg(long, value_parser = timeout)]
     pub timeout: Option<Duration>,
-    /// Keep waiting after each delivery, and print each mail as one JSON object on a line of its own.
+    /// Keep waiting after each delivery, and print each mail as one JSON object on a line of its own, its `authority`
+    /// true only for mail whose Submission-Signature makes it Owen's word.
     #[arg(long)]
     pub json: bool,
 }
@@ -363,7 +367,7 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
         for m in &claimed {
             if let Some(body) = bodies.iter().find(|b| b.id == m.id) {
                 out(&match json {
-                    true => line(m, body),
+                    true => line(m, body, &authority(mail, m, &watch.topics).await?),
                     false => format!("{}\n", message(m, Some(body))),
                 })?;
             }
@@ -375,15 +379,49 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
     }
 }
 
-/// One mail as one line, whatever its text holds.
-pub fn line(m: &Email, body: &Body) -> String {
+/// Whether `m` is Owen's word, read from the message as Stalwart holds it.
+async fn authority(mail: &Mail, m: &Email, topics: &[Address]) -> Result<Result<Signed, String>> {
+    Ok(match mail.download(&m.blob, MAX_MESSAGE_BYTES).await? {
+        Some(raw) => authority::check(SUBMISSION_KEY, &raw, topics, now()),
+        None => Err(format!(
+            "the message is over {} MiB, so its signature goes unchecked",
+            MAX_MESSAGE_BYTES >> 20
+        )),
+    })
+}
+
+/// One mail as one line, whatever its text holds; with Owen's authority, its addressing, subject and text are the
+/// ones he signed.
+pub fn line(m: &Email, body: &Body, verdict: &Result<Signed, String>) -> String {
     let values: Vec<_> = body.text.iter().filter_map(|p| body.values.get(&p.part)).collect();
-    let texts: Vec<&str> = values.iter().map(|v| v.value.as_str()).collect();
     let emails = |l: &[Addr]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
+    let (from, to, cc, subject, text, truncated, reason) = match verdict {
+        Ok(s) => {
+            let why = "Stalwart signed it as sent from Owen's account".to_owned();
+            (
+                s.from.clone(),
+                s.to.clone(),
+                s.cc.clone(),
+                s.subject.clone(),
+                s.text.clone(),
+                false,
+                why,
+            )
+        }
+        Err(why) => (
+            m.from.first().map_or_else(String::new, |a| a.email.clone()),
+            emails(&m.to),
+            emails(&m.cc),
+            m.subject.clone(),
+            values.iter().map(|v| v.value.as_str()).collect::<Vec<_>>().join("\n"),
+            values.iter().any(|v| v.truncated),
+            why.clone(),
+        ),
+    };
     json!({
-        "id": m.id, "threadId": m.thread, "receivedAt": m.received,
-        "from": m.from.first().map_or("", |a| a.email.as_str()), "to": emails(&m.to), "cc": emails(&m.cc),
-        "subject": m.subject, "text": texts.join("\n"), "truncated": values.iter().any(|v| v.truncated),
+        "id": m.id, "threadId": m.thread, "receivedAt": m.received, "from": from, "to": to, "cc": cc,
+        "subject": subject, "text": text, "truncated": truncated, "authority": verdict.is_ok(),
+        "authorityReason": reason, "approval": verdict.as_ref().ok().map(|s| &s.signature),
     })
     .to_string()
 }

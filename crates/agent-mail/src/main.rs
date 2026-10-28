@@ -1,5 +1,6 @@
 mod address;
 mod auth;
+mod authority;
 mod cmd;
 mod jmap;
 mod mail;
@@ -33,6 +34,7 @@ deployment! {
     AGENT_DOMAIN = "AGENT_MAIL_AGENT_DOMAIN" | "agent.example.org";
     SHARED_LOCAL_PART = "AGENT_MAIL_SHARED_LOCAL_PART" | "agent";
     CORRESPONDENTS = "AGENT_MAIL_CORRESPONDENTS" | "" | true;
+    SUBMISSION_KEY = "AGENT_MAIL_SUBMISSION_KEY" | "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw" | true;
     CORRESPONDENTS_FOR = "AGENT_MAIL_CORRESPONDENTS_FOR"
         | r#"{"agent+unboca@example.org": ["colleague@example.com"]}"#;
 }
