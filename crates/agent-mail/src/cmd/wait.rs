@@ -8,6 +8,7 @@ use private::{now, random::below};
 use text::Address;
 
 use crate::{
+    BACKOFF, RECHECK, STALE,
     address::Topic,
     jmap::wire,
     mail::{Addr, Body, Email, Keyword, Mail, Mark},
@@ -15,11 +16,6 @@ use crate::{
     prelude::*,
     show::{message, out, reminder, utc},
 };
-
-const RECHECK: Duration = Duration::from_secs(150);
-const BACKOFF: Duration = Duration::from_secs(5);
-// A wait that cannot finish a scan for this long gives up, so whoever runs it hears that mail is not arriving.
-const STALE: Duration = Duration::from_secs(300);
 
 // Every open inbox mail is matched on these alone, since Stalwart parses each message for an Email's attachments, and
 // a few hundred of those outlast a request.
@@ -220,7 +216,7 @@ impl Watch<'_> {
             let since = self.scanned.unwrap_or(self.started).elapsed();
             if since >= STALE {
                 return Err(
-                    e.context(format!("no scan finished in {} minutes", STALE.as_secs() / 60))
+                    e.context(format!("no scan finished in {}s", STALE.as_secs()))
                 );
             }
             let sign_in = |why: String| (backoff, true, format!("{why}; signing in again"));

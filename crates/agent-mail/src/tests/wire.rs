@@ -714,7 +714,7 @@ async fn through_outage(
 
 #[tokio::test(start_paused = true)]
 async fn a_wait_fails_once_no_scan_has_finished_for_5_minutes_and_rides_out_a_shorter_outage() {
-    let failed = "error: no scan finished in 5 minutes: stalwart: /jmap/eventsource/: HTTP 503 Service Unavailable";
+    let failed = "error: no scan finished in 300s: stalwart: /jmap/eventsource/: HTTP 503 Service Unavailable";
     assert_eq!(through_outage(vec![], 0..u64::MAX, 3600).await, (300, failed.into()));
     assert_eq!(
         through_outage(vec![], 200..u64::MAX, 3600).await,

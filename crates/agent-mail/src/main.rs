@@ -37,6 +37,32 @@ deployment! {
         | r#"{"agent+unboca@example.org": ["colleague@example.com"]}"#;
 }
 
+/// A wait's periods (`periods.nix`), in whole seconds from the build.
+macro_rules! periods {
+    ($($name:ident = $var:literal | $fixture:literal;)*) => {$(
+        #[cfg(not(test))]
+        pub const $name: std::time::Duration = std::time::Duration::from_secs(
+            match u64::from_str_radix(env!($var), 10) {
+                Ok(secs) => secs,
+                Err(_) => panic!(concat!($var, " is not a whole number of seconds")),
+            },
+        );
+        #[cfg(test)]
+        pub const $name: std::time::Duration = std::time::Duration::from_secs($fixture);
+    )*};
+}
+
+periods! {
+    RECHECK = "AGENT_MAIL_RECHECK_SECS" | 150;
+    BACKOFF = "AGENT_MAIL_BACKOFF_SECS" | 5;
+    STALE = "AGENT_MAIL_STALE_SECS" | 300;
+}
+
+const _: () = assert!(
+    STALE.as_secs() > RECHECK.as_secs(),
+    "an idle wait scans once a recheck period, so a shorter stale bound fails it while healthy"
+);
+
 /// What went wrong, as far as retries and outcomes care; only the edges tag, and anything untagged is transient.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Failure {
@@ -111,7 +137,7 @@ commands! {
     #[command(about = read::ATTACHMENTS_HELP)]
     Attachments(read::One) => read::attachments,
     /// Wait for watched mail from others that is unseen, unanswered and not done; claim it as seen, print it, and
-    /// send any read receipt it asks for. Exits 2 at --timeout, but fails once no scan has finished for 5 minutes or
+    /// send any read receipt it asks for. Exits 2 at --timeout, but fails once no scan has finished for 5 minutes (as built) or
     /// at a --timeout no scan finished before. Seen mail still unanswered is listed on stderr.
     Wait(wait::Args) => wait::run,
     /// Mark mail handled, so wait neither delivers it nor lists it again.
