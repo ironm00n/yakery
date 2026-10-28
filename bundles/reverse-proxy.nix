@@ -145,11 +145,16 @@ let
               default = "";
               description = "Extra config appended to this location block.";
             };
+            port = mkOption {
+              type = types.nullOr types.port;
+              default = null;
+              description = "Proxy this location to `127.0.0.1:<port>` instead of the vhost's backend.";
+            };
           };
         }
       );
       default = { };
-      description = "Locations besides `/`, keyed by nginx location, proxied to the same backend. Requires `port`.";
+      description = "Locations besides `/`, keyed by nginx location, proxied to the vhost's backend unless they set `port`. Requires the vhost's `port`.";
     };
     hsts = mkOption {
       type = types.submodule {
@@ -222,14 +227,14 @@ let
       netbirdOnly =
         lib.concatMapStrings (cidr: "allow ${cidr};\n") my-lib.netbird.overlayCidrs + "deny all;";
       proxied =
-        extraConfig:
+        to: extraConfig:
         let
           locationConfig = lib.concatStringsSep "\n" (
             lib.optional overwriteForwarded forwardedHeaders ++ lib.optional (extraConfig != "") extraConfig
           );
         in
         {
-          proxyPass = backend;
+          proxyPass = to;
         }
         // optionalAttrs opts.websockets { proxyWebsockets = true; }
         // optionalAttrs overwriteForwarded { recommendedProxySettings = false; }
@@ -248,11 +253,11 @@ let
     // optionalAttrs (vhostConfig != "") { extraConfig = vhostConfig; }
     // optionalAttrs (opts.port != null) {
       locations = {
-        "/" = proxied opts.extraLocationConfig;
+        "/" = proxied backend opts.extraLocationConfig;
       }
       // mapAttrs (
         _: location:
-        proxied (
+        proxied (if location.port == null then backend else "http://127.0.0.1:${toString location.port}") (
           lib.concatStringsSep "\n" (
             lib.optional location.netbirdOnly netbirdOnly
             ++ lib.optional (location.extraConfig != "") location.extraConfig
