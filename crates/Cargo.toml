@@ -6,6 +6,7 @@ members = [
     "agent-proto",
     "agentd",
     "agent-host",
+    "submission-signature",
     "lib/text",
     "lib/private",
     "lib/log",
@@ -38,6 +39,7 @@ lol_html = "3"
 nix = { version = "0.30", features = ["fs", "mount", "process", "sched", "signal", "user"] }
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "cookies", "json", "form"] }
+ring = "0.17"
 rustix = { version = "1", features = ["fs", "process"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
@@ -54,4 +56,5 @@ toml = "0.8"
 agent-proto = { path = "agent-proto" }
 text = { path = "lib/text" }
 private = { path = "lib/private" }
+submission-signature = { path = "submission-signature" }
 yakery-log = { path = "lib/log" }
