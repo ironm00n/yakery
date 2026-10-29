@@ -229,6 +229,8 @@ in
       };
 
       bundles.stalwart.enable = true;
+      # a third domain, as cx33-1 has, so the plan is applied with one
+      bundles.stalwart.extraDomains.extra = "extra.test";
       services.stalwart.plan.sequence = lib.mkAfter (
         lib.optional (users != [ ]) (
           upsertOn "Account" [ "name" "domainId" ] (
