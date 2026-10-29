@@ -156,7 +156,9 @@ struct Watch<'a> {
     topics: Vec<Address>,
     starts: Vec<String>,
     deadline: Option<Instant>,
-    cursor: Cursor,
+    /// Kept with the topics alone: each scan reads every member of the watched threads, so a new one needs no full
+    /// check.
+    cursor: Cursor<Vec<Address>>,
     lost: HashSet<String>,
     started: Instant,
     scanned: Option<Instant>,
@@ -219,6 +221,7 @@ impl Watch<'_> {
         let threads = self.threads().await?;
         let (mut cursor, this) = (self.cursor.clone(), &*self);
         let scan = cursor.check(
+            this.topics.clone(),
             async |since| this.mail.changes(since).await,
             async || this.everything().await,
             async |ids| this.triage(&threads, ids).await,

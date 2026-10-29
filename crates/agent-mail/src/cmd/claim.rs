@@ -181,22 +181,31 @@ pub fn answered_in_sent(
     answered
 }
 
-#[derive(Clone, Default)]
-pub struct Cursor {
-    since: Option<String>,
+/// The inbox state the last whole check ended at, kept with the watched set `W` it checked for: mail a set newly
+/// covers can predate that state, so a check for any other set starts over in full.
+#[derive(Clone)]
+pub struct Cursor<W> {
+    since: Option<(W, String)>,
     pending: BTreeSet<String>,
 }
 
-impl Cursor {
+impl<W> Default for Cursor<W> {
+    fn default() -> Self {
+        Cursor { since: None, pending: BTreeSet::new() }
+    }
+}
+
+impl<W: PartialEq> Cursor<W> {
     pub async fn check<T>(
         &mut self,
+        watched: W,
         changes: impl AsyncFn(&str) -> Result<Option<(Vec<String>, String)>>,
         everything: impl AsyncFn() -> Result<(Vec<String>, String)>,
         triage: impl AsyncFnOnce(BTreeSet<String>) -> Result<(T, BTreeSet<String>)>,
     ) -> Result<T> {
         let changed = match &self.since {
-            Some(since) => changes(since).await?,
-            None => None,
+            Some((was, since)) if *was == watched => changes(since).await?,
+            _ => None,
         };
         let (ids, state) = match changed {
             Some(changed) => changed,
@@ -204,7 +213,7 @@ impl Cursor {
         };
         let (found, pending) =
             triage(ids.into_iter().chain(self.pending.iter().cloned()).collect()).await?;
-        *self = Cursor { since: Some(state), pending };
+        *self = Cursor { since: Some((watched, state)), pending };
         Ok(found)
     }
 }
