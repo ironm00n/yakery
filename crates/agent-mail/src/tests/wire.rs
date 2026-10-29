@@ -12,12 +12,16 @@ use bytes::Bytes;
 use http_body::Frame;
 use private::{Secret, now};
 use reqwest::{Method, Request, Response};
+use submission_signature::{HEADER, Signer, Stamp};
 use tokio::time::Instant;
 
 use super::*;
 use crate::{
+    RECHECK,
+    address::SessionId,
     auth::{Auth, Http},
     cmd::wait,
+    listeners::Heartbeat,
     mail::{Conn, Current, Email, Keyword, Mail},
     out::{Leftover, Outbox},
     policy::Recipients,
@@ -619,6 +623,92 @@ async fn a_wait_has_stalwart_parse_only_the_mail_it_delivers() {
     let (_wire, server, mail) = mail(&dir, stalwart).await;
     assert_eq!(wait::watch(&mail.unwrap(), watching(600)).await.unwrap(), ExitCode::SUCCESS);
     assert_eq!(server.borrow().parsed, BTreeSet::from(["a1".to_owned()]));
+}
+
+/// A mail to `to` as Stalwart delivers Owen's, signed now.
+fn signed_to(to: &str) -> String {
+    let message = format!(
+        "From: Owner <{HIM}>\r\nTo: {to}\r\nSubject: go\r\nContent-Type: text/plain\r\n\r\nyes\r\n"
+    );
+    let signer = Signer::from_seed(&format!("{}Bwc", "BwcH".repeat(10))).unwrap();
+    let stamp = Stamp { account: HIM.parse().unwrap(), sender: HIM.parse().unwrap(), t: now() };
+    format!("{HEADER}: {}\r\n{message}", signer.sign(&stamp, message.as_bytes()))
+}
+
+fn store_in(dir: &Scratch) -> Store {
+    Store {
+        state: dir.0.join("state"),
+        locks: dir.0.join("locks"),
+        login: login("agent@example.org"),
+    }
+}
+
+/// Which of Owen's mail to the pool, unsigned mail to it and his mail to another topic a session's own wait on both
+/// topics claims, while `listener` is the pool's.
+async fn claimed_beside(name: &str, listener: Heartbeat) -> Vec<bool> {
+    let dir = Scratch::new(name);
+    let other = json!({ "to": [{ "email": "agent+other@example.org" }] });
+    let mut stalwart =
+        Stalwart::new(vec![email("s1", json!({})), email("u1", json!({})), email("y1", other)]);
+    let unsigned = format!("From: {HIM}\r\nTo: {POOL}\r\n\r\nyes\r\n");
+    stalwart.downloads.extend([reply(200, signed_to(POOL)), reply(200, unsigned)]);
+    let (_wire, server, mail) = mail(&dir, stalwart).await;
+    store_in(&dir).listeners().unwrap().put(&"mod-1".parse().unwrap(), listener).unwrap();
+    let topics = ["pool", "other"].map(|t| t.parse().unwrap()).into();
+    let watching = wait::Watching { topic: topics, thread: vec![] };
+    let own = wait::Args {
+        watching,
+        session: None,
+        timeout: Some(Duration::from_secs(600)),
+        json: false,
+    };
+    assert_eq!(wait::watch(&mail.unwrap(), own).await.unwrap(), ExitCode::SUCCESS);
+    server.borrow().emails.iter().map(|m| m["keywords"]["$seen"] == true).collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_sessions_own_wait_leaves_owens_word_to_a_live_listener_on_its_topic_and_nothing_else() {
+    let pool =
+        |pid, scanned| Heartbeat { pid, topics: [POOL.into()].into(), threads: [].into(), scanned };
+    let me = std::process::id();
+    assert_eq!(claimed_beside("beside-live", pool(me, now())).await, [false, true, true]);
+    let stale = now() - 3 * RECHECK.as_secs() as i64 - 1;
+    assert_eq!(claimed_beside("beside-stale", pool(me, stale)).await, [true, true, true]);
+    let gone = std::process::Command::new("true").spawn().unwrap();
+    let pid = gone.id();
+    drop(gone.wait_with_output().unwrap());
+    assert_eq!(claimed_beside("beside-gone", pool(pid, now())).await, [true, true, true]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_listener_beats_after_its_scans_and_leaves_when_its_wait_ends() {
+    let dir = Scratch::new("listener-beats");
+    let (_wire, _server, mail) = mail(&dir, Stalwart::new(vec![])).await;
+    let (store, id): (Store, SessionId) = (store_in(&dir), "mod-1".parse().unwrap());
+    store.records().unwrap().record(&id, vec!["pool".parse().unwrap()], vec![]).unwrap();
+    let listeners = store.listeners().unwrap();
+    let args = wait::Args {
+        watching: wait::Watching::default(),
+        session: Some(id.clone()),
+        timeout: Some(Duration::from_secs(600)),
+        json: true,
+    };
+    let mail = mail.unwrap();
+    let (ended, (first, again)) = tokio::join!(wait::watch(&mail, args), async {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let first = listeners.all().unwrap();
+        listeners.leave(&id).unwrap();
+        tokio::time::sleep(RECHECK + Duration::from_secs(1)).await;
+        (first, listeners.all().unwrap())
+    });
+    assert_eq!(ended.unwrap(), ExitCode::from(2));
+    let mine = &first["mod-1"];
+    assert_eq!(
+        (mine.pid, mine.topics.iter().map(String::as_str).collect::<Vec<_>>()),
+        (std::process::id(), vec![POOL])
+    );
+    assert!(again.contains_key("mod-1"), "a later scan writes it again");
+    assert!(listeners.all().unwrap().is_empty(), "the ended wait takes it out");
 }
 
 #[tokio::test(start_paused = true)]
