@@ -29,6 +29,10 @@ let
     ips.ipv4.address
     address
   ];
+  hostAddresses = [
+    ips.ipv4.address
+    "${ips.ipv6.prefix}::/64"
+  ];
   webuiClientId = "373369290327392257";
 
   package = pkgs.callPackage ../../packages/stalwart { webuiOauthClientId = webuiClientId; };
@@ -415,6 +419,17 @@ in
       description = ''
         URLs Stalwart posts `delivery.completed` events to, with the delivery span's sender and
         recipients, for every message the queue finishes. Webhooks not listed here are removed.
+      '';
+    };
+    banExempt = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.listOf lib.types.str);
+      default = { };
+      example = {
+        "a campus network" = [ "155.33.0.0/16" ];
+      };
+      description = ''
+        Networks Stalwart never bans, by why: it bans an address after 100 failed sign-ins in a
+        day, which locks out every user behind it. This host's own addresses are always exempt.
       '';
     };
     programAccounts = lib.mkOption {
@@ -846,13 +861,21 @@ in
 
           (reconcile "AllowedIp" [ "address" ] (
             lib.listToAttrs (
-              lib.imap0 (i: ip: {
-                name = "host-${toString i}";
-                value = {
-                  address = ip;
-                  reason = "Bulwark on this host signs in as every user";
-                };
-              }) hostnameAddresses
+              lib.imap0
+                (i: value: {
+                  name = "allowed-${toString i}";
+                  inherit value;
+                })
+                (
+                  lib.concatLists (
+                    lib.mapAttrsToList (
+                      reason:
+                      map (address: {
+                        inherit address reason;
+                      })
+                    ) ({ "Bulwark on this host signs in as every user" = hostAddresses; } // cfg.banExempt)
+                  )
+                )
             )
           ))
         ]
