@@ -276,9 +276,7 @@ impl Watch<'_> {
             }
             let since = self.scanned.unwrap_or(self.started).elapsed();
             if since >= STALE {
-                return Err(
-                    e.context(format!("no scan finished in {}s", STALE.as_secs()))
-                );
+                return Err(e.context(format!("no scan finished in {}s", STALE.as_secs())));
             }
             let sign_in = |why: String| (backoff, true, format!("{why}; signing in again"));
             let (pause, reconnect, why) = match Failure::of(&e) {
