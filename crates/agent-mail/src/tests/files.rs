@@ -6,7 +6,7 @@ use super::*;
 use crate::{
     RECHECK,
     address::SessionId,
-    cmd::read::folder,
+    cmd::{read::folder, wait},
     listeners::Heartbeat,
     store::{Access, PasswordFile, Store, Tokens, Watched},
 };
@@ -158,4 +158,31 @@ fn a_listener_counts_while_its_process_runs_and_it_scanned_within_three_rechecks
     );
     ids.iter().for_each(|id| listeners.leave(id).unwrap());
     assert!(listeners.all().unwrap().is_empty());
+}
+
+#[test]
+fn a_plain_wait_stands_down_only_for_its_own_live_listener_and_records_what_it_was_given() {
+    let dir = Scratch::new("deferred");
+    let store = store(&dir, "agent@example.org");
+    let (listeners, records) = (store.listeners().unwrap(), store.records().unwrap());
+    let (mine, other): (SessionId, SessionId) = ("a-1".parse().unwrap(), "b-2".parse().unwrap());
+    let given = wait::Watching { topic: vec!["pool".parse().unwrap()], thread: vec!["e1".into()] };
+    let (now, limit) = (1_800_000_000, 3 * RECHECK.as_secs() as i64);
+    let deferred = || wait::deferred(&store, &mine, &given, now).unwrap();
+    listeners.beat(&other, &[], &[], now).unwrap();
+    assert_eq!(deferred(), None, "another session's listener");
+    listeners.beat(&mine, &[], &[], now - limit - 1).unwrap();
+    assert_eq!(deferred(), None, "a stale listener");
+    let Watched { topics, threads } = records.of(&mine).unwrap();
+    assert!(topics.is_empty() && threads.is_empty(), "a wait that runs records nothing");
+    listeners.beat(&mine, &[], &[], now - limit).unwrap();
+    assert_eq!(
+        deferred().unwrap(),
+        format!(
+            "the mail-listener mod (pid {}) already waits for this session and hands its mail in as prompts; \
+             session a-1 watches topics [pool] and the threads of [e1]",
+            std::process::id()
+        )
+    );
+    assert!(records.of(&other).unwrap().topics.is_empty());
 }
