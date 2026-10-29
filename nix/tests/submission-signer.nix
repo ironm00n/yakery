@@ -2,10 +2,10 @@
 let
   inherit (pkgs) lib;
   stalwart = import ./stalwart-server.nix { inherit pkgs; };
-  inherit (stalwart) domain account;
-  inherit (import ../../lib/stalwart.nix { inherit lib; }) upsertOn1 update;
+  inherit (stalwart) domain;
+  inherit (stalwart.my-lib.stalwart) upsertOn1 update;
   signer = pkgs.callPackage ../../crates/rust.nix { crate = "submission-signer"; };
-  seed = pkgs.writeText "seed" "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
+  seed = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
   sink = {
     port = 2525;
     dir = "/var/lib/sink";
@@ -17,15 +17,17 @@ pkgs.testers.runNixOSTest {
   defaults.virtualisation.graphics = false;
 
   nodes.server = {
-    imports = [ stalwart.node ];
-    services.stalwart.submissionSigner = {
-      enable = true;
-      seedFile = seed;
-      domains = [ domain ];
-    };
-    services.stalwart.plan.sequence = [
-      (account "owen" { })
-      (account "agent" { })
+    imports = [
+      (stalwart.node {
+        users = [
+          "owen"
+          "agent"
+        ];
+      })
+    ];
+    bundles.stalwart.signSubmissions = true;
+    sops.secrets.stalwart-submission_seed.text = seed;
+    services.stalwart.plan.sequence = lib.mkAfter [
       (upsertOn1 "MtaRoute" "sink" [ "name" ] {
         "@type" = "Relay";
         name = "sink";
@@ -68,11 +70,11 @@ pkgs.testers.runNixOSTest {
     # each message travels as base64, so its bytes reach the check as Stalwart holds them
     def raw(name, blob, path):
         auth = shlex.quote("Authorization: " + logins[name])
-        server.succeed(f"curl -sf -o {path} -H {auth} http://127.0.0.1:8080/jmap/download/{account_ids[name]}/{blob}/m.eml")
+        server.succeed(f"curl -sf -o {path} -H {auth} {origin(server)}/jmap/download/{account_ids[name]}/{blob}/m.eml")
         return base64.b64decode(server.succeed(f"base64 -w0 {path}"))
 
     def check(path):
-        return server.execute(f"submission-signer check --public $(submission-signer public --seed ${seed}) < {path} 2>&1")
+        return server.execute(f"submission-signer check --public $(submission-signer public --seed ${pkgs.writeText "seed" seed}) < {path} 2>&1")
 
     def mailbox(auth, account_id, role):
         boxes = jmap(auth, "Mailbox/get", {"accountId": account_id})["list"]
