@@ -40,6 +40,7 @@ buildNpmPackage (finalAttrs: {
     ./09-senders-are-addresses.patch
     ./10-mail-keeps-its-math.patch
     ./11-open-threads-take-new-mail.patch
+    ./12-bare-quotes-draw-the-quote-bar.patch
   ];
 
   configurePhase = ''
