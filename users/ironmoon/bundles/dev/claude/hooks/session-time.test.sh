@@ -11,9 +11,11 @@ check() {
 start() { echo "{\"hook_event_name\":\"SessionStart\",\"source\":\"$1\"}"; }
 stamp='^Current time: [A-Z][a-z]{2} [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} [A-Z+0-9-]+'
 
-check "$stamp, when this prompt was sent\.$" '{"hook_event_name":"UserPromptSubmit"}'
-check "$stamp, when you were spawned\.$" '{"hook_event_name":"SubagentStart"}'
-check "$stamp, when this session was compacted\.$" "$(start compact)"
+rule=' For dating only, never a reason to hurry, cut work or remark on the hour\.$'
+
+check "$stamp, when this prompt was sent\.$rule" '{"hook_event_name":"UserPromptSubmit"}'
+check "$stamp, when you were spawned\.$rule" '{"hook_event_name":"SubagentStart"}'
+check "$stamp, when this session was compacted\.$rule" "$(start compact)"
 check EMPTY "$(start startup)"
 check EMPTY "$(start resume)"
 check EMPTY '{"hook_event_name":"PreToolUse"}'
