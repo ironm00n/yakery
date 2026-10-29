@@ -19,6 +19,7 @@
 
   bundles.stalwart = {
     enable = true;
+    extraDomains.dislikes = "dislikes.email";
     # agent-dispatch on desktop wakes the agents a delivery is addressed to
     deliveryWebhooks = [ "http://${my-lib.netbird.peers.desktop.v4}:7310/" ];
     receiving.enable = true;

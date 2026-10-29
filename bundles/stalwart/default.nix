@@ -69,7 +69,8 @@ let
   domains = {
     ironmoon = domain;
     agent = agentDomain;
-  };
+  }
+  // cfg.extraDomains;
 
   # Stalwart rotates the DKIM keys of each domain in this zone, delegated to Knot on this host
   dkimZone = name: "_domainkey.${name}";
@@ -346,6 +347,15 @@ in
       example = "catchall";
       description = "Shared mailbox that gets mail for addresses at ${domain} no account or alias holds.";
     };
+    extraDomains = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.strMatching "[a-z0-9.-]+");
+      default = { };
+      example.dislikes = "dislikes.email";
+      description = ''
+        Further domains Stalwart takes mail for and signs as, by the id its plan gives each, with
+        their own DKIM zone on Knot. Mail reaches only the addresses accounts and aliases hold there.
+      '';
+    };
     signSubmissions = lib.mkEnableOption ''
       the submission signer: mail an account submits is refused unless its From and Sender are the
       account's own address, and mail with a recipient at ${domain} or ${agentDomain} gets a
@@ -468,6 +478,10 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        assertion = !(cfg.extraDomains ? ironmoon || cfg.extraDomains ? agent);
+        message = "bundles.stalwart.extraDomains can't take the ids ironmoon or agent, which the bundle's own domains have";
+      }
       {
         assertion = cfg.catchAll == null || lib.elem cfg.catchAll cfg.sharedMailboxes;
         message = "bundles.stalwart.catchAll must be one of bundles.stalwart.sharedMailboxes";
