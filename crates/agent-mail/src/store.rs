@@ -10,6 +10,7 @@ use private::{Dir, Mode, Replace, Secret};
 
 use crate::{
     address::{SessionId, Topic},
+    listeners::Listeners,
     policy::Login,
     prelude::*,
 };
@@ -278,6 +279,10 @@ impl Store {
 
     pub fn records(&self) -> Result<Records> {
         Ok(Records(Dir::open(&self.locks, &["agent-mail", "sessions"])?))
+    }
+
+    pub fn listeners(&self) -> Result<Listeners> {
+        Ok(Listeners(Dir::open(&self.locks, &["agent-mail", "sessions"])?))
     }
 
     pub async fn held(&self) -> Result<Held> {

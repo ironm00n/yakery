@@ -4,8 +4,10 @@ use private::{Mode, PARTIAL_EXPIRY, Replace, Secret};
 
 use super::*;
 use crate::{
+    RECHECK,
     address::SessionId,
     cmd::read::folder,
+    listeners::Heartbeat,
     store::{Access, PasswordFile, Store, Tokens, Watched},
 };
 
@@ -127,4 +129,33 @@ fn a_sessions_records_add_up_privately_and_stay_its_own() {
     let sessions = dir.0.join("locks/agent-mail/sessions");
     assert_eq!((mode(&sessions), mode(&sessions.join("a-1.json"))), (0o700, 0o600));
     rows!(parsed::<SessionId>; "../a", "", "a/b", &"a".repeat(65) => "refused"; "0f3c-9a" => "0f3c-9a");
+}
+
+#[test]
+fn a_listener_counts_while_its_process_runs_and_it_scanned_within_three_rechecks() {
+    let dir = Scratch::new("listeners");
+    let listeners = store(&dir, "agent@example.org").listeners().unwrap();
+    let ids: [SessionId; 3] = ["a-1", "b-2", "c-3"].map(|s| s.parse().unwrap());
+    let topic = |t: &str| address(&format!("agent+{t}@example.org"));
+    let (now, limit) = (1_800_000_000, 3 * RECHECK.as_secs() as i64);
+    listeners.beat(&ids[0], &[topic("live")], &["e1".into()], now - limit).unwrap();
+    listeners.beat(&ids[1], &[topic("stale")], &[], now - limit - 1).unwrap();
+    let gone = std::process::Command::new("true").spawn().unwrap();
+    let pid = gone.id();
+    drop(gone.wait_with_output().unwrap());
+    let beat = Heartbeat {
+        pid,
+        topics: ["agent+gone@example.org".into()].into(),
+        threads: [].into(),
+        scanned: now,
+    };
+    listeners.put(&ids[2], beat).unwrap();
+    assert_eq!(listeners.watched(now).unwrap(), [topic("live")]);
+    let mine = &listeners.all().unwrap()["a-1"];
+    assert_eq!(
+        (mine.pid, mine.threads.iter().map(String::as_str).collect::<Vec<_>>()),
+        (std::process::id(), vec!["e1"])
+    );
+    ids.iter().for_each(|id| listeners.leave(id).unwrap());
+    assert!(listeners.all().unwrap().is_empty());
 }

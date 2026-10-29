@@ -16,6 +16,7 @@ use crate::{
     address::{SessionId, Topic},
     authority::{self, Signed},
     jmap::wire,
+    listeners::{Leave, Listeners},
     mail::{Addr, Body, Email, Keyword, Mail, Mark},
     out::{Asked, Outbox, is_receipt},
     prelude::*,
@@ -113,6 +114,10 @@ struct Watch<'a> {
     sent: String,
     given: Watching,
     session: Option<(Records, SessionId)>,
+    /// A listener's: where it beats for its session after each scan.
+    beat: Option<(Listeners, SessionId)>,
+    /// Any other wait's: the listeners it leaves Owen's word to.
+    yields: Option<Listeners>,
     topics: Vec<Address>,
     starts: Vec<String>,
     deadline: Option<Instant>,
@@ -124,6 +129,26 @@ struct Watch<'a> {
 }
 
 impl Watch<'_> {
+    /// `due` less the mail with Owen's authority that a live listener watches: that listener hands it over as his.
+    async fn unyielded(&self, due: Vec<Email>) -> Result<Vec<Email>> {
+        let Some(listeners) = &self.yields else { return Ok(due) };
+        let watched = listeners.watched(now())?;
+        if watched.is_empty() {
+            return Ok(due);
+        }
+        let mut kept = vec![];
+        for m in due {
+            let named =
+                m.to.iter()
+                    .chain(&m.cc)
+                    .any(|a| a.email.parse().is_ok_and(|a| watched.contains(&a)));
+            if !named || authority(self.mail, &m, &watched).await?.is_err() {
+                kept.push(m);
+            }
+        }
+        Ok(kept)
+    }
+
     fn refresh(&mut self) -> Result<()> {
         let recorded =
             self.session.as_ref().map(|(r, id)| r.of(id)).transpose()?.unwrap_or_default();
@@ -186,7 +211,9 @@ impl Watch<'_> {
             .into_iter()
             .filter(|m| !answered.contains(&m.id))
             .partition(|m| m.has(Keyword::Seen));
+        // Mail left to a listener stays pending, so it is claimed here once that listener is gone.
         let pending = due.iter().map(|m| m.id.clone()).collect();
+        let due = self.unyielded(due).await?;
         Ok((Scan { due, remind }, pending))
     }
 
@@ -243,6 +270,13 @@ impl Watch<'_> {
             self.reminded.extend(fresh.into_iter().map(|m| m.id));
             let claimed = claimed?;
             self.scanned = Some(Instant::now());
+            if let Some((listeners, session)) = &self.beat
+                && let Err(e) = listeners.beat(session, &self.topics, &self.starts, now())
+            {
+                warn!(
+                    "{e:#}; this listener's scan goes unrecorded, so other waits may claim Owen's word"
+                );
+            }
             if !claimed.is_empty() {
                 return Ok(Some(claimed));
             }
@@ -323,7 +357,13 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
         args.timeout.map(|t| Instant::now().checked_add(t).context("timeout too far ahead"));
     let (inbox, sent) = (mail.mailbox("inbox")?, mail.mailbox("sent")?);
     let (deadline, cursor) = (deadline.transpose()?, Cursor::default());
-    let records = |id| Ok::<_, anyhow::Error>((mail.conn.auth.store.records()?, id));
+    let store = &mail.conn.auth.store;
+    let listening = args.session.clone().filter(|_| args.json);
+    let _leave =
+        listening.clone().map(|id| anyhow::Ok(Leave(store.listeners()?, id))).transpose()?;
+    let beat = listening.map(|id| anyhow::Ok((store.listeners()?, id))).transpose()?;
+    let yields = (!args.json).then(|| store.listeners()).transpose()?;
+    let records = |id| anyhow::Ok((store.records()?, id));
     let session = args.session.map(records).transpose()?;
     let (given, json) = (args.watching, args.json);
     let mut watch = Watch {
@@ -332,6 +372,8 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
         sent,
         given,
         session,
+        beat,
+        yields,
         deadline,
         cursor,
         topics: vec![],

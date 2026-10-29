@@ -3,6 +3,7 @@ mod auth;
 mod authority;
 mod cmd;
 mod jmap;
+mod listeners;
 mod mail;
 mod out;
 mod policy;
