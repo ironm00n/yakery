@@ -125,9 +125,21 @@ struct Judge {
     domains: Vec<String>,
 }
 
+/// The local part Stalwart writes an account's calendar alarms from, at the account's domain, when none is configured.
+const ALARMS_FROM: &str = "calendar-notification";
+
+/// Whether the message says no one typed it (RFC 3834), as the calendar replies and alarms Stalwart writes for an
+/// account do.
+fn automatic(headers: &[(String, String)]) -> bool {
+    headers.iter().any(|(name, value)| {
+        name.trim_end().eq_ignore_ascii_case("Auto-Submitted")
+            && !value.trim().eq_ignore_ascii_case("no")
+    })
+}
+
 /// Why the message's From or Sender isn't `sender`'s own address, when one isn't. Stalwart parses them with the same
-/// parser, so what Bulwark shows is what this checks.
-fn foreign_author(headers: &[(String, String)], sender: &Address) -> Option<String> {
+/// parser, so what Bulwark shows is what this checks. An `alarm` may also come From [`ALARMS_FROM`].
+fn foreign_author(headers: &[(String, String)], sender: &Address, alarm: bool) -> Option<String> {
     if headers
         .iter()
         .flat_map(|(name, value)| [name, value])
@@ -152,8 +164,9 @@ fn foreign_author(headers: &[(String, String)], sender: &Address) -> Option<Stri
         };
         match one.address.as_deref().map(str::parse::<Address>) {
             Some(Ok(a))
-                if a.user().eq_ignore_ascii_case(sender.user())
-                    && a.domain().eq_ignore_ascii_case(sender.domain()) =>
+                if a.domain().eq_ignore_ascii_case(sender.domain())
+                    && (a.user().eq_ignore_ascii_case(sender.user())
+                        || alarm && name == "From" && a.user() == ALARMS_FROM) =>
             {
                 None
             }
@@ -183,7 +196,14 @@ impl Judge {
                 envelope.from.address
             )));
         };
-        if let Some(why) = foreign_author(&message.headers, &sender) {
+        let local = |m: &Mailbox| {
+            m.address
+                .rsplit_once('@')
+                .is_some_and(|(_, d)| self.domains.iter().any(|l| l.eq_ignore_ascii_case(d)))
+        };
+        let automatic = automatic(&message.headers);
+        let alarm = automatic && envelope.to.iter().all(local);
+        if let Some(why) = foreign_author(&message.headers, &sender, alarm) {
             return Ok(Verdict::Refuse(why));
         }
         if message.headers.iter().any(|(name, _)| name.trim_end().eq_ignore_ascii_case(HEADER)) {
@@ -191,12 +211,7 @@ impl Judge {
                 "a submitted message carries no {HEADER} of its own"
             )));
         }
-        let local = |m: &Mailbox| {
-            m.address
-                .rsplit_once('@')
-                .is_some_and(|(_, d)| self.domains.iter().any(|l| l.eq_ignore_ascii_case(d)))
-        };
-        if !envelope.to.iter().any(local) {
+        if automatic || !envelope.to.iter().any(local) {
             return Ok(Verdict::Pass);
         }
         let account = match login.parse() {
@@ -207,12 +222,16 @@ impl Judge {
             }
         };
         let raw = rebuilt(&message);
-        if raw.len() != message.size {
-            warn!(
-                "{login}: a message came through as {} bytes, not {}, so it goes out unstamped",
-                raw.len(),
-                message.size
-            );
+        let lost = if raw.len() != message.size {
+            Some(format!("came through as {} bytes, not {}", raw.len(), message.size))
+        } else {
+            message
+                .contents
+                .contains(char::REPLACEMENT_CHARACTER)
+                .then(|| "came through with bytes that are not UTF-8".into())
+        };
+        if let Some(how) = lost {
+            warn!("{login}: a message {how}, so it goes out unstamped");
             return Ok(Verdict::Pass);
         }
         Ok(Verdict::Stamp(self.signer.sign(&Stamp { account, sender, t }, &raw)))

@@ -124,10 +124,42 @@ fn unauthenticated_mail_passes_and_a_request_without_its_message_fails() {
 }
 
 #[test]
+fn mail_marked_automatic_is_never_stamped_and_an_alarm_may_come_from_the_notifier() {
+    let verdict = |headers: Vec<(&str, &str)>, to: &[&str]| match judge()
+        .judge(hook(ME, &headers, to), NOW)
+        .unwrap()
+    {
+        Verdict::Stamp(_) => "Stamp".to_string(),
+        other => format!("{other:?}"),
+    };
+    let marked =
+        |from_: &'static str, value| [from(from_), vec![("Auto-Submitted", value)]].concat();
+    let notifier = " calendar-notification@example.org\r\n";
+    let not_mine = "Refuse(\"From is not me@example.org, the address this account sends from\")";
+    let cases = [
+        (
+            marked(" me@example.org\r\n", " auto-generated\r\n"),
+            &["agent+deploy@example.org"][..],
+            "Pass",
+        ),
+        (marked(" me@example.org\r\n", " No\r\n"), &["agent+deploy@example.org"], "Stamp"),
+        (marked(notifier, " auto-generated\r\n"), &["me+cal@example.org"], "Pass"),
+        (marked(notifier, " auto-generated\r\n"), &["me@else.org"], not_mine),
+        (from(notifier), &["me@example.org"], not_mine),
+    ];
+    for (n, (headers, to, want)) in cases.into_iter().enumerate() {
+        assert_eq!(verdict(headers, to), want, "case {n}");
+    }
+}
+
+#[test]
 fn a_message_whose_bytes_the_request_lost_goes_out_unstamped() {
     let mut lossy = hook(ME, &from(" me@example.org\r\n"), &["agent@example.org"]);
     lossy.message.as_mut().unwrap().size += 1;
     assert_eq!(judge().judge(lossy, NOW).unwrap(), Verdict::Pass);
+    let mut replaced = hook(ME, &from(" me@example.org\r\n"), &["agent@example.org"]);
+    replaced.message.as_mut().unwrap().contents = "\u{fffd}\r\n".into();
+    assert_eq!(judge().judge(replaced, NOW).unwrap(), Verdict::Pass);
 }
 
 #[test]
