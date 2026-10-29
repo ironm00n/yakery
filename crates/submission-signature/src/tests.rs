@@ -108,3 +108,10 @@ fn a_login_that_could_end_a_field_is_no_account() {
         assert!(login.parse::<Account>().is_err(), "{login:?}");
     }
 }
+
+#[test]
+fn a_new_seed_makes_a_signer_and_differs_each_time() {
+    let (a, b) = (Signer::new_seed().unwrap(), Signer::new_seed().unwrap());
+    assert!(Signer::from_seed(&a).is_ok());
+    assert_ne!(a, b);
+}

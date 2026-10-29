@@ -5,7 +5,10 @@ use std::{fmt, str::FromStr};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD_INDIFFERENT as B64};
-use ring::signature::{ED25519, Ed25519KeyPair, KeyPair, UnparsedPublicKey};
+use ring::{
+    rand::{SecureRandom, SystemRandom},
+    signature::{ED25519, Ed25519KeyPair, KeyPair, UnparsedPublicKey},
+};
 use text::{Address, text};
 
 pub const HEADER: &str = "Submission-Signature";
@@ -57,6 +60,15 @@ fn signed(stamp: &Stamp, message: &[u8]) -> Vec<u8> {
 pub struct Signer(Ed25519KeyPair);
 
 impl Signer {
+    /// A new ed25519 seed from the system's randomness, 32 bytes in base64.
+    pub fn new_seed() -> Result<String> {
+        let mut seed = [0; 32];
+        SystemRandom::new()
+            .fill(&mut seed)
+            .map_err(|_| anyhow!("the system gave no randomness"))?;
+        Ok(B64.encode(seed))
+    }
+
     /// From an ed25519 seed, 32 bytes in base64.
     pub fn from_seed(text: &str) -> Result<Signer> {
         let seed = B64.decode(text.trim()).ok().filter(|s| s.len() == 32);

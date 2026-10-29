@@ -49,6 +49,9 @@ enum Command {
         #[arg(long = "domain", required = true)]
         domains: Vec<String>,
     },
+    /// Print a new seed on stdout as a JSON string, the value `sops set --value-stdin` takes, and its public key on
+    /// stderr.
+    Seed,
     /// Print the public key of a seed.
     Public {
         #[arg(long)]
@@ -311,6 +314,11 @@ fn read(path: &Path) -> Result<String> {
 
 fn run(command: Command) -> Result<ExitCode> {
     match command {
+        Command::Seed => {
+            let seed = Signer::new_seed()?;
+            eprintln!("{}", Signer::from_seed(&seed)?.public());
+            println!("{}", json!(seed));
+        }
         Command::Public { seed } => println!("{}", Signer::from_seed(&read(&seed)?)?.public()),
         Command::Check { public } => {
             let mut raw = Vec::new();
