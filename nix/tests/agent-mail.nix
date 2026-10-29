@@ -365,7 +365,7 @@ let
     with subtest("a session's wait hands over mail that came before its topic was recorded"):
         # Claude Code's registry entry for the session, where subscribe finds it through the session's messaging socket
         entry = shlex.quote(json.dumps({"sessionId": "vm-1", "name": "vm", "cwd": "/"}))
-        host1.succeed(f"runuser -u agent -- sh -c 'mkdir -p ~/.claude/sessions && echo {entry} > ~/.claude/sessions/4242.json'")
+        host1.succeed("install -d -o agent /home/agent/.claude /home/agent/.claude/sessions", f"echo {entry} > /home/agent/.claude/sessions/4242.json")
         subscribe = "runuser -u agent -- env CLAUDE_CODE_MESSAGING_SOCKET=/tmp/4242.sock agent-mail subscribe --topic"
         host1.succeed(f"{subscribe} first")
         for subject, to in [("early", "later"), ("first", "first")]:
