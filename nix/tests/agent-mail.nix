@@ -342,8 +342,13 @@ let
 
     with subtest("the reply goes out from the topic, and owner's thread shows mail, receipt, and reply with the mail it answers"):
         host1.succeed(f"echo reply | {agent} send --reply {smoke_id} --to ${logins.owner}")
-        host1.wait_until_succeeds(f"{owner} thread {sent_id} | grep -qF '{topic} -> ${logins.owner}'", timeout=60)
-        frames = [line for line in host1.succeed(f"{owner} thread {sent_id}").splitlines() if line.startswith("=== ")]
+        # the receipt went out before the reply but can land after it
+        host1.wait_until_succeeds(
+            f"{owner} thread {sent_id} > /tmp/thread && grep -qF '{topic} -> ${logins.owner}' /tmp/thread"
+            f" && grep -qF '=== read by {topic} at ' /tmp/thread",
+            timeout=60,
+        )
+        frames = [line for line in host1.succeed("cat /tmp/thread").splitlines() if line.startswith("=== ")]
         assert len(frames) == 4, frames
         assert f"${logins.owner} -> {topic}  smoke" in frames[0], frames
         assert frames[1].startswith(f"=== read by {topic} at "), frames
