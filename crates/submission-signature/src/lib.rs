@@ -98,7 +98,7 @@ fn fields(raw: &[u8]) -> impl Iterator<Item = (&[u8], &[u8], usize)> {
 #[derive(Debug, PartialEq)]
 pub struct Verified<'a> {
     pub stamp: Stamp,
-    /// As the header writes it, which no other message's header does.
+    /// Encoded one way, whichever of base64's spellings the header used, so no other message has it.
     pub signature: String,
     /// The bytes below the header, as the account submitted them.
     pub message: &'a [u8],
@@ -122,7 +122,7 @@ pub fn verify<'a>(public: &str, raw: &'a [u8]) -> Result<Verified<'a>> {
     UnparsedPublicKey::new(&ED25519, key)
         .verify(&signed(&stamp, message), &decoded)
         .map_err(|_| anyhow!("the signature does not verify"))?;
-    Ok(Verified { stamp, signature: sig.into(), message })
+    Ok(Verified { stamp, signature: B64.encode(&decoded), message })
 }
 
 #[cfg(test)]

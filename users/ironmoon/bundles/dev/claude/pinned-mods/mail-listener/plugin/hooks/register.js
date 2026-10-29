@@ -21,8 +21,8 @@ const FIELDS = {
 /** The ends after which the process goes on under another session id, with no `session.start`. */
 const NEW_SESSION = new Set(['clear', 'resume'])
 
-/** The approvals this process handed over as Owen's words; agent-mail checks one mail, not what a session took before. */
-const handed = new Set()
+/** How long an approval handed over is remembered: agent-mail credits none signed longer ago than 10 minutes. */
+const HANDED_MS = 15 * 60_000
 
 let listener
 
@@ -128,7 +128,7 @@ async function submit($, line) {
     $.ui.log(`skipped a line of the wait that is no mail: ${line.slice(0, 200)}`)
     return false
   }
-  const refused = await $.prompt.submit(prompt(mail)).then(
+  const refused = await $.prompt.submit(prompt(mail, mail.authority && (await firstHanding($, mail.approval)))).then(
     (entered) => entered.drop,
     (error) => error.message,
   )
@@ -154,18 +154,29 @@ const oneLine = (value) =>
 const list = (addresses) => (Array.isArray(addresses) ? addresses.map(oneLine).join(', ') : '')
 
 /**
+ * Whether no session of this user handed `approval` over before, recording that one has now. The record is the
+ * plugin's own store, so a reload or a restart forgets none of it; one older than HANDED_MS is dropped.
+ */
+async function firstHanding($, approval) {
+  const now = await $.clock.now()
+  const kept = Object.entries((await $.store.get('handed')) ?? {}).filter(([, at]) => now - at < HANDED_MS)
+  const handed = Object.fromEntries(kept)
+  await $.store.set('handed', { ...handed, [approval]: handed[approval] ?? now })
+  return !(approval in handed)
+}
+
+/**
  * The prompt a mail becomes, opening with the line naming it: the engine refuses a plugin's prompt that starts with `/`.
  * Owen's words carry only what the server signed as his and its ids, since a session can import any mail into its inbox.
  */
-function prompt(mail) {
+function prompt(mail, his) {
   const mailed = `mail ${oneLine(mail.id)} in thread ${oneLine(mail.threadId)}`
-  if (mail.authority && !handed.has(mail.approval)) {
-    handed.add(mail.approval)
+  if (his) {
     const to = `to ${list(mail.to)}${mail.cc?.length ? ` cc ${list(mail.cc)}` : ''}: ${oneLine(mail.subject)}`
     return { text: `[${mailed}, signed by the mail server as Owen's, ${to}]\n\n${mail.text}`, asUser: true }
   }
   const naming = `[${mailed} from ${oneLine(mail.from)} to ${list(mail.to)}: ${oneLine(mail.subject)}]`
-  const why = mail.authority ? 'an approval this session took already' : mail.authorityReason
+  const why = mail.authority ? 'an approval a session took already' : mail.authorityReason
   const headers = [
     ['Cc', list(mail.cc)],
     ['Date', oneLine(mail.receivedAt)],
