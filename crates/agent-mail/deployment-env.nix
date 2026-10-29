@@ -12,6 +12,7 @@
   AGENT_MAIL_DOMAIN = deployment.domain;
   AGENT_MAIL_AGENT_DOMAIN = deployment.mail.agents.domain;
   AGENT_MAIL_SHARED_LOCAL_PART = deployment.mail.agents.sharedLocalPart;
+  AGENT_MAIL_SUBMISSION_KEY = toString deployment.mail.submissionKey;
   AGENT_MAIL_CORRESPONDENTS = lib.concatStringsSep "," correspondents;
   AGENT_MAIL_CORRESPONDENTS_FOR = builtins.toJSON correspondentsFor;
   AGENT_MAIL_RECHECK_SECS = toString periods.recheck;

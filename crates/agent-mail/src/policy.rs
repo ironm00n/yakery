@@ -33,6 +33,10 @@ impl Login {
         ours.then_some(detail)
     }
 
+    pub fn topic(&self, email: &str) -> Option<Topic> {
+        self.detail(email).flatten()
+    }
+
     pub fn owns(&self, email: &str) -> bool {
         self.detail(email).is_some()
     }

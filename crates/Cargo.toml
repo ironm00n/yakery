@@ -8,6 +8,8 @@ members = [
     "agentd",
     "agent-host",
     "agent-slack",
+    "submission-signature",
+    "submission-signer",
     "lib/text",
     "lib/private",
     "lib/log",
@@ -40,6 +42,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-zoneinfo", "serde"] }
 libc = "0.2"
 lol_html = "3"
+mail-parser = "0.11"
 maud = "0.27"
 nix = { version = "0.30", features = ["fs", "mount", "process", "sched", "signal", "user"] }
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
@@ -64,4 +67,5 @@ toml = "0.8"
 agent-proto = { path = "agent-proto" }
 text = { path = "lib/text" }
 private = { path = "lib/private" }
+submission-signature = { path = "submission-signature" }
 yakery-log = { path = "lib/log" }

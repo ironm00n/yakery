@@ -1,5 +1,6 @@
 mod address;
 mod auth;
+mod authority;
 mod cmd;
 mod jmap;
 mod mail;
@@ -33,6 +34,7 @@ deployment! {
     AGENT_DOMAIN = "AGENT_MAIL_AGENT_DOMAIN" | "agent.example.org";
     SHARED_LOCAL_PART = "AGENT_MAIL_SHARED_LOCAL_PART" | "agent";
     CORRESPONDENTS = "AGENT_MAIL_CORRESPONDENTS" | "" | true;
+    SUBMISSION_KEY = "AGENT_MAIL_SUBMISSION_KEY" | "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw" | true;
     CORRESPONDENTS_FOR = "AGENT_MAIL_CORRESPONDENTS_FOR"
         | r#"{"agent+unboca@example.org": ["colleague@example.com"]}"#;
 }
@@ -140,6 +142,8 @@ commands! {
     /// send any read receipt it asks for. Exits 2 at --timeout, but fails once no scan has finished for 5 minutes (as built) or
     /// at a --timeout no scan finished before. Seen mail still unanswered is listed on stderr.
     Wait(wait::Args) => wait::run,
+    /// Record topics and threads for this Claude Code session's `wait --session`, without sending.
+    Subscribe(wait::Subscribe) => wait::subscribe,
     /// Mark mail handled, so wait neither delivers it nor lists it again.
     Done(read::Many) => read::done,
     /// Sign in if needed and show when the access token expires.

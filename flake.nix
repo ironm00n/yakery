@@ -298,6 +298,7 @@
         scheduler-stalwart = import ./nix/tests/scheduler-stalwart.nix { pkgs = pkgs-map.${system}; };
         scheduler-booking = import ./nix/tests/scheduler-booking.nix { pkgs = pkgs-map.${system}; };
         scheduler-feeds = import ./nix/tests/scheduler-feeds.nix { pkgs = pkgs-map.${system}; };
+        submission-signer = import ./nix/tests/submission-signer.nix { pkgs = pkgs-map.${system}; };
         agentd = import ./nix/tests/agentd.nix { pkgs = pkgs-map.${system}; };
         agent-slack = import ./nix/tests/agent-slack.nix {
           pkgs = pkgs-map.${system};
@@ -336,6 +337,15 @@
         pkgs = pkgs-map.${system};
       };
       slurm-ci = pkgs.callPackage ./crates/slurm-ci/package.nix { };
+
+      # for the anthropic-tap flake, whose Claude Code counts this exact build's asUser prompts as typed
+      mail-listener = pkgs.callPackage ./users/ironmoon/bundles/dev/claude/pinned-mods/mail-listener/package.nix {
+        agent-mail = import ./crates/agent-mail/deployed.nix {
+          inherit (pkgs) callPackage;
+          inherit my-lib;
+          inherit (inputs) secrets;
+        };
+      };
 
       # The bootstrap store's `env` (crates/slurm-ci/DESIGN.md §6): what
       # `slurm-ci build` runs inside the job namespace, and the closure the

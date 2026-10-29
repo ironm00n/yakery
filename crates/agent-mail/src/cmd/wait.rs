@@ -3,19 +3,27 @@ use std::process::ExitCode;
 use clap::ArgGroup;
 use tokio::time::Instant;
 
-use super::claim::{Cursor, Scan, answered_in_sent, claim, open};
+use super::{
+    claim::{Cursor, Scan, answered_in_sent, claim, open},
+    send::session,
+    succeed,
+};
 use private::{now, random::below};
 use text::Address;
 
 use crate::{
-    BACKOFF, RECHECK, STALE,
-    address::Topic,
+    BACKOFF, RECHECK, STALE, SUBMISSION_KEY,
+    address::{SessionId, Topic},
+    authority::{self, Signed},
     jmap::wire,
     mail::{Addr, Body, Email, Keyword, Mail, Mark},
     out::{Asked, Outbox, is_receipt},
     prelude::*,
     show::{message, out, reminder, utc},
+    store::{Config, Records, Store, Watched},
 };
+
+const MAX_MESSAGE_BYTES: usize = 32 << 20;
 
 // Every open inbox mail is matched on these alone, since Stalwart parses each message for an Email's attachments, and
 // a few hundred of those outlast a request.
@@ -29,18 +37,56 @@ wire! {
     objects {}
 }
 
-#[derive(clap::Args)]
-#[command(group(ArgGroup::new("watched").required(true).multiple(true).args(["topic", "thread"])))]
-pub struct Args {
+#[derive(clap::Args, Default)]
+pub struct Watching {
     /// Watch inbox mail to the subaddress <login>+<topic>.
     #[arg(long)]
     pub topic: Vec<Topic>,
     /// Watch inbox mail in the thread of this email.
     #[arg(long, value_name = "EMAIL_ID")]
     pub thread: Vec<String>,
+}
+
+#[derive(clap::Args)]
+#[command(group(ArgGroup::new("watched").required(true).multiple(true).args(["topic", "thread", "session"])))]
+pub struct Args {
+    #[command(flatten)]
+    pub watching: Watching,
+    /// Also watch what this Claude Code session's sends and subscribes recorded, read again on every check.
+    #[arg(long, value_name = "SESSION_ID")]
+    pub session: Option<SessionId>,
     /// Give up after <n>[smhd], at most 30d; minutes when the unit is left out.
     #[arg(long, value_parser = timeout)]
     pub timeout: Option<Duration>,
+    /// Keep waiting after each delivery, and print each mail as one JSON object on a line of its own, its `authority`
+    /// true only for mail whose Submission-Signature makes it Owen's word.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(clap::Args)]
+#[command(group(ArgGroup::new("watched").required(true).multiple(true).args(["topic", "thread"])))]
+pub struct Subscribe {
+    #[command(flatten)]
+    pub watching: Watching,
+}
+
+/// Records what to watch for this Claude Code session without sending, for its `wait --session`.
+pub async fn subscribe(args: Subscribe) -> Result<ExitCode> {
+    let session =
+        session().context("subscribe records for a Claude Code session, and this is none")?;
+    let id: SessionId = session.session_id.parse()?;
+    let Watching { topic, thread } = args.watching;
+    let records = Store::new(&Config::load()?.login)?.records()?;
+    records.record(&id, topic, thread)?;
+    let Watched { topics, threads } = records.of(&id)?;
+    let topics: Vec<String> = topics.iter().map(Topic::to_string).collect();
+    let threads: Vec<&str> = threads.iter().map(String::as_str).collect();
+    succeed!(
+        "session {id} watches topics [{}] and the threads of [{}]",
+        topics.join(", "),
+        threads.join(", ")
+    )
 }
 
 pub fn timeout(s: &str) -> Result<Duration> {
@@ -64,6 +110,8 @@ struct Watch<'a> {
     mail: &'a Mail,
     inbox: String,
     sent: String,
+    given: Watching,
+    session: Option<(Records, SessionId)>,
     topics: Vec<Address>,
     starts: Vec<String>,
     deadline: Option<Instant>,
@@ -71,9 +119,21 @@ struct Watch<'a> {
     lost: HashSet<String>,
     started: Instant,
     scanned: Option<Instant>,
+    reminded: HashSet<String>,
 }
 
 impl Watch<'_> {
+    fn refresh(&mut self) -> Result<()> {
+        let recorded =
+            self.session.as_ref().map(|(r, id)| r.of(id)).transpose()?.unwrap_or_default();
+        let login = self.mail.login().address();
+        let topics: BTreeSet<&Topic> = self.given.topic.iter().chain(&recorded.topics).collect();
+        self.topics = topics.into_iter().map(|t| login.subaddress(t)).collect::<Result<_>>()?;
+        let starts: BTreeSet<&String> = self.given.thread.iter().chain(&recorded.threads).collect();
+        self.starts = starts.into_iter().cloned().collect();
+        Ok(())
+    }
+
     fn filter(&self) -> Value {
         let rest = [Keyword::Answered, Keyword::Handled].map(|k| json!({ "notKeyword": k.name() }));
         json!({ "operator": "AND", "conditions": [{ "inMailbox": self.inbox }, rest[0], rest[1]] })
@@ -94,6 +154,7 @@ impl Watch<'_> {
     }
 
     async fn scan(&mut self) -> Result<Scan> {
+        self.refresh()?;
         let threads = self.threads().await?;
         let (mut cursor, this) = (self.cursor.clone(), &*self);
         let scan = cursor.check(
@@ -162,14 +223,14 @@ impl Watch<'_> {
         left > pause
     }
 
-    async fn settle(&mut self, reminded: &mut HashSet<String>) -> Result<Option<Vec<Email>>> {
+    async fn settle(&mut self) -> Result<Option<Vec<Email>>> {
         let mut pushes = self.mail.pushes().await?;
         loop {
             let mail = self.mail;
             let (claimed, remind) = claim(mail, mail.login(), async || self.scan().await).await;
             let mut fresh: Vec<Email> = remind
                 .into_iter()
-                .filter(|m| !is_receipt(m) && !reminded.contains(&m.id))
+                .filter(|m| !is_receipt(m) && !self.reminded.contains(&m.id))
                 .collect();
             fresh.sort_by(|a, b| b.received.cmp(&a.received));
             for m in fresh.iter().take(20) {
@@ -178,7 +239,7 @@ impl Watch<'_> {
             if fresh.len() > 20 {
                 note!("seen but unanswered: {} more", fresh.len() - 20);
             }
-            reminded.extend(fresh.into_iter().map(|m| m.id));
+            self.reminded.extend(fresh.into_iter().map(|m| m.id));
             let claimed = claimed?;
             self.scanned = Some(Instant::now());
             if !claimed.is_empty() {
@@ -203,10 +264,10 @@ impl Watch<'_> {
     }
 
     async fn until_due(&mut self) -> Result<Option<Vec<Email>>> {
-        let (mut backoff, mut reminded) = (BACKOFF, HashSet::new());
+        let mut backoff = BACKOFF;
         loop {
             let before = self.scanned;
-            let e = match self.settle(&mut reminded).await {
+            let e = match self.settle().await {
                 Ok(wake) => return Ok(wake),
                 Err(e) => e,
             };
@@ -259,38 +320,111 @@ pub async fn run(args: Args) -> Result<ExitCode> {
 }
 
 pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
-    let topics = args.topic.iter().map(|t| mail.login().address().subaddress(t));
-    let topics = topics.collect::<Result<Vec<Address>>>()?;
     let deadline =
         args.timeout.map(|t| Instant::now().checked_add(t).context("timeout too far ahead"));
-    let (inbox, sent, starts) =
-        (mail.mailbox("inbox")?, mail.mailbox("sent")?, args.thread.clone());
-    let (deadline, cursor, lost) = (deadline.transpose()?, Cursor::default(), HashSet::new());
-    let (started, scanned) = (Instant::now(), None);
-    let mut watch =
-        Watch { mail, inbox, sent, topics, starts, deadline, cursor, lost, started, scanned };
-    for start in &args.thread {
+    let (inbox, sent) = (mail.mailbox("inbox")?, mail.mailbox("sent")?);
+    let (deadline, cursor) = (deadline.transpose()?, Cursor::default());
+    let records = |id| Ok::<_, anyhow::Error>((mail.conn.auth.store.records()?, id));
+    let session = args.session.map(records).transpose()?;
+    let (given, json) = (args.watching, args.json);
+    let mut watch = Watch {
+        mail,
+        inbox,
+        sent,
+        given,
+        session,
+        deadline,
+        cursor,
+        topics: vec![],
+        starts: vec![],
+        lost: HashSet::new(),
+        started: Instant::now(),
+        scanned: None,
+        reminded: HashSet::new(),
+    };
+    for start in &watch.given.thread {
         ensure!(mail.current(start).await?.is_some(), "no email {start}");
     }
+    watch.refresh()?;
     let topics = watch.topics.iter().map(|a| a.to_string().to_lowercase());
-    let watching: Vec<String> =
-        topics.chain(args.thread.iter().map(|t| format!("the thread of {t}"))).collect();
-    note!("waiting for {}", watching.join(", "));
+    let threads = watch.starts.iter().map(|t| format!("the thread of {t}"));
+    let recorded = watch.session.iter().map(|(_, s)| format!("what session {s} records"));
+    note!("waiting for {}", topics.chain(threads).chain(recorded).collect::<Vec<_>>().join(", "));
     let wall = args.timeout.map(|t| now().saturating_add(t.as_secs() as i64));
-    let Some(mut claimed) = watch.until_due().await? else {
-        note!("no mail by {}", utc(wall.unwrap_or_else(now)));
-        return Ok(ExitCode::from(2));
-    };
-    // Claimed already: if printing fails, the mail shows up in the next wait's reminders.
-    claimed.sort_by(|a, b| a.received.cmp(&b.received));
-    let bodies: Vec<Body> = mail.get(&claimed.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
-    for m in &claimed {
-        if let Some(body) = bodies.iter().find(|b| b.id == m.id) {
-            out(&format!("{}\n", message(m, Some(body))))?;
+    loop {
+        let Some(mut claimed) = watch.until_due().await? else {
+            note!("no mail by {}", utc(wall.unwrap_or_else(now)));
+            return Ok(ExitCode::from(2));
+        };
+        // Claimed already: if printing fails, the mail shows up in the next wait's reminders.
+        claimed.sort_by(|a, b| a.received.cmp(&b.received));
+        let bodies: Vec<Body> =
+            mail.get(&claimed.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
+        for m in &claimed {
+            if let Some(body) = bodies.iter().find(|b| b.id == m.id) {
+                out(&match json {
+                    true => line(m, body, &authority(mail, m, &watch.topics).await?),
+                    false => format!("{}\n", message(m, Some(body))),
+                })?;
+            }
+        }
+        receipts(mail, &claimed).await?;
+        if !json {
+            return Ok(ExitCode::SUCCESS);
         }
     }
+}
+
+/// Whether `m` is Owen's word, read from the message as Stalwart holds it.
+async fn authority(mail: &Mail, m: &Email, topics: &[Address]) -> Result<Result<Signed, String>> {
+    Ok(match mail.download(&m.blob, MAX_MESSAGE_BYTES).await? {
+        Some(raw) => authority::check(SUBMISSION_KEY, &raw, topics, now()),
+        None => Err(format!(
+            "the message is over {} MiB, so its signature goes unchecked",
+            MAX_MESSAGE_BYTES >> 20
+        )),
+    })
+}
+
+/// One mail as one line, whatever its text holds; with Owen's authority, its addressing, subject and text are the
+/// ones he signed.
+pub fn line(m: &Email, body: &Body, verdict: &Result<Signed, String>) -> String {
+    let values: Vec<_> = body.text.iter().filter_map(|p| body.values.get(&p.part)).collect();
+    let emails = |l: &[Addr]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
+    let (from, to, cc, subject, text, truncated, reason) = match verdict {
+        Ok(s) => {
+            let why = "Stalwart signed it as sent from Owen's account".to_owned();
+            (
+                s.from.clone(),
+                s.to.clone(),
+                s.cc.clone(),
+                s.subject.clone(),
+                s.text.clone(),
+                false,
+                why,
+            )
+        }
+        Err(why) => (
+            m.from.first().map_or_else(String::new, |a| a.email.clone()),
+            emails(&m.to),
+            emails(&m.cc),
+            m.subject.clone(),
+            values.iter().map(|v| v.value.as_str()).collect::<Vec<_>>().join("\n"),
+            values.iter().any(|v| v.truncated),
+            why.clone(),
+        ),
+    };
+    json!({
+        "id": m.id, "threadId": m.thread, "receivedAt": m.received, "from": from, "to": to, "cc": cc,
+        "subject": subject, "text": text, "truncated": truncated, "authority": verdict.is_ok(),
+        "authorityReason": reason, "approval": verdict.as_ref().ok().map(|s| &s.signature),
+    })
+    .to_string()
+}
+
+async fn receipts(mail: &Mail, claimed: &[Email]) -> Result<()> {
     let mut outbox = None;
-    for m in &claimed {
+    for m in claimed {
         match Asked::of(mail.login(), m) {
             Asked::Nothing => {}
             Asked::Declined(why) => note!("{why}"),
@@ -306,5 +440,5 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
             }
         }
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(())
 }

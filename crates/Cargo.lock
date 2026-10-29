@@ -34,11 +34,13 @@ dependencies = [
  "http-body",
  "libc",
  "lol_html",
+ "mail-parser",
  "private",
  "reqwest",
  "rustls",
  "serde",
  "serde_json",
+ "submission-signature",
  "text",
  "tokio",
  "yakery-log",
@@ -837,6 +839,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashify"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd1246c0e5493286aeb2dde35b1f4eb9c4ce00e628641210a5e553fc001a1f26"
+dependencies = [
+ "indexmap",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1231,6 +1245,15 @@ dependencies = [
  "precomputed-hash",
  "selectors",
  "thiserror",
+]
+
+[[package]]
+name = "mail-parser"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ec00bda90c6e645a54506c630c2820cd6b1890cfd2b0a169b50f74b2b8c7c86"
+dependencies = [
+ "hashify",
 ]
 
 [[package]]
@@ -2077,6 +2100,36 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "submission-signature"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "ring",
+ "text",
+]
+
+[[package]]
+name = "submission-signer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "mail-parser",
+ "private",
+ "serde",
+ "serde_json",
+ "submission-signature",
+ "text",
+ "tokio",
+ "yakery-log",
+]
 
 [[package]]
 name = "subtle"

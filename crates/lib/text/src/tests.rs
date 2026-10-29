@@ -36,6 +36,8 @@ fn addresses_are_plain_and_compare_without_case() {
     let long = |n: usize| a.subaddress(&"t".repeat(n)).map(|a| a.to_string().len());
     assert_eq!((long(4).unwrap(), long(236).unwrap()), (22, 254));
     assert!(long(237).is_err() && a.subaddress(&"a b").is_err());
+    let user = |s: &str| s.parse::<Address>().unwrap().user().to_owned();
+    assert_eq!([user("agent+a+b@example.org"), user("Agent@example.org")], ["agent", "Agent"]);
 }
 
 #[test]

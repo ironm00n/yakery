@@ -19,11 +19,13 @@ comrak.workspace = true
 http-body.workspace = true
 libc.workspace = true
 lol_html.workspace = true
+mail-parser.workspace = true
 private.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+submission-signature.workspace = true
 text.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 yakery-log.workspace = true

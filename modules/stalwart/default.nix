@@ -77,6 +77,7 @@ in
   imports = [
     ./app-passwords.nix
     ./backup.nix
+    ./submission-signer.nix
   ];
 
   options.services.stalwart = {
