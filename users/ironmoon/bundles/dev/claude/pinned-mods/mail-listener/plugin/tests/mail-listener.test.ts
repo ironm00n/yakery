@@ -54,6 +54,7 @@ function world(on: On, runs: readonly Run[], idMs = 0, stored: Record<string, un
   }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('session.id', async () => {
     if (idMs) await clock.sleep(idMs)
     return { value: seen.session }
