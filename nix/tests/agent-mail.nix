@@ -362,6 +362,28 @@ let
         status, refused = host1.execute(f"{agent} done x_y 2>&1")
         assert status == 1 and "no email x_y" in refused, refused
 
+    with subtest("a session's wait hands over mail that came before its topic was recorded"):
+        # Claude Code's registry entry for the session, where subscribe finds it through the session's messaging socket
+        entry = shlex.quote(json.dumps({"sessionId": "vm-1", "name": "vm", "cwd": "/"}))
+        host1.succeed(f"runuser -u agent -- sh -c 'mkdir -p ~/.claude/sessions && echo {entry} > ~/.claude/sessions/4242.json'")
+        subscribe = "runuser -u agent -- env CLAUDE_CODE_MESSAGING_SOCKET=/tmp/4242.sock agent-mail subscribe --topic"
+        host1.succeed(f"{subscribe} first")
+        for subject, to in [("early", "later"), ("first", "first")]:
+            host1.succeed(f"echo {subject} | {owner} send --to agent+{to}@${domain} --subject {subject}")
+            host1.wait_until_succeeds(f"{agent} inbox --topic {to} | grep -qF '  {subject}'", timeout=60)
+        host1.succeed(
+            "systemd-run --uid=agent -E PATH=/run/current-system/sw/bin --unit=session -p StandardOutput=file:/tmp/session.out"
+            " -p StandardError=file:/tmp/session.err agent-mail wait --json --session vm-1 --timeout 10m"
+        )
+        # handing over "first" means a scan has run and the cursor holds a state that "early" predates
+        host1.wait_until_succeeds("""grep -qF '"subject":"first"' /tmp/session.out""", timeout=60)
+        host1.fail("""grep -qF '"subject":"early"' /tmp/session.out""")
+        recorded = host1.succeed(f"{subscribe} later")
+        assert "session vm-1 watches topics [first, later]" in recorded, recorded
+        # recording moves no mailbox state, so no push comes: the scan after the next recheck finds the mail
+        host1.wait_until_succeeds("""grep -qF '"subject":"early"' /tmp/session.out""", timeout=periods["recheck"] + 60)
+        host1.succeed("systemctl stop session")
+
     with subtest("attachments land under the passwd home whatever HOME says"):
         host1.succeed("echo attached > /tmp/note.txt")
         host1.succeed(f"echo see attached | {owner} send --to {topic} --subject files --attach /tmp/note.txt")

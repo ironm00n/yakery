@@ -167,6 +167,8 @@ pub struct Stalwart {
     /// Ids a thread merge left, and the email each names now.
     pub stale: HashMap<String, String>,
     state: u32,
+    /// Each email created or updated, with the state that change made and whether it was the creation.
+    changed: Vec<(u32, String, bool)>,
     /// Tokens answered 401.
     refused: HashSet<String>,
     /// The token in use expires once the push stream opens.
@@ -202,6 +204,13 @@ impl Stalwart {
             "capabilities": { "urn:ietf:params:jmap:core": limits },
         });
         Stalwart { emails, session, start: Some(Instant::now()), ..Stalwart::default() }
+    }
+
+    /// `m` is delivered to the inbox, moving its state as Stalwart does.
+    pub fn arrive(&mut self, m: Value) {
+        self.state += 1;
+        self.changed.push((self.state, m["id"].as_str().unwrap().to_owned(), true));
+        self.emails.push(m);
     }
 
     fn wire(self) -> (Wired, Shared) {
@@ -345,7 +354,19 @@ impl Stalwart {
                     .collect();
                 json!({ "list": list })
             }
-            "Email/changes" => return Err("cannotCalculateChanges"),
+            "Email/changes" => {
+                let since = args["sinceState"].as_str().and_then(|s| s.parse::<u32>().ok());
+                let since = since.filter(|s| *s <= self.state).ok_or("cannotCalculateChanges")?;
+                let after = || self.changed.iter().filter(|c| c.0 > since);
+                // As JMAP has it, an email created since the state is listed as created alone, however often updated.
+                let created: BTreeSet<&String> = after().filter(|c| c.2).map(|c| &c.1).collect();
+                let updated: BTreeSet<&String> =
+                    after().map(|c| &c.1).filter(|id| !created.contains(id)).collect();
+                json!({
+                    "oldState": since.to_string(), "newState": state, "hasMoreChanges": false,
+                    "created": created, "updated": updated, "destroyed": [],
+                })
+            }
             "Email/set" => {
                 if args["ifInState"].as_str().is_some_and(|s| s != state) {
                     return Err("stateMismatch");
@@ -362,6 +383,7 @@ impl Stalwart {
                     {
                         if m["keywords"][keyword] != true {
                             (m["keywords"][keyword], self.state) = (json!(true), self.state + 1);
+                            self.changed.push((self.state, now.clone(), false));
                         }
                     }
                     updated.insert(id.clone(), Value::Null);
@@ -711,6 +733,65 @@ async fn a_listener_beats_after_its_scans_and_leaves_when_its_wait_ends() {
     assert!(listeners.all().unwrap().is_empty(), "the ended wait takes it out");
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Step {
+    /// Mail to agent+late arrives.
+    Arrive,
+    /// A send or subscribe of the session records agent+late for its wait.
+    Watch,
+}
+
+/// When a session's wait hands over the mail to agent+late, in seconds from its start, with each step taken at its
+/// second (0: before the wait starts); `None` when it hasn't within three rechecks.
+async fn handed_over(steps: &[(u64, Step)]) -> Option<u64> {
+    let dir = Scratch::new("late");
+    let (_wire, server, mail) = mail(&dir, Stalwart::new(vec![])).await;
+    let (store, id): (Store, SessionId) = (store_in(&dir), "mod-1".parse().unwrap());
+    let take = |step| match step {
+        Step::Arrive => {
+            let late = json!({ "to": [{ "email": "agent+late@example.org" }] });
+            server.borrow_mut().arrive(email("l1", late))
+        }
+        Step::Watch => {
+            store.records().unwrap().record(&id, vec!["late".parse().unwrap()], vec![]).unwrap()
+        }
+    };
+    steps.iter().filter(|s| s.0 == 0).for_each(|s| take(s.1));
+    let args = wait::Args {
+        watching: wait::Watching::default(),
+        session: Some(id.clone()),
+        timeout: Some(RECHECK * 3),
+        json: false,
+    };
+    let start = Instant::now();
+    let later = async {
+        for &(at, step) in steps.iter().filter(|s| s.0 > 0) {
+            tokio::time::sleep_until(start + Duration::from_secs(at)).await;
+            take(step);
+        }
+    };
+    let mail = mail.unwrap();
+    let (ended, ()) = tokio::join!(wait::watch(&mail, args), later);
+    (ended.unwrap() == ExitCode::SUCCESS).then(|| start.elapsed().as_secs())
+}
+
+/// However the mail, the record that watches it and the wait's scans interleave, the first scan after the mail is
+/// both there and watched hands it over: the one at the start, or the recheck after steps taken in between.
+#[tokio::test(start_paused = true)]
+async fn a_wait_hands_over_mail_at_its_first_scan_after_the_mail_is_there_and_watched() {
+    use Step::*;
+    let recheck = RECHECK.as_secs();
+    for (steps, want) in [
+        (&[(0, Arrive), (0, Watch)][..], 0),
+        (&[(0, Arrive), (1, Watch)], recheck),
+        (&[(0, Watch), (1, Arrive)], recheck),
+        (&[(1, Arrive), (2, Watch)], recheck),
+        (&[(1, Watch), (2, Arrive)], recheck),
+    ] {
+        assert_eq!(handed_over(steps).await, Some(want), "{steps:?}");
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_wait_reopens_an_idle_silent_or_dropped_stream_and_gives_up_at_its_deadline() {
     let dir = Scratch::new("wait-idle");
@@ -725,8 +806,9 @@ async fn a_wait_reopens_an_idle_silent_or_dropped_stream_and_gives_up_at_its_dea
         [0, 150, 186, 187, 337],
         "idle reopens at once; one silent past 35 s or closed, after 1 s; the last lasts to the deadline"
     );
-    let checks = server.log.iter().filter(|l| l.contains("Email/query")).count();
-    assert_eq!(checks, opened.len(), "one check per stream, so a ping wakes nothing");
+    let checks =
+        server.log.iter().filter(|l| l.contains("Email/query") || l.contains("Email/changes"));
+    assert_eq!(checks.count(), opened.len(), "one check per stream, so a ping wakes nothing");
 }
 
 #[tokio::test(start_paused = true)]

@@ -168,10 +168,12 @@ async fn a_stale_id_and_the_current_one_claim_one_email_once() {
     assert_eq!(marked(&server, "a2"), (1, vec!["$seen".into()]));
 }
 
-/// Checks once against Email states `s0`, `s1`, ...: what changed after each state, and the full check that
-/// finds `old` at `s0`. `due` is what the check leaves due, or `None` when it fails; the ids it read come back.
+/// Checks once for the watched set `watched` against Email states `s0`, `s1`, ...: what changed after each state,
+/// and the full check that finds `old` at `s0`. `due` is what the check leaves due, or `None` when it fails; the
+/// ids it read come back.
 async fn check(
-    cursor: &mut Cursor,
+    cursor: &mut Cursor<u8>,
+    watched: u8,
     changes: &[(&str, &[&str])],
     due: Option<&[&str]>,
     full: &Cell<u32>,
@@ -193,7 +195,7 @@ async fn check(
         *seen.borrow_mut() = ids.into_iter().collect();
         Ok(((), due.context("the get failed")?.iter().map(|i| i.to_string()).collect()))
     };
-    let ok = cursor.check(changed, everything, triage).await.is_ok();
+    let ok = cursor.check(watched, changed, everything, triage).await.is_ok();
     (ok, seen.take())
 }
 
@@ -209,7 +211,7 @@ async fn only_a_whole_check_moves_the_cursor() {
         (Some(&[][..]), (true, vec![])),
     ] {
         assert_eq!(
-            check(&mut cursor, log, due, &full).await,
+            check(&mut cursor, 0, log, due, &full).await,
             (want.0, want.1.iter().map(|s| s.to_string()).collect())
         );
     }
@@ -217,7 +219,19 @@ async fn only_a_whole_check_moves_the_cursor() {
     let (mut cursor, full) = (Cursor::default(), Cell::new(0));
     let log: &[(&str, &[&str])] = &[("s0", &[])];
     for (due, want) in [(None, false), (Some(&[][..]), true), (Some(&[][..]), true)] {
-        assert_eq!(check(&mut cursor, log, due, &full).await.0, want);
+        assert_eq!(check(&mut cursor, 0, log, due, &full).await.0, want);
     }
     assert_eq!(full.get(), 2, "a failed full check is redone in full");
+}
+
+/// `old` predates the cursor's state, so only a full check reads it: a set that changed must not skip it.
+#[tokio::test]
+async fn a_check_for_another_watched_set_starts_over_in_full() {
+    let (mut cursor, full) = (Cursor::default(), Cell::new(0));
+    let log: &[(&str, &[&str])] = &[("s0", &[])];
+    for (watched, want) in [(1, &["old"][..]), (1, &[]), (2, &["old"]), (2, &[]), (1, &["old"])] {
+        let read = check(&mut cursor, watched, log, Some(&[]), &full).await;
+        assert_eq!(read, (true, want.iter().map(|s| s.to_string()).collect()));
+    }
+    assert_eq!(full.get(), 3);
 }
