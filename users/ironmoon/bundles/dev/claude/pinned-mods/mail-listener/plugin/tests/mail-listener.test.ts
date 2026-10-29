@@ -3,6 +3,8 @@ import { type Engine, expect, mock, test } from 'claude-code/testing'
 
 type Run = { lines?: readonly string[]; stderr?: string; exit?: number; heldMs?: number }
 
+const HOUR = 3_600_000
+
 const MAIL = {
   id: 'Ma1',
   threadId: 'To1',
@@ -34,9 +36,13 @@ const SIGNED = "[mail Mo1 in thread To1, signed by the mail server as Owen's, to
 const line = (mail: object) => JSON.stringify(mail)
 const killed = (signal: AbortSignal) => new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()))
 
-/** The engine beneath the mod: a stub `agent-mail` playing `runs` in order, then one that waits for good; the session id takes `idMs` to read. */
-function world(on: On, runs: readonly Run[], idMs = 0) {
-  const clock = mock.clock(on)
+/**
+ * The engine beneath the mod: a stub `agent-mail` playing `runs` in order, then one that waits for good; the session id
+ * takes `idMs` to read, and the mod's store starts as `stored`.
+ */
+function world(on: On, runs: readonly Run[], idMs = 0, stored: Record<string, unknown> = {}) {
+  const clock = mock.clock(on, { now: HOUR })
+  mock.store(on, stored)
   const seen = {
     session: 's1',
     spawns: [] as (readonly string[])[],
@@ -158,7 +164,24 @@ test('an approval goes in as his words once; the same one again, even in another
     [false, '> yes'],
     [false, '> yes'],
   ])
-  expect(seen.prompts[1]!.text).toContain('Authority: none, an approval this session took already')
+  expect(seen.prompts[1]!.text).toContain('Authority: none, an approval a session took already')
+})
+
+/** Whether OWEN's mail goes in as his words when a session handed its approval over `agoMs` before. */
+async function handedAgo($: Engine, on: On, agoMs: number) {
+  const stored = { handed: { [OWEN.approval]: HOUR - agoMs } }
+  const { clock, seen } = world(on, [{ lines: [line(OWEN)], heldMs: 1e9 }], 0, stored)
+  await start($)
+  await clock.settle()
+  return seen.prompts.map(({ origin }) => origin?.asUser ?? false)
+}
+
+test('an approval another session or an earlier load took goes in quoted', async ($, on) => {
+  expect(await handedAgo($, on, 14 * 60_000)).toEqual([false])
+})
+
+test('an approval handed over 15 minutes ago is forgotten', async ($, on) => {
+  expect(await handedAgo($, on, 15 * 60_000)).toEqual([true])
 })
 
 test('a mail whose text agent-mail cut says so', async ($, on) => {
