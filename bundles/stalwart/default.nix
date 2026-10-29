@@ -730,13 +730,27 @@ in
           (update "MtaOutboundStrategy" {
             route = if cfg.sending.enable then localThenMx else localOnly;
           })
-          # unpinned, IPv6 mail leaves from whichever address the kernel prefers, today webmail's
+          # pinned, since IPv6 mail would leave from whichever address the kernel prefers, today webmail's, which SPF doesn't name
           (reconcile "MtaConnectionStrategy" [ "name" ] {
             default = {
               name = "default";
               sourceIps = map (sourceIp: { inherit sourceIp; }) hostnameAddresses;
             };
           })
+        ]
+        # Stalwart checks DNSSEC itself for DANE, and over UDP that check fails signed and unsigned answers alike
+        # (hickory-resolver 0.26.3, reproduced 10-29), deferring mail to them until it bounces
+        ++ lib.optional (config.networking.nameservers != [ ]) (
+          update "DnsResolver" {
+            "@type" = "Custom";
+            servers = map (address: {
+              protocol = "tcp";
+              inherit address;
+              port = 53;
+            }) config.networking.nameservers;
+          }
+        )
+        ++ [
           (update "MtaStageRcpt" {
             allowRelaying = {
               match = [
