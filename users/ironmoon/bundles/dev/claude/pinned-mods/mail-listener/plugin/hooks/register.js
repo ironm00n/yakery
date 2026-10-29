@@ -32,13 +32,18 @@ const HANDED_MS = 15 * 60_000
 
 /** Whether this session's wait runs, for status-row to draw. */
 const LISTENER = { plugin: 'mail-listener', key: 'listener' }
+const OFF = { listening: false, why: 'turned off with /mail off', off: true }
 
 let listener
 
 export function register(on) {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    if (e.isInteractive) listener ??= listen($)
+    if (!e.isInteractive) return started
+    if (!(await $.state.get(LISTENER)).value?.off) listener ??= listen($)
+    await $.command
+      .register({ name: 'mail', description: "Turns this session's mail listener on or off", argumentHint: 'on|off', immediate: true })
+      .catch((error) => $.ui.log(`/mail was not registered: ${error.message}`))
     return started
   })
 
@@ -47,6 +52,33 @@ export function register(on) {
     if (NEW_SESSION.has(e.reason)) listener?.restart(e.sessionId)
     return ended
   })
+
+  on('command.run', { command: 'mail' }, ($, e) => toggle($, e.args.trim()))
+}
+
+/** `/mail off` stops the wait and tells the session to run its own, as it did before this mod; `/mail on` undoes that. */
+async function toggle($, args) {
+  if (args === 'off') {
+    await (listener?.stop() ?? $.state.set(LISTENER, OFF))
+    listener = undefined
+    return {
+      text: 'mail off for this session; /mail on turns it back on',
+      context: [
+        "Owen turned the mail-listener off for this session with /mail off, so it hands in no mail now. Start this session's own agent-mail wait as the mail-owen skill says, over every topic this session has sent from.",
+      ],
+    }
+  }
+  if (args === 'on') {
+    listener ??= listen($)
+    return {
+      text: 'mail on for this session',
+      context: [
+        "Owen turned the mail-listener back on for this session with /mail on: it waits for this session's mail again and hands it in as prompts. A plain agent-mail wait of this session's leaves Owen's signed mail to it.",
+      ],
+    }
+  }
+  const { value } = await $.state.get(LISTENER)
+  return { text: `mail is ${value?.off ? 'off' : value?.listening ? 'on' : 'down'} for this session; /mail on or /mail off turns it on or off` }
 }
 
 /**
@@ -104,6 +136,13 @@ function listen($) {
       const ending = child
       start()
       void ending?.return()
+    },
+    stop() {
+      current++
+      retry?.cancel()
+      void child?.return()
+      publish(OFF)
+      return published
     },
   }
 }

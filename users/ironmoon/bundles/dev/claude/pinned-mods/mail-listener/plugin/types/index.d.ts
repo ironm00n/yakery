@@ -1,5 +1,5 @@
 /** Whether this session's mail wait runs, as the mail-listener mod last saw it. */
-export type MailListener = { listening: true } | { listening: false; why: string }
+export type MailListener = { listening: true } | { listening: false; why: string; off?: true }
 
 declare module 'claude-code' {
   interface PluginState {

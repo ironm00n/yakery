@@ -97,7 +97,9 @@ const route = ({ route }) => (route?.seen && route.through ? [{ text: route.thro
 
 // mail-listener's wait, in sessions that run that mod
 const mail = ({ mail }) =>
-  mail === undefined ? [] : [mail.listening ? { text: 'mail', color: SGR.green } : { text: 'mail down', color: SGR.red }]
+  mail === undefined
+    ? []
+    : [mail.listening ? { text: 'mail', color: SGR.green } : mail.off ? { text: 'mail off', color: SGR.gray } : { text: 'mail down', color: SGR.red }]
 
 const version = ({ version }) => [{ text: `v${version}` }]
 
