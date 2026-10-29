@@ -39,7 +39,7 @@ fn head(m: &Email) -> String {
 }
 
 /// The mail of its thread a mail answers, by the In-Reply-To given, and the newest mail before it from anyone else
-/// when that is another one: the mail a quick reply is easily taken to answer.
+/// when that came after the one answered: the mail a quick reply is easily taken to answer.
 #[derive(Clone, Copy, Default)]
 pub struct Answering<'a> {
     pub answers: Option<&'a Email>,
@@ -57,7 +57,10 @@ impl<'a> Answering<'a> {
         let newest = others()
             .filter(|o| o.received <= m.received && sender(o) != sender(m))
             .max_by(|a, b| a.received.cmp(&b.received));
-        Answering { answers, newest: newest.filter(|n| answers.is_some_and(|a| a.id != n.id)) }
+        Answering {
+            answers,
+            newest: newest.filter(|n| answers.is_some_and(|a| n.received > a.received)),
+        }
     }
 
     fn line(&self) -> Option<String> {
