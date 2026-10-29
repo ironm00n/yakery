@@ -6,7 +6,9 @@ use std::io::Write;
 use chrono::{DateTime, SecondsFormat};
 
 use crate::{
+    address::MessageId,
     mail::{Addr, Body, Email, Keyword, MAX_BODY_BYTES, Part},
+    out::is_receipt,
     prelude::*,
 };
 
@@ -36,6 +38,47 @@ fn head(m: &Email) -> String {
     format!("{}  {}  {} -> {}", plain(&m.id), plain(&m.received), emails(&m.from), emails(&m.to))
 }
 
+/// The mail of its thread a mail answers, by the In-Reply-To given, and the newest mail before it from anyone else
+/// when that is another one: the mail a quick reply is easily taken to answer.
+#[derive(Clone, Copy, Default)]
+pub struct Answering<'a> {
+    pub answers: Option<&'a Email>,
+    pub newest: Option<&'a Email>,
+}
+
+impl<'a> Answering<'a> {
+    pub fn of(m: &Email, in_reply_to: &[String], thread: &'a [Email]) -> Answering<'a> {
+        let named = MessageId::all(in_reply_to);
+        let sender = |e: &Email| e.from.first().map(|a| a.email.to_lowercase());
+        let others =
+            || thread.iter().filter(|o| o.id != m.id && !is_receipt(o) && !o.has(Keyword::Draft));
+        let answers =
+            others().find(|o| MessageId::all(&o.message_id).iter().any(|id| named.contains(id)));
+        let newest = others()
+            .filter(|o| o.received <= m.received && sender(o) != sender(m))
+            .max_by(|a, b| a.received.cmp(&b.received));
+        Answering { answers, newest: newest.filter(|n| answers.is_some_and(|a| a.id != n.id)) }
+    }
+
+    fn line(&self) -> Option<String> {
+        let one = |e: &Email| {
+            format!("{} of {}: {}", plain(&e.id), plain(&e.received), plain(&e.subject))
+        };
+        let newest = self.newest.map(|n| format!(", not the newest in this thread ({})", one(n)));
+        Some(format!("=== answers {}{}", one(self.answers?), newest.unwrap_or_default()))
+    }
+
+    /// `answers` and `newest` as a wait line names them.
+    pub fn json(&self) -> [Value; 2] {
+        [self.answers, self.newest].map(|e| {
+            e.map_or(
+                Value::Null,
+                |e| json!({ "id": e.id, "receivedAt": e.received, "subject": e.subject }),
+            )
+        })
+    }
+}
+
 pub fn inbox_line(m: &Email, files: &[Part]) -> String {
     let unread = if m.has(Keyword::Seen) { ' ' } else { '*' };
     let cc = if m.cc.is_empty() { String::new() } else { format!(" cc {}", emails(&m.cc)) };
@@ -44,7 +87,7 @@ pub fn inbox_line(m: &Email, files: &[Part]) -> String {
     format!("{unread} {}{cc}  {}{files}\n    {}", head(m), plain(&m.subject), preview(m, 160))
 }
 
-pub fn message(m: &Email, body: Option<&Body>) -> String {
+pub fn message(m: &Email, body: Option<&Body>, answering: Answering) -> String {
     let files = body.iter().flat_map(|b| &b.attachments);
     let files: String = files.map(|a| format!(" [{}]", plain(&a.name))).collect();
     let values: Vec<_> =
@@ -63,6 +106,7 @@ pub fn message(m: &Email, body: Option<&Body>) -> String {
     if values.len() > shown.len() {
         lines.push(format!("  [{} more text parts left out]", values.len() - shown.len()));
     }
+    lines.splice(0..0, answering.line());
     format!("=== {}  {}{files}\n{}", head(m), plain(&m.subject), lines.join("\n"))
 }
 

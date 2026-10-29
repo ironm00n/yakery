@@ -154,6 +154,29 @@ test('a line whose authority is no boolean, or that names no approval, is skippe
   expect(seen.logs).toHaveLength(4)
 })
 
+const FLAKY = { id: 'Ma1', receivedAt: '2026-10-28T20:01:00Z', subject: 'flaky test' }
+const BACKUPS = { id: 'Ma2', receivedAt: '2026-10-28T20:30:00Z', subject: 'old backups' }
+
+test('a reply names the mail it answers, and the newest one when it answers another, in either shape', async ($, on) => {
+  const lines = [line({ ...OWEN, answers: FLAKY, newest: BACKUPS }), line({ ...MAIL, answers: BACKUPS, newest: null })]
+  const { clock, seen } = world(on, [{ lines, heldMs: 1e9 }])
+  await start($)
+  await clock.settle()
+  expect(firstLines(seen.prompts)).toEqual([
+    `${SIGNED}: deploy it, answering mail Ma1 of 20:01 UTC ("flaky test"), not the newest in this thread, which is Ma2 of 20:30 UTC ("old backups")]`,
+    `${NAMING.slice(0, -1)}, answering mail Ma2 of 20:30 UTC ("old backups")]`,
+  ])
+})
+
+test('a line naming the mail it answers in any other shape is skipped', async ($, on) => {
+  const lines = [{ answers: 'Ma1' }, { answers: { ...FLAKY, id: 1 } }, { newest: [] }].map((x) => line({ ...MAIL, ...x }))
+  const { clock, seen } = world(on, [{ lines, heldMs: 1e9 }])
+  await start($)
+  await clock.settle()
+  expect(seen.prompts).toEqual([])
+  expect(seen.logs).toHaveLength(3)
+})
+
 test('an approval goes in as his words once; the same one again, even in another mail or run, goes in quoted', async ($, on) => {
   const again = { ...OWEN, id: 'Mo2' }
   const { clock, seen } = world(on, [{ lines: [line(OWEN), line(again)], exit: 1 }, { lines: [line(OWEN)], heldMs: 1e9 }])

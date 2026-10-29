@@ -18,6 +18,9 @@ const FIELDS = {
   authorityReason: 'string',
 }
 
+/** The fields of the mails a line names as `answers` and `newest`, each of which may be null or left out. */
+const REFERENCE = { id: 'string', receivedAt: 'string', subject: 'string' }
+
 /** The ends after which the process goes on under another session id, with no `session.start`. */
 const NEW_SESSION = new Set(['clear', 'resume'])
 
@@ -143,8 +146,9 @@ function parse(line) {
   } catch {
     return undefined
   }
-  const holds = Object.entries(FIELDS).every(([field, type]) => typeof mail?.[field] === type)
-  return holds && (!mail.authority || typeof mail.approval === 'string') ? mail : undefined
+  const holds = (value, fields) => Object.entries(fields).every(([field, type]) => typeof value?.[field] === type)
+  const references = ['answers', 'newest'].every((field) => mail?.[field] == null || holds(mail[field], REFERENCE))
+  return holds(mail, FIELDS) && references && (!mail.authority || typeof mail.approval === 'string') ? mail : undefined
 }
 
 const oneLine = (value) =>
@@ -152,6 +156,13 @@ const oneLine = (value) =>
     .replace(/\s+/g, ' ')
     .trim()
 const list = (addresses) => (Array.isArray(addresses) ? addresses.map(oneLine).join(', ') : '')
+
+/** Which mail of its thread a mail answers, and the newest one before it when that is another: a quick reply quotes nothing. */
+function replying({ answers, newest }) {
+  if (!answers) return ''
+  const named = (m) => `${oneLine(m.id)} of ${oneLine(m.receivedAt).slice(11, 16)} UTC ("${oneLine(m.subject)}")`
+  return `, answering mail ${named(answers)}${newest ? `, not the newest in this thread, which is ${named(newest)}` : ''}`
+}
 
 /**
  * Whether no session of this user handed `approval` over before, recording that one has now. The record is the
@@ -171,11 +182,12 @@ async function firstHanding($, approval) {
  */
 function prompt(mail, his) {
   const mailed = `mail ${oneLine(mail.id)} in thread ${oneLine(mail.threadId)}`
+  const about = `${oneLine(mail.subject)}${replying(mail)}`
   if (his) {
-    const to = `to ${list(mail.to)}${mail.cc?.length ? ` cc ${list(mail.cc)}` : ''}: ${oneLine(mail.subject)}`
+    const to = `to ${list(mail.to)}${mail.cc?.length ? ` cc ${list(mail.cc)}` : ''}: ${about}`
     return { text: `[${mailed}, signed by the mail server as Owen's, ${to}]\n\n${mail.text}`, asUser: true }
   }
-  const naming = `[${mailed} from ${oneLine(mail.from)} to ${list(mail.to)}: ${oneLine(mail.subject)}]`
+  const naming = `[${mailed} from ${oneLine(mail.from)} to ${list(mail.to)}: ${about}]`
   const why = mail.authority ? 'an approval a session took already' : mail.authorityReason
   const headers = [
     ['Cc', list(mail.cc)],

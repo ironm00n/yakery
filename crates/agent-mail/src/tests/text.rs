@@ -7,7 +7,7 @@ use crate::{
     mail::{Body, Email, Frames, Status, check_account, fill},
     out::{Asked, Delivery, Entity, Head, base64, base64_body, text},
     policy::{Recipients, correspondents},
-    show::{message, reminder},
+    show::{Answering, message, reminder},
     store::Config,
     web::{Origin, redirect},
 };
@@ -388,7 +388,7 @@ fn delivery_reads_each_recipients_status() {
 
 fn printed(with: Value) -> String {
     let m: Value = email("m1", with);
-    message(&view::<Email>(m.clone()), Some(&view::<Body>(m)))
+    message(&view::<Email>(m.clone()), Some(&view::<Body>(m)), Answering::default())
 }
 
 #[test]
@@ -697,6 +697,7 @@ fn a_wait_line_is_one_json_object_holding_the_whole_text_and_whether_it_was_cut(
             &view(m.clone()),
             &view(m),
             &Err("0 Submission-Signature headers, not one".into()),
+            &[],
         )
     };
     let text = "yes\r\n\u{2028}> ok?\r\n";
@@ -708,7 +709,39 @@ fn a_wait_line_is_one_json_object_holding_the_whole_text_and_whether_it_was_cut(
             "id": "a1", "threadId": "T", "receivedAt": "2026-10-01T00:00:00Z", "from": HIM, "to": [POOL], "cc": [],
             "subject": "deploy", "text": text, "truncated": false, "authority": false,
             "authorityReason": "0 Submission-Signature headers, not one", "approval": null,
+            "answers": null, "newest": null,
         })
     );
     assert_eq!(serde_json::from_str::<Value>(&line("ye", true)).unwrap()["truncated"], json!(true));
+}
+
+/// A thread of two questions to Owen and his earlier mail, and his quick reply at 20:40 to `answered`, last.
+fn quick_reply(answered: &str) -> Vec<Email> {
+    let asked = |id: &str, at: &str, subject: &str| {
+        let with = json!({ "from": [{ "email": POOL }], "receivedAt": at, "subject": subject });
+        view::<Email>(email(id, with))
+    };
+    let reply = json!({ "receivedAt": "2026-10-28T20:40:00Z", "inReplyTo": [format!("{answered}@example.org")] });
+    vec![
+        asked("a1", "2026-10-28T20:01:00Z", "flaky test"),
+        asked("a2", "2026-10-28T20:30:00Z", "old backups"),
+        view(email("o1", json!({ "receivedAt": "2026-10-28T20:35:00Z" }))),
+        view(email("r1", reply)),
+    ]
+}
+
+#[test]
+fn a_reply_names_the_mail_it_answers_and_the_newest_from_others_when_that_is_another() {
+    let second_line = |answered: &str| {
+        let thread = quick_reply(answered);
+        let reply = thread.last().unwrap();
+        let shown = message(reply, None, Answering::of(reply, &reply.in_reply_to, &thread));
+        shown.lines().nth(1).unwrap_or_default().to_owned()
+    };
+    rows!(second_line;
+        "a1" => "=== answers a1 of 2026-10-28T20:01:00Z: flaky test, not the newest in this thread (a2 of 2026-10-28T20:30:00Z: old backups)";
+        "a2" => "=== answers a2 of 2026-10-28T20:30:00Z: old backups";
+        "o1" => "=== answers o1 of 2026-10-28T20:35:00Z: s, not the newest in this thread (a2 of 2026-10-28T20:30:00Z: old backups)";
+        "elsewhere" => "";
+    );
 }
