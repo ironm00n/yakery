@@ -4,6 +4,7 @@ const COUNTDOWN_MS = 60_000
 
 const AGENT = { plugin: 'status-row', key: 'agent' }
 const ROUTE = { plugin: 'pool', key: 'route' }
+const MAIL = { plugin: 'mail-listener', key: 'listener' }
 const member = (agentId) => agentId ?? 'main'
 
 let viewed
@@ -21,7 +22,7 @@ function tick($) {
 const contextTokens = (usage) => usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
 
 async function snapshot($, { hint, pills }) {
-  const [usage, root, cwd, home, sessionModel, { version, patches }, now, { value: agent }, { value: route }] = await Promise.all([
+  const [usage, root, cwd, home, sessionModel, { version, patches }, now, { value: agent }, { value: route }, { value: mail }] = await Promise.all([
     $.session.usage(),
     $.session.root(),
     $.session.cwd(),
@@ -31,6 +32,7 @@ async function snapshot($, { hint, pills }) {
     $.clock.now(),
     $.state.get({ ...AGENT, id: member(viewed) }),
     $.state.get(ROUTE),
+    $.state.get(MAIL),
   ])
   const view =
     viewed === undefined
@@ -40,7 +42,7 @@ async function snapshot($, { hint, pills }) {
           effort: agent.effort,
           context: { tokens: agent.tokens, window: agent.model === sessionModel ? usage.context.window : undefined },
         }
-  return { home, root, cwd, ...view, promptCache: usage.prompt_cache, route, rateLimits: usage.rateLimits, version, patches, hint, pills, now }
+  return { home, root, cwd, ...view, promptCache: usage.prompt_cache, route, mail, rateLimits: usage.rateLimits, version, patches, hint, pills, now }
 }
 
 export function register(on) {

@@ -1,5 +1,6 @@
 {
   "name": "mail-listener",
   "version": "0.1.0",
-  "description": "Keeps one agent-mail wait running for the session's life; mail Owen signed goes in as his words, and any other mail as a notice naming its ids, for the session to read with agent-mail"
+  "description": "Keeps one agent-mail wait running for the session's life; mail Owen signed goes in as his words, and any other mail as a notice naming its ids, for the session to read with agent-mail; whether the wait runs is state status-row draws",
+  "types": "./types/index.d.ts"
 }

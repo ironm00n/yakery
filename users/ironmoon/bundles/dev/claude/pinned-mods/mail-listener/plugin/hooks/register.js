@@ -30,6 +30,9 @@ const NEW_SESSION = new Set(['clear', 'resume'])
 /** How long an approval handed over is remembered: agent-mail credits none signed longer ago than 10 minutes. */
 const HANDED_MS = 15 * 60_000
 
+/** Whether this session's wait runs, for status-row to draw. */
+const LISTENER = { plugin: 'mail-listener', key: 'listener' }
+
 let listener
 
 export function register(on) {
@@ -58,6 +61,16 @@ function listen($) {
   let retry
   /** The last failure the transcript was told of, forgotten once a mail gets through, so an outage is told once. */
   let told
+  let published = Promise.resolve()
+  /** Writes the listener's state in the order told, and only when it changes. */
+  const publish = (state) => {
+    published = published
+      .then(async () => {
+        const { value } = await $.state.get(LISTENER)
+        if (JSON.stringify(value) !== JSON.stringify(state)) await $.state.set(LISTENER, state)
+      })
+      .catch((error) => $.ui.log(`the listener's state was not published: ${error.message}`, { to: 'debug' }))
+  }
 
   async function run(self) {
     const [startedAt, sessionId] = await Promise.all([$.clock.now(), $.session.id()])
@@ -66,7 +79,7 @@ function listen($) {
       retry = $.clock.after(NEW_ID_POLL_MS, start)
       return
     }
-    $.ui.status('listening')
+    publish({ listening: true })
     child = $.process.spawn({ argv: [AGENT_MAIL, 'wait', '--json', '--session', sessionId] })
     const exit = await drain($, child)
     if (self !== current) return
@@ -77,11 +90,11 @@ function listen($) {
     if (exit.stderr) $.ui.log(exit.stderr, { to: 'debug' })
     if (failure !== told) $.ui.log(`mail is not arriving: ${failure}; listening again in ${delay / 1000} s`)
     told = failure
-    $.ui.status(`${exit.why}; listening again in ${delay / 1000} s`)
+    publish({ listening: false, why: `${exit.why}; listening again in ${delay / 1000} s` })
     retry = $.clock.after(delay, start)
   }
 
-  const start = () => run(++current).catch((error) => $.ui.status(`not listening (${error.message})`))
+  const start = () => run(++current).catch((error) => publish({ listening: false, why: `not listening (${error.message})` }))
   start()
   return {
     restart(ended) {

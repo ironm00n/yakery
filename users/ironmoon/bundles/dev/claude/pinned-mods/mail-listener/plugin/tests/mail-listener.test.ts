@@ -49,6 +49,7 @@ function world(on: On, runs: readonly Run[], idMs = 0, stored: Record<string, un
     live: 0,
     prompts: [] as PromptSubmitInput[],
     statuses: [] as (string | undefined)[],
+    listener: undefined as unknown,
     logs: [] as string[],
   }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -56,6 +57,10 @@ function world(on: On, runs: readonly Run[], idMs = 0, stored: Record<string, un
   on('session.id', async () => {
     if (idMs) await clock.sleep(idMs)
     return { value: seen.session }
+  })
+  on('state.set', async (_$, e, next) => {
+    if (e.plugin === 'mail-listener' && e.key === 'listener') seen.listener = e.value
+    return next(e)
   })
   on('ui.status', (_$, e) => {
     seen.statuses.push(e.text)
@@ -98,7 +103,8 @@ test('one wait runs under the session id, by the store path the build substitute
   await start($)
   await clock.settle()
   expect(seen.spawns).toEqual([['@agentMail@', 'wait', '--json', '--session', 's1']])
-  expect(seen.statuses.at(-1)).toBe('listening')
+  expect(seen.listener).toEqual({ listening: true })
+  expect(seen.statuses).toEqual([])
 })
 
 test('a session nobody is at runs no wait', async ($, on) => {
@@ -275,9 +281,9 @@ test('a run that exits, with any code, is started again after a growing wait', a
     await clock.advance(1)
     return [before, seen.spawns.length]
   }
-  expect(seen.statuses.at(-1)).toBe('the wait exited 0; listening again in 1 s')
+  expect(seen.listener).toEqual({ listening: false, why: 'the wait exited 0; listening again in 1 s' })
   expect(await spawnsAt(1_000)).toEqual([1, 2])
-  expect(seen.statuses.at(-1)).toBe('the wait exited 1; listening again in 5 s')
+  expect(seen.listener).toEqual({ listening: false, why: 'the wait exited 1; listening again in 5 s' })
   expect(await spawnsAt(5_000)).toEqual([2, 3])
   expect(await spawnsAt(15_000)).toEqual([3, 4])
   expect(await spawnsAt(60_000)).toEqual([4, 5])
@@ -292,7 +298,7 @@ test('a run that lasted a minute is started again after the shortest wait', asyn
   await clock.advance(5_000)
   await clock.advance(60_000)
   expect(seen.spawns).toHaveLength(3)
-  expect(seen.statuses.at(-1)).toBe('the wait exited 1; listening again in 1 s')
+  expect(seen.listener).toEqual({ listening: false, why: 'the wait exited 1; listening again in 1 s' })
   await clock.advance(1_000)
   expect(seen.spawns).toHaveLength(4)
 })
