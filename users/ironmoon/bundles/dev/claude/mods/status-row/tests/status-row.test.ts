@@ -261,3 +261,31 @@ test('the drawn row names the route the pool mod keeps', { plugins: [POOL_ON] },
   expect(await row.find({ type: 'Text', text: 'pool' })).toBeDefined()
   await row.unmount()
 })
+
+test("a session running the mail listener says so before the version, in red while its wait is down", () => {
+  const up = status({ ...SNAPSHOT, mail: { listening: true } })
+  expect(text(up)).toContain(' · 7d 12% · mail · v2.1.287')
+  expect(up.find((r) => r.text === 'mail')).toMatchObject({ color: 'ansi256(2)' })
+  const down = status({ ...SNAPSHOT, mail: { listening: false, why: 'the wait exited 1; listening again in 5 s' } })
+  expect(down.find((r) => r.text === 'mail down')).toMatchObject({ color: 'ansi256(1)' })
+  expect(text(status(SNAPSHOT))).not.toContain('mail')
+})
+
+const MAIL_UP = {
+  name: 'mail-listener',
+  register(on: On) {
+    on('session.start', async ($, e, next) => {
+      await $.state.set({ plugin: 'mail-listener', key: 'listener' }, { listening: true })
+      return next(e)
+    })
+  },
+}
+
+test('the drawn row shows what the mail listener keeps', { plugins: [MAIL_UP] }, async ($, on) => {
+  stubSession(on)
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: `${HOME}/proj`, surface: 'terminal', isInteractive: true })
+  const row = await $.ui.mount(hintRow(''))
+  expect(await row.find({ type: 'Text', text: 'mail' })).toBeDefined()
+  await row.unmount()
+})
