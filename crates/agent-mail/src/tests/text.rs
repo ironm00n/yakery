@@ -731,7 +731,7 @@ fn quick_reply(answered: &str) -> Vec<Email> {
 }
 
 #[test]
-fn a_reply_names_the_mail_it_answers_and_the_newest_from_others_when_that_is_another() {
+fn a_reply_names_the_mail_it_answers_and_the_newest_from_others_only_when_that_came_after_it() {
     let second_line = |answered: &str| {
         let thread = quick_reply(answered);
         let reply = thread.last().unwrap();
@@ -741,7 +741,7 @@ fn a_reply_names_the_mail_it_answers_and_the_newest_from_others_when_that_is_ano
     rows!(second_line;
         "a1" => "=== answers a1 of 2026-10-28T20:01:00Z: flaky test, not the newest in this thread (a2 of 2026-10-28T20:30:00Z: old backups)";
         "a2" => "=== answers a2 of 2026-10-28T20:30:00Z: old backups";
-        "o1" => "=== answers o1 of 2026-10-28T20:35:00Z: s, not the newest in this thread (a2 of 2026-10-28T20:30:00Z: old backups)";
+        "o1" => "=== answers o1 of 2026-10-28T20:35:00Z: s";
         "elsewhere" => "";
     );
 }
