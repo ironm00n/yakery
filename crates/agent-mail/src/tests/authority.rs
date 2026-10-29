@@ -5,6 +5,7 @@ use crate::{
     SUBMISSION_KEY,
     authority::{Signed, check},
     cmd::wait,
+    mail::Email,
 };
 
 const NOW: i64 = 1_800_000_000;
@@ -77,7 +78,7 @@ fn a_wait_line_with_his_authority_shows_what_he_signed() {
     );
     let signed = verdict(delivered(HIM, NOW, MESSAGE, "")).unwrap();
     let line: Value =
-        serde_json::from_str(&wait::line(&view(m.clone()), &view(m), &Ok(signed))).unwrap();
+        serde_json::from_str(&wait::line(&view(m.clone()), &view(m), &Ok(signed), &[])).unwrap();
     assert_eq!(
         [&line["subject"], &line["to"], &line["authority"], &line["authorityReason"]],
         [
@@ -88,4 +89,23 @@ fn a_wait_line_with_his_authority_shows_what_he_signed() {
         ]
     );
     assert!(line["approval"].as_str().is_some_and(|s| s.len() == 86), "{line}");
+}
+
+#[test]
+fn the_mail_his_reply_answers_is_the_one_his_signed_bytes_name() {
+    let thread: Vec<Email> = vec![
+        view(email("a1", json!({ "from": [{ "email": POOL }] }))),
+        view(email("a2", json!({ "from": [{ "email": POOL }] }))),
+    ];
+    let replying = MESSAGE.replacen("Subject:", "In-Reply-To: <a1@example.org>\r\nSubject:", 1);
+    let signed = verdict(delivered(HIM, NOW, &replying, "In-Reply-To: <a2@example.org>\r\n"));
+    let m = email("r1", json!({ "inReplyTo": ["a2@example.org"] }));
+    let answers = |verdict: &Result<Signed, String>| {
+        let line: Value =
+            serde_json::from_str(&wait::line(&view(m.clone()), &view(m.clone()), verdict, &thread))
+                .unwrap();
+        line["answers"]["id"].clone()
+    };
+    assert_eq!(answers(&signed), json!("a1"));
+    assert_eq!(answers(&Err("unsigned".into())), json!("a2"));
 }

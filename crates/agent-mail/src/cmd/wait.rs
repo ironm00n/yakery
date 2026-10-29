@@ -19,7 +19,7 @@ use crate::{
     mail::{Addr, Body, Email, Keyword, Mail, Mark},
     out::{Asked, Outbox, is_receipt},
     prelude::*,
-    show::{message, out, reminder, utc},
+    show::{Answering, message, out, reminder, utc},
     store::{Config, Records, Store, Watched},
 };
 
@@ -59,7 +59,8 @@ pub struct Args {
     #[arg(long, value_parser = timeout)]
     pub timeout: Option<Duration>,
     /// Keep waiting after each delivery, and print each mail as one JSON object on a line of its own, its `authority`
-    /// true only for mail whose Submission-Signature makes it Owen's word.
+    /// true only for mail whose Submission-Signature makes it Owen's word, `answers` the mail of its thread it
+    /// answers and `newest` the newest one before it from anyone else when that is another.
     #[arg(long)]
     pub json: bool,
 }
@@ -358,11 +359,17 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
         claimed.sort_by(|a, b| a.received.cmp(&b.received));
         let bodies: Vec<Body> =
             mail.get(&claimed.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
+        let threads: BTreeSet<&String> = claimed.iter().map(|m| &m.thread).collect();
+        let members: Vec<Email> =
+            mail.get(&mail.members(&threads.into_iter().collect::<Vec<_>>()).await?).await?;
         for m in &claimed {
             if let Some(body) = bodies.iter().find(|b| b.id == m.id) {
                 out(&match json {
-                    true => line(m, body, &authority(mail, m, &watch.topics).await?),
-                    false => format!("{}\n", message(m, Some(body))),
+                    true => line(m, body, &authority(mail, m, &watch.topics).await?, &members),
+                    false => {
+                        let answering = Answering::of(m, &m.in_reply_to, &members);
+                        format!("{}\n", message(m, Some(body), answering))
+                    }
                 })?;
             }
         }
@@ -384,9 +391,9 @@ async fn authority(mail: &Mail, m: &Email, topics: &[Address]) -> Result<Result<
     })
 }
 
-/// One mail as one line, whatever its text holds; with Owen's authority, its addressing, subject and text are the
-/// ones he signed.
-pub fn line(m: &Email, body: &Body, verdict: &Result<Signed, String>) -> String {
+/// One mail as one line, whatever its text holds; with Owen's authority, its addressing, subject, text and the mail
+/// of `thread` it answers are the ones he signed.
+pub fn line(m: &Email, body: &Body, verdict: &Result<Signed, String>, thread: &[Email]) -> String {
     let values: Vec<_> = body.text.iter().filter_map(|p| body.values.get(&p.part)).collect();
     let emails = |l: &[Addr]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
     let (from, to, cc, subject, text, truncated, reason) = match verdict {
@@ -412,10 +419,13 @@ pub fn line(m: &Email, body: &Body, verdict: &Result<Signed, String>) -> String 
             why.clone(),
         ),
     };
+    let in_reply_to = verdict.as_ref().map_or(&m.in_reply_to, |s| &s.in_reply_to);
+    let [answers, newest] = Answering::of(m, in_reply_to, thread).json();
     json!({
         "id": m.id, "threadId": m.thread, "receivedAt": m.received, "from": from, "to": to, "cc": cc,
         "subject": subject, "text": text, "truncated": truncated, "authority": verdict.is_ok(),
         "authorityReason": reason, "approval": verdict.as_ref().ok().map(|s| &s.signature),
+        "answers": answers, "newest": newest,
     })
     .to_string()
 }

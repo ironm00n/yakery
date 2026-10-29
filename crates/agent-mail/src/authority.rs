@@ -31,6 +31,7 @@ pub struct Signed {
     pub cc: Vec<String>,
     pub subject: String,
     pub text: String,
+    pub in_reply_to: Vec<String>,
     pub signature: String,
 }
 
@@ -66,12 +67,14 @@ pub fn check(public: &str, raw: &[u8], topics: &[Address], now: i64) -> Result<S
         return Err("signed, but to no topic this wait watches".into());
     }
     let texts: Vec<_> = (0..parsed.text_body_count()).filter_map(|i| parsed.body_text(i)).collect();
+    let answered = parsed.in_reply_to().as_text_list().unwrap_or_default();
     Ok(Signed {
         from: emails(parsed.from()).join(", "),
         to,
         cc,
         subject: parsed.subject().unwrap_or_default().into(),
         text: texts.join("\n").replace("\r\n", "\n"),
+        in_reply_to: answered.iter().map(ToString::to_string).collect(),
         signature: verified.signature,
     })
 }

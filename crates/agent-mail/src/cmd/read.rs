@@ -14,7 +14,7 @@ use crate::{
     mail::{Body, Email, Keyword, Mail, Part, QUERY, Text},
     out::is_receipt,
     prelude::*,
-    show::{emails, inbox_line, message, out, plain, utc},
+    show::{Answering, emails, inbox_line, message, out, plain, utc},
     store::{Config, passwd_home},
 };
 
@@ -241,7 +241,8 @@ pub async fn thread(args: One) -> Result<ExitCode> {
     let (placed, unplaced) = place(&mails, &answering);
     for (m, rs) in mails.iter().zip(placed) {
         let receipts: String = rs.into_iter().map(|r| format!("\n{}", read_by(r))).collect();
-        out(&format!("{}{receipts}\n", message(m, body(m))))?;
+        let answering = Answering::of(m, &m.in_reply_to, &mails);
+        out(&format!("{}{receipts}\n", message(m, body(m), answering)))?;
     }
     for r in unplaced.into_iter().filter(|r| ids.contains(&r.id)) {
         out(&format!("{} (for a mail not in this thread)", read_by(r)))?;

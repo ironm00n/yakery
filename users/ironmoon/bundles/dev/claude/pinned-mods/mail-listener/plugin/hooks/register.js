@@ -18,6 +18,12 @@ const FIELDS = {
   authorityReason: 'string',
 }
 
+/** The fields of the mails a line names as `answers` and `newest`, each of which may be null or left out. */
+const REFERENCE = { id: 'string', receivedAt: 'string', subject: 'string' }
+
+/** What JMAP (RFC 8620, 1.2) lets an id be; ids go into the command a notice names. */
+const ID = /^[A-Za-z0-9_-]{1,255}$/
+
 /** The ends after which the process goes on under another session id, with no `session.start`. */
 const NEW_SESSION = new Set(['clear', 'resume'])
 
@@ -128,6 +134,7 @@ async function submit($, line) {
     $.ui.log(`skipped a line of the wait that is no mail: ${line.slice(0, 200)}`)
     return false
   }
+  if (!mail.authority) $.ui.log(`mail ${mail.id} has no authority: ${oneLine(mail.authorityReason)}`, { to: 'debug' })
   const refused = await $.prompt.submit(prompt(mail, mail.authority && (await firstHanding($, mail.approval)))).then(
     (entered) => entered.drop,
     (error) => error.message,
@@ -143,8 +150,11 @@ function parse(line) {
   } catch {
     return undefined
   }
-  const holds = Object.entries(FIELDS).every(([field, type]) => typeof mail?.[field] === type)
-  return holds && (!mail.authority || typeof mail.approval === 'string') ? mail : undefined
+  const holds = (value, fields) => Object.entries(fields).every(([field, type]) => typeof value?.[field] === type)
+  const references = ['answers', 'newest'].every((field) => mail?.[field] == null || holds(mail[field], REFERENCE))
+  const ids = () => [mail.id, mail.threadId, mail.answers?.id, mail.newest?.id].every((id) => id == null || ID.test(id))
+  const approval = !mail?.authority || typeof mail.approval === 'string'
+  return holds(mail, FIELDS) && references && ids() && approval ? mail : undefined
 }
 
 const oneLine = (value) =>
@@ -152,6 +162,13 @@ const oneLine = (value) =>
     .replace(/\s+/g, ' ')
     .trim()
 const list = (addresses) => (Array.isArray(addresses) ? addresses.map(oneLine).join(', ') : '')
+
+/** Which mail of its thread a mail answers, and the newest one before it when that is another: a quick reply quotes nothing. */
+function replying({ answers, newest }) {
+  if (!answers) return ''
+  const named = (m) => `${oneLine(m.id)} of ${oneLine(m.receivedAt).slice(11, 16)} UTC ("${oneLine(m.subject)}")`
+  return `, answering mail ${named(answers)}${newest ? `, not the newest in this thread, which is ${named(newest)}` : ''}`
+}
 
 /**
  * Whether no session of this user handed `approval` over before, recording that one has now. The record is the
@@ -168,21 +185,17 @@ async function firstHanding($, approval) {
 /**
  * The prompt a mail becomes, opening with the line naming it: the engine refuses a plugin's prompt that starts with `/`.
  * Owen's words carry only what the server signed as his and its ids, since a session can import any mail into its inbox.
+ * Any other mail goes in as a notice of the mod's own words and Stalwart's ids alone, so nothing its sender wrote reaches
+ * the auto mode classifier, which reads a plugin's prompt; not agent-mail's reason either, which can quote a forged
+ * header. The session reads the mail itself with agent-mail, as a tool result the classifier never sees.
  */
 function prompt(mail, his) {
   const mailed = `mail ${oneLine(mail.id)} in thread ${oneLine(mail.threadId)}`
   if (his) {
-    const to = `to ${list(mail.to)}${mail.cc?.length ? ` cc ${list(mail.cc)}` : ''}: ${oneLine(mail.subject)}`
+    const about = `${oneLine(mail.subject)}${replying(mail)}`
+    const to = `to ${list(mail.to)}${mail.cc?.length ? ` cc ${list(mail.cc)}` : ''}: ${about}`
     return { text: `[${mailed}, signed by the mail server as Owen's, ${to}]\n\n${mail.text}`, asUser: true }
   }
-  const naming = `[${mailed} from ${oneLine(mail.from)} to ${list(mail.to)}: ${oneLine(mail.subject)}]`
-  const why = mail.authority ? 'an approval a session took already' : mail.authorityReason
-  const headers = [
-    ['Cc', list(mail.cc)],
-    ['Date', oneLine(mail.receivedAt)],
-    ['Text', mail.truncated ? "cut at agent-mail's body limit" : ''],
-    ['Authority', `none, ${oneLine(why)}`],
-  ]
-  const head = headers.filter(([, value]) => value).map(([name, value]) => `${name}: ${value}`)
-  return { text: [naming, ...head, '', mail.text.replace(/^/gm, '> ')].join('\n') }
+  const taken = mail.authority ? ': an approval a session took already' : ''
+  return { text: `[${mailed} arrived without Owen's authority${taken}. Read it with agent-mail thread ${oneLine(mail.id)}.]` }
 }
