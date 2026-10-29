@@ -1,0 +1,22 @@
+--- a/components/email/email-viewer.tsx
++++ b/components/email/email-viewer.tsx
+@@ -3041,6 +3041,8 @@
+      word's min-content width so columns are not collapsed to a single char. */
+   td, th { overflow-wrap: break-word; }
+   pre { white-space: pre-wrap; word-wrap: break-word; }
++  /* a bare quote gets the bar Bulwark draws round its own replies; one that styles itself (Gmail's, Outlook's indents) keeps its look */
++  blockquote:not([style]) { margin: 8px 0; padding-left: 12px; border-left: 2px solid #c5c5c5; }
+   ${wordHtmlCSS}
+   ${darkModeCSS}
+ </style></head><body dir="auto">${resolveColorSchemeMedia(effectiveEmailContent.html, isDark)}<style>html,body{height:auto!important;min-height:0!important;max-height:none!important}</style></body></html>`;
+--- a/components/email/thread-conversation-view.tsx
++++ b/components/email/thread-conversation-view.tsx
+@@ -743,6 +743,8 @@
+   table { table-layout: auto; overflow-wrap: break-word; }
+   td, th { word-break: break-word; padding: 0.5rem; }
+   pre { white-space: pre-wrap; word-wrap: break-word; }
++  /* a bare quote gets the bar Bulwark draws round its own replies; one that styles itself (Gmail's, Outlook's indents) keeps its look */
++  blockquote:not([style]) { margin: 8px 0; padding-left: 12px; border-left: 2px solid #c5c5c5; }
+   ${isDark ? emailDarkModeCss() : ''}
+ </style></head><body dir="auto">${resolveColorSchemeMedia(emailContent.html, isDark)}</body></html>`;
+   }, [emailContent.isHtml, emailContent.html, allowExternal, isDark, colorScheme]);
