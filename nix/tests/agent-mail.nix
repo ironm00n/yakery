@@ -340,14 +340,15 @@ let
         smoke_id = email_id("===", shown)
         host1.wait_until_succeeds(f"{owner} inbox | grep -F '{topic} -> ${logins.owner}'", timeout=60)
 
-    with subtest("the reply goes out from the topic, and owner's thread shows mail, reply and receipt"):
+    with subtest("the reply goes out from the topic, and owner's thread shows mail, receipt, and reply with the mail it answers"):
         host1.succeed(f"echo reply | {agent} send --reply {smoke_id} --to ${logins.owner}")
         host1.wait_until_succeeds(f"{owner} thread {sent_id} | grep -qF '{topic} -> ${logins.owner}'", timeout=60)
         frames = [line for line in host1.succeed(f"{owner} thread {sent_id}").splitlines() if line.startswith("=== ")]
-        assert len(frames) == 3, frames
+        assert len(frames) == 4, frames
         assert f"${logins.owner} -> {topic}  smoke" in frames[0], frames
         assert frames[1].startswith(f"=== read by {topic} at "), frames
         assert f"{topic} -> ${logins.owner}  " in frames[2], frames
+        assert frames[3].startswith(f"=== answers {sent_id} of ") and frames[3].endswith(": smoke"), frames
 
     with subtest("done keeps the mail from wait, which times out with 2, and finds no email under an id Stalwart can't read"):
         host1.succeed(f"{agent} done {smoke_id}")
