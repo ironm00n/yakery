@@ -55,13 +55,16 @@ class Jmap {
   }
 }
 
-/** Mail from the sender to the reader, each message replying to the one before. */
+/** Mail from the sender to the reader, each message replying to the one before, as
+ * text, or as the HTML `html` makes of its body. */
 export class Thread {
   readonly subject = `Thread ${Date.now()}`;
   private readonly messageIds: string[] = [];
 
-  static async of(messages: number): Promise<Thread> {
-    const thread = new Thread();
+  private constructor(private readonly html?: (body: string) => string) {}
+
+  static async of(messages: number, html?: (body: string) => string): Promise<Thread> {
+    const thread = new Thread(html);
     for (let n = 0; n < messages; n++) await thread.add();
     await expect.poll(() => thread.delivered(), { timeout: 30_000 }).toHaveLength(messages);
     return thread;
@@ -89,8 +92,10 @@ export class Thread {
         messageId: [messageId],
         inReplyTo: n > 1 ? this.messageIds.slice(-1) : null,
         references: n > 1 ? this.messageIds : null,
-        bodyValues: { body: { value: this.body(n) } },
-        textBody: [{ partId: 'body', type: 'text/plain' }],
+        bodyValues: { body: { value: this.html ? this.html(this.body(n)) : this.body(n) } },
+        ...(this.html
+          ? { htmlBody: [{ partId: 'body', type: 'text/html' }] }
+          : { textBody: [{ partId: 'body', type: 'text/plain' }] }),
       } } }],
       ['EmailSubmission/set', { create: { s: { identityId: identity.id, emailId: '#m' } } }],
     );
