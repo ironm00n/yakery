@@ -139,9 +139,7 @@ commands! {
     Thread(read::One) => read::thread,
     #[command(about = read::ATTACHMENTS_HELP)]
     Attachments(read::One) => read::attachments,
-    /// Wait for watched mail from others that is unseen, unanswered and not done; claim it as seen, print it, and
-    /// send any read receipt it asks for. Exits 2 at --timeout, but fails once no scan has finished for 5 minutes (as built) or
-    /// at a --timeout no scan finished before. Seen mail still unanswered is listed on stderr.
+    #[command(about = wait::WAIT_HELP)]
     Wait(wait::Args) => wait::run,
     /// Record topics and threads for this Claude Code session's `wait --session`, without sending.
     Subscribe(wait::Subscribe) => wait::subscribe,

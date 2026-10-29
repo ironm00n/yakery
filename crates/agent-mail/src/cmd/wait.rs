@@ -26,6 +26,22 @@ use crate::{
 
 const MAX_MESSAGE_BYTES: usize = 32 << 20;
 
+macro_rules! exits {
+    (timeout $timeout:literal, deferred $deferred:literal) => {
+        const TIMED_OUT: u8 = $timeout;
+        pub const DEFERRED: u8 = $deferred;
+        pub const WAIT_HELP: &str = concat!(
+            "Wait for watched mail from others that is unseen, unanswered and not done; claim it as seen, print it, and ",
+            "send any read receipt it asks for. Exits ", $timeout, " at --timeout, but fails once no scan has finished ",
+            "for 5 minutes (as built) or at a --timeout no scan finished before. Seen mail still unanswered is listed on ",
+            "stderr. Without --json it exits ", $deferred, " at once when the mail-listener mod already waits for this ",
+            "Claude Code session, recording the topics and threads given for that wait"
+        );
+    };
+}
+
+exits!(timeout 2, deferred 3);
+
 // Every open inbox mail is matched on these alone, since Stalwart parses each message for an Email's attachments, and
 // a few hundred of those outlast a request.
 wire! {
@@ -73,22 +89,41 @@ pub struct Subscribe {
     pub watching: Watching,
 }
 
+/// Records `given` for `id`'s `wait --session` and says what that session now watches.
+fn record(records: &Records, id: &SessionId, given: &Watching) -> Result<String> {
+    records.record(id, given.topic.clone(), given.thread.clone())?;
+    let Watched { topics, threads } = records.of(id)?;
+    let topics: Vec<String> = topics.iter().map(Topic::to_string).collect();
+    let threads: Vec<&str> = threads.iter().map(String::as_str).collect();
+    Ok(format!(
+        "session {id} watches topics [{}] and the threads of [{}]",
+        topics.join(", "),
+        threads.join(", ")
+    ))
+}
+
 /// Records what to watch for this Claude Code session without sending, for its `wait --session`.
 pub async fn subscribe(args: Subscribe) -> Result<ExitCode> {
     let session =
         session().context("subscribe records for a Claude Code session, and this is none")?;
     let id: SessionId = session.session_id.parse()?;
-    let Watching { topic, thread } = args.watching;
-    let records = Store::new(&Config::load()?.login)?.records()?;
-    records.record(&id, topic, thread)?;
-    let Watched { topics, threads } = records.of(&id)?;
-    let topics: Vec<String> = topics.iter().map(Topic::to_string).collect();
-    let threads: Vec<&str> = threads.iter().map(String::as_str).collect();
-    succeed!(
-        "session {id} watches topics [{}] and the threads of [{}]",
-        topics.join(", "),
-        threads.join(", ")
-    )
+    succeed!("{}", record(&Store::new(&Config::load()?.login)?.records()?, &id, &args.watching)?)
+}
+
+/// While `session`'s mail-listener mod is live, records `given` for its wait and says so: that wait hands the session
+/// all its mail, so a second one would only race it.
+pub fn deferred(
+    store: &Store,
+    session: &SessionId,
+    given: &Watching,
+    now: i64,
+) -> Result<Option<String>> {
+    let Some(listener) = store.listeners()?.listening(session, now)? else { return Ok(None) };
+    let watches = record(&store.records()?, session, given)?;
+    Ok(Some(format!(
+        "the mail-listener mod (pid {}) already waits for this session and hands its mail in as prompts; {watches}",
+        listener.pid
+    )))
 }
 
 pub fn timeout(s: &str) -> Result<Duration> {
@@ -349,6 +384,15 @@ impl Watch<'_> {
 }
 
 pub async fn run(args: Args) -> Result<ExitCode> {
+    let caller = session().filter(|_| !args.json).and_then(|s| s.session_id.parse().ok());
+    // Its mod watches what this session records, so only a wait on the same or less stands down.
+    if let Some(caller) = caller.filter(|c| args.session.as_ref().is_none_or(|s| s == c))
+        && let Some(line) =
+            deferred(&Store::new(&Config::load()?.login)?, &caller, &args.watching, now())?
+    {
+        out(&line)?;
+        return Ok(ExitCode::from(DEFERRED));
+    }
     watch(&Mail::open().await?, args).await
 }
 
@@ -395,7 +439,7 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
     loop {
         let Some(mut claimed) = watch.until_due().await? else {
             note!("no mail by {}", utc(wall.unwrap_or_else(now)));
-            return Ok(ExitCode::from(2));
+            return Ok(ExitCode::from(TIMED_OUT));
         };
         // Claimed already: if printing fails, the mail shows up in the next wait's reminders.
         claimed.sort_by(|a, b| a.received.cmp(&b.received));

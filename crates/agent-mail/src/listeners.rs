@@ -1,6 +1,6 @@
-//! The waits the mail-listener mod runs, one per session, beside the session records. A session's own wait leaves
-//! them the mail that has Owen's authority: the wait that claims a mail first decides whether it reaches the session
-//! as his word or as plain output.
+//! The waits the mail-listener mod runs, one per session, beside the session records. A plain wait stands down for
+//! its own session's listener and leaves the others the mail that has Owen's authority: the wait that claims a mail
+//! first decides whether it reaches the session as his word or as plain output.
 
 use private::Dir;
 use text::Address;
@@ -16,6 +16,14 @@ pub struct Heartbeat {
     pub topics: BTreeSet<String>,
     pub threads: BTreeSet<String>,
     pub scanned: i64,
+}
+
+impl Heartbeat {
+    /// Its process runs, and it scanned within three recheck periods.
+    fn live(&self, now: i64) -> bool {
+        now - self.scanned <= 3 * RECHECK.as_secs() as i64
+            && Path::new(&format!("/proc/{}", self.pid)).exists()
+    }
 }
 
 pub struct Listeners(pub Dir);
@@ -54,15 +62,17 @@ impl Listeners {
         self.0.load(FILE)
     }
 
-    /// The topics a live listener watches: its process runs, and it scanned within three recheck periods.
+    /// The topics a live listener watches.
     pub fn watched(&self, now: i64) -> Result<Vec<Address>> {
-        let live = |b: &&Heartbeat| {
-            now - b.scanned <= 3 * RECHECK.as_secs() as i64
-                && Path::new(&format!("/proc/{}", b.pid)).exists()
-        };
         let all = self.all()?;
-        let topics: BTreeSet<&String> = all.values().filter(live).flat_map(|b| &b.topics).collect();
+        let topics: BTreeSet<&String> =
+            all.values().filter(|b| b.live(now)).flat_map(|b| &b.topics).collect();
         Ok(topics.into_iter().filter_map(|t| t.parse().ok()).collect())
+    }
+
+    /// `session`'s listener, while it is live.
+    pub fn listening(&self, session: &SessionId, now: i64) -> Result<Option<Heartbeat>> {
+        Ok(self.all()?.remove(&session.to_string()).filter(|b| b.live(now)))
     }
 }
 
