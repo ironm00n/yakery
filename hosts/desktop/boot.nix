@@ -30,7 +30,6 @@ in
   boot.initrd = {
     availableKernelModules = [ "r8169" ];
     systemd = {
-      enable = true;
       # a passphrase sent over initrd ssh can arrive after the 90s default drops to emergency mode
       settings.Manager.DefaultDeviceTimeoutSec = "infinity";
       network = {

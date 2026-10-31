@@ -66,7 +66,6 @@
       secureBoot.enable = true;
     };
   };
-  boot.initrd.systemd.enable = true; # TPM
 
   security.tpm2 = {
     enable = true;

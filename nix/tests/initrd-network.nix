@@ -6,7 +6,6 @@ let
   # it. Its root switched before its link had carrier; here no DHCP server
   # answers on the vlan, so the link is never routable in the initrd either.
   client = {
-    boot.initrd.systemd.enable = true;
     boot.initrd.network.enable = true;
     boot.initrd.systemd.network.networks."10-vlan" = {
       matchConfig.Name = "eth1";

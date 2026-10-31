@@ -8,10 +8,10 @@
 # The app_id is known at stream setup, so linear is offered from the first frame
 # (no renegotiation); consumers that don't match keep tiled zero-copy dmabuf.
 diff --git a/src/core/PortalManager.cpp b/src/core/PortalManager.cpp
-index 5dc98d4..34a1aad 100644
+index 7c8cc25..4261053 100644
 --- a/src/core/PortalManager.cpp
 +++ b/src/core/PortalManager.cpp
-@@ -77,6 +77,8 @@ CPortalManager::CPortalManager() {
+@@ -80,6 +80,8 @@ CPortalManager::CPortalManager() {
      m_sConfig.config->addConfigValue("screencopy:custom_picker_binary", Hyprlang::STRING{""});
      m_sConfig.config->addConfigValue("screencopy:force_shm", Hyprlang::INT{0L});
      m_sConfig.config->addConfigValue("screencopy:cursor_mode", Hyprlang::INT{0L});
@@ -21,10 +21,10 @@ index 5dc98d4..34a1aad 100644
      m_sConfig.config->commence();
      m_sConfig.config->parse();
 diff --git a/src/portals/Screencopy.cpp b/src/portals/Screencopy.cpp
-index 34af332..afe6ea9 100644
+index c5b0baf..7f5dbb4 100644
 --- a/src/portals/Screencopy.cpp
 +++ b/src/portals/Screencopy.cpp
-@@ -1123,11 +1123,34 @@ uint32_t CPipewireConnection::buildFormatsFor(spa_pod_builder* b[2], const spa_p
+@@ -1404,8 +1404,20 @@ uint32_t CPipewireConnection::buildFormatsFor(spa_pod_builder* b[2], const spa_p
      uint32_t            modCount   = 0;
      uint64_t*           modifiers  = nullptr;
  
@@ -44,8 +44,16 @@ index 34af332..afe6ea9 100644
 +
 +    const bool forceSHM    = **PFORCESHM || stream->dmaBufFailed;
 +    const bool forceLinear = **PFORCELINEAR || appForceLinear;
-+
-+    bool       haveDMA = false;
+ 
+     if (stream->pSession->selection.type == TYPE_WORKSPACE) {
+         auto& data = stream->pSession->sharingData;
+@@ -1421,8 +1433,19 @@ uint32_t CPipewireConnection::buildFormatsFor(spa_pod_builder* b[2], const spa_p
+         return paramCount;
+     }
+ 
+-    if (!forceSHM && build_modifierlist(stream, stream->pSession->sharingData.frameInfoDMA.fmt, &modifiers, &modCount) && modCount > 0) {
+-        Debug::log(LOG, "[pw] Building modifiers for dma");
++    bool haveDMA = false;
 +    if (!forceSHM) {
 +        if (forceLinear) {
 +            modifiers    = (uint64_t*)calloc(1, sizeof(uint64_t));
@@ -55,9 +63,7 @@ index 34af332..afe6ea9 100644
 +        } else
 +            haveDMA = build_modifierlist(stream, stream->pSession->sharingData.frameInfoDMA.fmt, &modifiers, &modCount) && modCount > 0;
 +    }
- 
--    if (!forceSHM && build_modifierlist(stream, stream->pSession->sharingData.frameInfoDMA.fmt, &modifiers, &modCount) && modCount > 0) {
--        Debug::log(LOG, "[pw] Building modifiers for dma");
++
 +    if (haveDMA) {
 +        Debug::log(LOG, forceLinear ? "[pw] Building modifiers for dma (linear only)" : "[pw] Building modifiers for dma");
  

@@ -62,7 +62,6 @@ pkgs.testers.runNixOSTest {
       autoFormat = true;
     };
     virtualisation.diskSize = 1024;
-    boot.initrd.systemd.enable = true;
 
     swapDevices = [
       {

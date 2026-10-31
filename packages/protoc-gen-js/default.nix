@@ -24,9 +24,9 @@ stdenv.mkDerivation (finalAttrs: {
   # the two cc_binary targets of generator/BUILD.bazel, without Bazel
   buildPhase = ''
     runHook preBuild
-    $CXX -std=c++17 -O2 generator/generate-version-header.cc -o generate-version-header
+    $CXX -std=c++20 -O2 generator/generate-version-header.cc -o generate-version-header
     ./generate-version-header package.json generator/version.h
-    $CXX -std=c++17 -O2 -I. \
+    $CXX -std=c++20 -O2 -I. \
       generator/js_generator.cc generator/protoc-gen-js.cc generator/well_known_types_embed.cc \
       -o protoc-gen-js $(pkg-config --cflags --libs protobuf) -lprotoc
     runHook postBuild

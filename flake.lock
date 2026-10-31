@@ -171,11 +171,11 @@
         "spectrum": "spectrum"
       },
       "locked": {
-        "lastModified": 1791551030,
-        "narHash": "sha256-jTx3O3MKqPjv+cDfBFQ5zlKECBEwzF91scC+mSumZyE=",
+        "lastModified": 1793281488,
+        "narHash": "sha256-ErGIqtoWEX9KKC8NFtJDx2pGGG02Cr6LGxrvzLd2sqA=",
         "owner": "microvm-nix",
         "repo": "microvm.nix",
-        "rev": "f13928fe9900e91709d7ce581eefa47eaafa79e1",
+        "rev": "b7bd556974fa8a171b5b639200e81d52244dfde4",
         "type": "github"
       },
       "original": {
@@ -267,11 +267,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1791594108,
-        "narHash": "sha256-XK4KceonkwD8LuMAt/vNrz982mXJM5jeHAxMwsUXXAQ=",
+        "lastModified": 1793341285,
+        "narHash": "sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "6510408d147d8c5e6d76043e899e9251756f6a75",
+        "rev": "1c89083e451e891152365b799595cf7790a43325",
         "type": "github"
       },
       "original": {
