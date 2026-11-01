@@ -1,0 +1,29 @@
+;; checked forms of the hl calls that silently ignore unknown spec keys, and of hl.config; the
+;; key sets are what this hyprland build reports reading (packages/hyprland-fennel)
+(local {: calls : config} (require :hl-keys))
+
+(fn check [path known spec]
+  (assert-compile (table? spec) (.. path ": spec must be a literal table") spec)
+  (each [k (pairs spec)]
+    (assert-compile (. known k) (.. path ": unknown key " (tostring k)) spec)))
+
+(fn check-config [prefix spec]
+  (assert-compile (table? spec) "hl.config: spec must be a literal table" spec)
+  (each [k v (pairs spec)]
+    (let [key (.. prefix k)]
+      (when (not (. config key))
+        (assert-compile (table? v) (.. "hl.config: unknown key " key) spec)
+        (check-config (.. key ".") v)))))
+
+(local checked
+  (collect [name {: path : arg : keys} (pairs calls)]
+    name (fn [...]
+      (case (select arg ...)
+        spec (check path keys spec))
+      `(,(sym path) ,...))))
+
+(fn checked.config [spec]
+  (check-config "" spec)
+  `(hl.config ,spec))
+
+checked

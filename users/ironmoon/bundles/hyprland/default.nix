@@ -6,16 +6,12 @@
   ...
 }:
 let
-  inherit (lib) mkEnableOption mkIf;
+  inherit (lib) getExe mkEnableOption mkIf;
   inherit (my-utils) symlink;
   cfg = config.bundles.hyprland;
   hl = config.wayland.windowManager.hyprland;
-  # hyprland prefers hyprland.lua over hyprland.conf, so the hand-written lua may
-  # only be placed when it is actually the configured format
-  lua-config = hl.configType == "lua";
-
-  lua-symlink = path: mkIf lua-config { source = symlink path; };
-
+  vmClip = import ../../../../nix/vms/hackathon-vm-clip.nix { inherit pkgs; };
+  hyprlandFennel = pkgs.callPackage ../../../../packages/hyprland-fennel { };
 in
 {
   options.bundles.hyprland = {
@@ -23,35 +19,41 @@ in
   };
 
   config = mkIf cfg.enable {
-    # a hand-written hyprland.lua overrides home-manager's generated one without any
-    # conflict error, so anything that would be generated is silently thrown away
+    # hyprland.fnl is found before hyprland.lua, so anything home-manager would generate
+    # is silently thrown away
     assertions = [
       {
         # mirrors `shouldGenerate` in home-manager's hyprland lib
         assertion =
-          lua-config
-          -> (
-            !hl.systemd.enable
-            && hl.settings == { }
-            && hl.plugins == [ ]
-            && hl.extraConfig == ""
-            && hl.extraLuaFiles == { }
-            && hl.submaps == { }
-          );
-        message = "bundles.hyprland: hypr/hyprland.lua is hand-written, so anything home-manager would generate into it is discarded; move it into the lua file.";
+          !hl.systemd.enable
+          && hl.settings == { }
+          && hl.plugins == [ ]
+          && hl.extraConfig == ""
+          && hl.extraLuaFiles == { }
+          && hl.submaps == { };
+        message = "bundles.hyprland: the config is hand-written hypr/*.fnl, so anything home-manager would generate is discarded; move it into the fennel files.";
       }
     ];
 
-    wayland.windowManager.hyprland = import ./config.nix { inherit config lib pkgs; };
+    wayland.windowManager.hyprland = import ./config.nix { inherit pkgs; };
 
     xdg.configFile = {
       "hypr/xdph.conf".text = lib.hm.generators.toHyprconf {
         attrs = import ./portal.nix { inherit pkgs; };
       };
 
-      "hypr/hyprland.lua" = lua-symlink ./hyprland.lua;
-      "hypr/utils.lua" = lua-symlink ./utils.lua;
-      "hypr/conf" = lua-symlink ./conf;
+      "hypr/hyprland.fnl".source = symlink ./hyprland.fnl;
+      "hypr/conf".source = symlink ./conf;
+      "hypr/lib".source = symlink ./lib;
+      "hypr/hl-keys.fnl".source = "${hyprlandFennel}/macros/hl-keys.fnl";
+
+      "hypr/nix.lua".text = "return ${
+        lib.generators.toLua { } {
+          clip-to-vm = getExe vmClip.push;
+          clip-from-vm = getExe vmClip.pull;
+          inherit (config.host) nvidia;
+        }
+      }";
     };
   };
 }

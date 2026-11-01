@@ -1,0 +1,217 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 6da2ff5..2c959bc 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -303,6 +303,15 @@ if(USE_TRACY)
+   message(STATUS "Tracy enabled, TRACY_CPP_FILES: " ${TRACY_CPP_FILES})
+ endif()
+ 
++set(HYPRLAND_FENNEL_DIR "" CACHE PATH "Directory holding fennel.lua, which compiles hyprland.fnl configs")
++if(NOT HYPRLAND_FENNEL_DIR)
++  message(FATAL_ERROR "HYPRLAND_FENNEL_DIR must point at the directory holding fennel.lua")
++endif()
++set_property(
++  SOURCE src/config/lua/ConfigManager.cpp
++  APPEND
++  PROPERTY COMPILE_DEFINITIONS HYPRLAND_FENNEL_DIR="${HYPRLAND_FENNEL_DIR}")
++
+ add_library(hyprland_lib STATIC ${SRCFILES})
+ add_executable(Hyprland src/main.cpp ${TRACY_CPP_FILES})
+ target_link_libraries(Hyprland hyprland_lib)
+diff --git a/src/config/lua/ConfigManager.cpp b/src/config/lua/ConfigManager.cpp
+index e062db2..9afefc0 100644
+--- a/src/config/lua/ConfigManager.cpp
++++ b/src/config/lua/ConfigManager.cpp
+@@ -98,10 +98,12 @@ static std::optional<std::string> resolveExplicitLuaRequireFile(CConfigManager*
+     const auto               BASE = resolveRequirePath(mgr, moduleName);
+     candidates.emplace_back(BASE);
+ 
+-    if (!BASE.ends_with(".lua"))
+-        candidates.emplace_back(std::format("{}.lua", BASE));
++    for (const auto& ext : {".lua", ".fnl"}) {
++        if (!BASE.ends_with(ext))
++            candidates.emplace_back(std::format("{}{}", BASE, ext));
+ 
+-    candidates.emplace_back((std::filesystem::path(BASE) / "init.lua").string());
++        candidates.emplace_back((std::filesystem::path(BASE) / std::format("init{}", ext)).string());
++    }
+ 
+     for (const auto& candidate : candidates) {
+         std::error_code ec;
+@@ -113,6 +115,81 @@ static std::optional<std::string> resolveExplicitLuaRequireFile(CConfigManager*
+     return std::nullopt;
+ }
+ 
++// compiles every hyprland.fnl and .fnl module; macro modules are fennel's own business.
++// runs before `require` is wrapped, so `require!` is the raw, error-propagating one.
++static constexpr std::string_view FENNEL_PRELUDE = R"lua(
++local configDir, fennelDir = ...
++package.path = fennelDir .. "/?.lua;" .. package.path
++
++local fennel = require("fennel")
++local dir = configDir .. "/?"
++fennel.path = dir .. ".fnl;" .. dir .. "/init.fnl"
++fennel["macro-path"] = table.concat({ dir .. ".fnlm", dir .. "/init.fnlm", dir .. ".fnl", dir .. "/init-macros.fnl", dir .. "/init.fnl" }, ";")
++fennel.install({ correlate = true })
++
++_G[fennel.mangle("require!")] = require
++
++local function globals()
++    local names = {}
++    for k in pairs(_G) do
++        names[#names + 1] = fennel.unmangle(k)
++    end
++    return names
++end
++
++return function(path)
++    for k in pairs(fennel["macro-loaded"]) do
++        fennel["macro-loaded"][k] = nil
++    end
++
++    local f = assert(io.open(path))
++    local src = f:read("a")
++    f:close()
++
++    local lua = fennel.compileString(src, { filename = path, correlate = true, allowedGlobals = globals() })
++    return assert(load(lua, "@" .. path))
++end
++)lua";
++
++// survives the per-reload purge of package.loaded: the standard library, and the fennel
++// compiler, whose instance the installed searcher keeps using
++static bool isRuntimeModule(std::string_view mod) {
++    static constexpr std::string_view STDLIB[] = {"_G", "coroutine", "debug", "io", "math", "os", "package", "string", "table", "utf8", "bit32", "jit"};
++    return std::ranges::contains(STDLIB, mod) || mod == "fennel" || mod.starts_with("fennel.");
++}
++
++// same contract as luaL_loadfile: the chunk or the error message is left on the stack
++static int loadConfigFile(lua_State* L, const std::string& path) {
++    if (!path.ends_with(".fnl"))
++        return luaL_loadfile(L, path.c_str());
++
++    lua_getfield(L, LUA_REGISTRYINDEX, "hl_fennel_load");
++    lua_pushstring(L, path.c_str());
++    return lua_pcall(L, 1, 1, 0) == LUA_OK ? LUA_OK : LUA_ERRSYNTAX;
++}
++
++// every searcher answers (loader, filename) once it finds a module; the file is watched from
++// then on, so a module that fails to compile still reloads once it is fixed
++static int trackingSearcher(lua_State* L) {
++    auto* self = sc<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(2)));
++    lua_pushvalue(L, lua_upvalueindex(1));
++    lua_insert(L, 1);
++    lua_call(L, lua_gettop(L) - 1, 2);
++    if (lua_isfunction(L, -2) && lua_isstring(L, -1))
++        trackConfigPath(self, lua_tostring(L, -1));
++    return 2;
++}
++
++static void wrapSearchers(lua_State* L, CConfigManager* self, int tableIdx, lua_Integer from) {
++    tableIdx = lua_absindex(L, tableIdx);
++    for (lua_Integer i = from; i <= sc<lua_Integer>(lua_rawlen(L, tableIdx)); ++i) {
++        lua_rawgeti(L, tableIdx, i);
++        lua_pushlightuserdata(L, self);
++        lua_pushcclosure(L, trackingSearcher, 2);
++        lua_rawseti(L, tableIdx, i);
++    }
++}
++
+ static void trackWildcardParentDirectory(CConfigManager* mgr, const std::string& pattern) {
+     const auto META = pattern.find_first_of("*?[");
+     if (META == std::string::npos)
+@@ -519,6 +596,19 @@ void CConfigManager::reinitLuaState() {
+     lua_setfield(m_lua, -2, "path");
+     lua_pop(m_lua, 1);
+ 
++    bool fennelOk = luaL_loadbuffer(m_lua, FENNEL_PRELUDE.data(), FENNEL_PRELUDE.size(), "=fennel prelude") == LUA_OK;
++    if (fennelOk) {
++        lua_pushstring(m_lua, configDir.c_str());
++        lua_pushstring(m_lua, HYPRLAND_FENNEL_DIR);
++        fennelOk = lua_pcall(m_lua, 2, 1, 0) == LUA_OK;
++    }
++    if (fennelOk)
++        lua_setfield(m_lua, LUA_REGISTRYINDEX, "hl_fennel_load");
++    else {
++        addError(std::format("fennel: {}", lua_tostring(m_lua, -1)));
++        lua_pop(m_lua, 1);
++    }
++
+     lua_getglobal(m_lua, "require");
+     if (lua_isfunction(m_lua, -1)) {
+         lua_pushvalue(m_lua, -1);
+@@ -551,7 +641,7 @@ void CConfigManager::reinitLuaState() {
+                 if (resolved) {
+                     trackConfigPath(self, *resolved);
+ 
+-                    if (luaL_loadfile(L, resolved->c_str()) != LUA_OK)
++                    if (loadConfigFile(L, *resolved) != LUA_OK)
+                         return luaL_error(L, "error loading module '%s' from file '%s':\n\t%s", moduleName.c_str(), resolved->c_str(), lua_tostring(L, -1));
+ 
+                     lua_pushstring(L, resolved->c_str());
+@@ -569,7 +659,19 @@ void CConfigManager::reinitLuaState() {
+         },
+         2);
+     lua_rawseti(m_lua, -2, 2); // replace package.searchers[2]
+-    lua_pop(m_lua, 2);         // pop searchers, package
++    wrapSearchers(m_lua, this, -1, 3);
++    lua_pop(m_lua, 2); // pop searchers, package
++
++    lua_getglobal(m_lua, "package");
++    lua_getfield(m_lua, -1, "loaded");
++    lua_getfield(m_lua, -1, "fennel");
++    if (lua_istable(m_lua, -1)) {
++        lua_getfield(m_lua, -1, "macro-searchers");
++        if (lua_istable(m_lua, -1))
++            wrapSearchers(m_lua, this, -1, 1);
++        lua_pop(m_lua, 1);
++    }
++    lua_pop(m_lua, 3); // pop fennel, loaded, package
+ 
+     // hook print function to print to hyprctl repl instead
+     lua_getglobal(m_lua, "print");
+@@ -632,20 +734,11 @@ void CConfigManager::reload() {
+         // the searcher hook can re-track their paths.
+         lua_getglobal(m_lua, "package");
+         lua_getfield(m_lua, -1, "loaded");
+-        static constexpr std::string_view STDLIB[] = {"_G", "coroutine", "debug", "io", "math", "os", "package", "string", "table", "utf8", "bit32", "jit"};
+         lua_pushnil(m_lua);
+         while (lua_next(m_lua, -2)) {
+             lua_pop(m_lua, 1); // pop value, keep key
+             if (lua_isstring(m_lua, -1)) {
+-                std::string_view mod  = lua_tostring(m_lua, -1);
+-                bool             skip = false;
+-                for (const auto& s : STDLIB) {
+-                    if (mod == s) {
+-                        skip = true;
+-                        break;
+-                    }
+-                }
+-                if (!skip) {
++                if (!isRuntimeModule(lua_tostring(m_lua, -1))) {
+                     lua_pushvalue(m_lua, -1); // dup key
+                     lua_pushnil(m_lua);
+                     lua_settable(m_lua, -4); // package.loaded[key] = nil
+@@ -654,7 +747,7 @@ void CConfigManager::reload() {
+         }
+         lua_pop(m_lua, 2); // pop loaded, package
+ 
+-        if (luaL_loadfile(m_lua, m_mainConfigPath.c_str()) != LUA_OK) {
++        if (loadConfigFile(m_lua, m_mainConfigPath) != LUA_OK) {
+             clearDeprecations();
+             m_errors.clear();
+             addError(lua_tostring(m_lua, -1));
+diff --git a/src/config/supplementary/jeremy/Jeremy.cpp b/src/config/supplementary/jeremy/Jeremy.cpp
+index f44ac14..42eac24 100644
+--- a/src/config/supplementary/jeremy/Jeremy.cpp
++++ b/src/config/supplementary/jeremy/Jeremy.cpp
+@@ -32,6 +32,9 @@ std::expected<SConfigStateReply, std::string> Jeremy::getMainConfigPath() {
+         if (const auto CFG_ENV = getenv("HYPRLAND_CONFIG"); CFG_ENV)
+             return SConfigStateReply{.path = CFG_ENV, .type = CONFIG_TYPE_EXPLICIT};
+ 
++        if (const auto FNL_PATHS = Hyprutils::Path::findConfig(ISDEBUG ? "hyprlandd" : "hyprland", "fnl"); FNL_PATHS.first.has_value())
++            return SConfigStateReply{.path = FNL_PATHS.first.value(), .type = CONFIG_TYPE_REGULAR};
++
+         const auto LUA_PATHS = Hyprutils::Path::findConfig(ISDEBUG ? "hyprlandd" : "hyprland", "lua");
+ 
+         if (LUA_PATHS.first.has_value())

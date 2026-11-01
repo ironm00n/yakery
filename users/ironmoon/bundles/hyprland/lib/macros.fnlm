@@ -1,0 +1,29 @@
+;; hl.bind ignores any option it does not read, so a misspelled one would silently be false
+(local bind-options (. (require :hl-keys) :calls :bind :keys))
+
+(fn options [opts]
+  (assert-compile (table? opts) "bind options must be a literal table" opts)
+  (each [k (pairs opts)]
+    (assert-compile (. bind-options k) (.. "unknown bind option: " (tostring k)) opts))
+  opts)
+
+(fn dispatcher [action]
+  (if (= :string (type action))
+    `(hl.dsp.exec_cmd ,action)
+    `(let [action# ,action]
+      (if (= :string (type action#)) (hl.dsp.exec_cmd action#) action#))))
+
+(fn bind [keys action ?opts]
+  `(hl.bind ,keys ,(dispatcher action) ,(options (or ?opts {}))))
+
+(fn binds [opts ...]
+  (assert-compile (= 0 (% (select :# ...) 2)) "binds takes key/action pairs" opts)
+  `(do
+    ,(table.unpack
+      (fcollect [i 1 (select :# ...) 2]
+        (bind (select i ...) (select (+ i 1) ...) opts)))))
+
+(fn require? [module]
+  `(pcall require ,module))
+
+{: bind : binds : require?}

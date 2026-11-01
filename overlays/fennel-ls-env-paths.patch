@@ -1,0 +1,42 @@
+--- a/src/fennel-ls/config.fnl
++++ b/src/fennel-ls/config.fnl
+@@ -79,7 +79,10 @@
+       (error (.. "This is a bug with fennel-ls: default-configuration has a key that isn't a table or option: " ?name))))
+ 
+ (λ make-configuration [?flsproject invalid]
+-  (apply-default-configuration default-configuration ?flsproject nil nil invalid))
++  (let [configuration (apply-default-configuration default-configuration ?flsproject nil nil invalid)]
++    (case (os.getenv "FENNEL_LS_MACRO_PATH")
++      extra (set configuration.macro-path (.. configuration.macro-path ";" extra)))
++    configuration))
+ 
+ (λ choose-position-encoding [init-params]
+   "fennel-ls natively uses utf-8, so the goal is to choose positionEncoding=\"utf-8\".
+--- a/src/fennel-ls/docs.fnl
++++ b/src/fennel-ls/docs.fnl
+@@ -62,15 +62,21 @@
+ 
+ (local libraries {})
+ 
++(λ docset-paths [name]
++  (let [paths (icollect [dir (string.gmatch (or (os.getenv "FENNEL_LS_DOCSETS") "") "[^:]+")]
++                (path-join dir (.. name docset-ext)))]
++    (table.insert paths (.. data-dir name docset-ext))
++    paths))
++
+ (λ load-library [name]
+-  (let [path (.. data-dir name docset-ext)]
+-    (case (io.open path)
++  (let [paths (docset-paths name)]
++    (case (accumulate [f nil _ path (ipairs paths) &until f] (io.open path))
+       f (let [docs (fennel.load-code (f:read :*all) {})]
+           (f:close)
+           (docs))
+       _ {:status :not-found
+-         :msg (string.format "Could not find docset for library %s at %s\nSee %s"
+-                             name path
++         :msg (string.format "Could not find docset for library %s in %s\nSee %s"
++                             name (table.concat paths " ")
+                              "https://wiki.fennel-lang.org/LanguageServer")})))
+ 
+ (λ get-library [name]
