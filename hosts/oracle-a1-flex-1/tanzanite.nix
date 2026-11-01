@@ -1,11 +1,12 @@
 {
   pkgs,
+  pkgs-node,
   lib,
   config,
   ...
 }:
 let
-  inherit (pkgs) pm2;
+  inherit (pkgs-node) pm2;
   user = "tanzanite";
   userHome = "/var/lib/${user}";
 in
@@ -21,10 +22,10 @@ in
     home = userHome;
     createHome = true;
     openssh.authorizedKeys.keys = config.users.users.root.openssh.authorizedKeys.keys;
-    packages = with pkgs; [
-      nodejs
-      yarn
-      git
+    packages = [
+      pkgs-node.nodejs
+      pkgs-node.yarn
+      pkgs.git
     ];
   };
   users.groups.${user} = { };

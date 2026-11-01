@@ -3,6 +3,7 @@
   lib,
   pkgs,
   inputs,
+  pkgs-node,
   my-lib,
   ...
 }:
@@ -50,7 +51,7 @@ in
 
     services.bulwark = {
       enable = true;
-      package = pkgs.callPackage ../packages/bulwark { };
+      package = pkgs.callPackage ../packages/bulwark { inherit (pkgs-node) nodejs; };
       inherit port;
       jmap_server_url = "https://${mail.host}";
       oauth = {

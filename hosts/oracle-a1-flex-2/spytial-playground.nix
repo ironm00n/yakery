@@ -1,5 +1,6 @@
 {
   pkgs,
+  pkgs-node,
   my-lib,
   ...
 }:
@@ -7,7 +8,7 @@ let
   user = "spytial-playground";
   base = "/var/lib/spytial-playground";
   port = 8931;
-  nodejs = pkgs.nodejs_24;
+  nodejs = pkgs-node.nodejs_24;
 in
 {
   users.groups.${user} = { };

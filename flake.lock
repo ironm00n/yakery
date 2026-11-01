@@ -456,7 +456,8 @@
         "secrets": "secrets",
         "sops-nix": "sops-nix",
         "systems": "systems_2",
-        "treefmt-nix": "treefmt-nix"
+        "treefmt-nix": "treefmt-nix",
+        "nixpkgs-node": "nixpkgs-node"
       }
     },
     "secrets": {
@@ -604,6 +605,22 @@
       "original": {
         "owner": "pyproject-nix",
         "repo": "uv2nix",
+        "type": "github"
+      }
+    },
+    "nixpkgs-node": {
+      "locked": {
+        "lastModified": 1793562840,
+        "narHash": "sha256-nklSgZtTzQ6IUouVSkcInjm3QcL4kJO79UYpAk3Oig4=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "98f569ca50f8c517ec9926f42fca43130ed22f46",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "staging-next",
+        "repo": "nixpkgs",
         "type": "github"
       }
     }

@@ -7,6 +7,8 @@
     nixpkgs-stable.url = "github:nixos/nixpkgs/nixos-26.05";
     # this can't be replaced by multiverse since it only indexes once something lands on unstable
     nixpkgs-master.url = "github:NixOS/nixpkgs/master";
+    # Node 24 for the services that run it: its CVE-2026-111497 fix rebuilds every Node package, so it reaches master through staging-next
+    nixpkgs-node.url = "github:NixOS/nixpkgs/staging-next";
     multiverse.url = "github:fzakaria/nixpkgs-multiverse";
     systems.url = "github:nix-systems/default";
     nixos-hardware = {
@@ -98,6 +100,7 @@
     nixpkgs,
     nixpkgs-stable,
     nixpkgs-master,
+    nixpkgs-node,
     multiverse,
     systems,
     nixos-hardware,
@@ -133,6 +136,11 @@
     # need to call here to for nix to memoize
     pkgs-map = mk-pkgs-map nixpkgs;
     pkgs-map-master = mk-pkgs-map nixpkgs-master;
+    pkgs-node-map = lib.mapAttrs (
+      system:
+      lib.warnIf (lib.versionAtLeast pkgs-map.${system}.nodejs_24.version "24.22.1")
+        "nixpkgs has the CVE-2026-111497 Node 24 fix; drop the nixpkgs-node input and pkgs-node"
+    ) (mk-pkgs-map nixpkgs-node);
     eachSystem = f:
       lib.genAttrs all-systems (
         system:
@@ -186,6 +194,7 @@
         mv = (mk-mv system);
         pkgs-stable = (mk-pkgs-stable system);
         pkgs-master = pkgs-map-master.${system};
+        pkgs-node = pkgs-node-map.${system};
       };
     };
     mk-server = { id, system, disko ? false, no-deploy ? false }: {
