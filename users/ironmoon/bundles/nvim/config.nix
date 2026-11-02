@@ -118,6 +118,8 @@ in
   extraFiles = {
     "queries/pyret/folds.scm".source = ./queries/pyret/folds.scm;
     "queries/pyret/highlights.scm".source = ./queries/pyret/highlights.scm;
+    # bundled rust.vim still passes `--pretty`, which rustc removed; use `:RustLsp expandMacro`
+    "after/ftplugin/rust.lua".text = "vim.api.nvim_buf_del_user_command(0, 'RustExpand')";
   };
 
   plugins = {
