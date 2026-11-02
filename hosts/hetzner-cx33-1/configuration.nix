@@ -28,6 +28,7 @@
       "pool"
     ];
     catchAll = "catchall";
+    signSubmissions = true;
     # the seat pool's signups, read by the pool on oracle-a1-flex-3
     serviceMailboxes.join = {
       senderDomain = "northeastern.edu";

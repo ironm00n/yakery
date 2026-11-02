@@ -12,7 +12,7 @@ rec {
       port = 8080;
     };
     # the submission signer's public key, which agent-mail checks each Submission-Signature with
-    submissionKey = null;
+    submissionKey = "l9I3tCq1ru6k2Yb2/RfrnaxqdUmglcIeMW8vurYRRWQ";
     agents = {
       domain = "agent.${domain}";
       sharedLocalPart = "agent";
