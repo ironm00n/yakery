@@ -104,6 +104,14 @@
             "command": "bash \"$HOME/.claude/hooks/guard-bash.sh\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/deny-bg-prompts.sh\""
+          }
+        ]
       }
     ],
     "SessionStart": [
