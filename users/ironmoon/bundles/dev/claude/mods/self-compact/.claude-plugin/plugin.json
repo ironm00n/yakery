@@ -1,0 +1,5 @@
+{
+  "name": "self-compact",
+  "version": "0.1.0",
+  "description": "Lets a session compact itself: the model asks, the compaction runs when its turn ends, then the session goes on"
+}
