@@ -130,6 +130,15 @@
             "command": "bash \"$HOME/.claude/hooks/session-host.sh\""
           }
         ]
+      },
+      {
+        "matcher": "compact|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.nix-profile/bin/recall\" hook"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -176,6 +185,10 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/session-time.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"$HOME/.nix-profile/bin/recall\" hook"
           }
         ]
       }
