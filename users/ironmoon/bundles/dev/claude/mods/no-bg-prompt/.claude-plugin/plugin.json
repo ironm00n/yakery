@@ -1,0 +1,5 @@
+{
+  "name": "no-bg-prompt",
+  "version": "0.1.0",
+  "description": "Keeps what only a background session is given out of its prompt (the background-session section and the task-tools reminder), so it reads what an interactive session reads"
+}
