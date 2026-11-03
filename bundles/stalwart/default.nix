@@ -126,9 +126,9 @@ let
   # RCPT-stage scripts see only the recipient being added
   unreceivable =
     let
-      unreceiving = lib.attrNames (
-        lib.filterAttrs (_: account: !account.receivesMail) cfg.programAccounts
-      );
+      unreceiving =
+        lib.attrNames (lib.filterAttrs (_: account: !account.receivesMail) cfg.programAccounts)
+        ++ cfg.groups;
     in
     ''
       require ["envelope", "reject"];
@@ -289,9 +289,9 @@ let
     jmapEmailSubmissionGet
   ];
 
-  # signed in to by a program, with no role, so it holds only these permissions
-  programAccount = name: permissions: {
-    "@type" = "User";
+  # with no role, an account holds only these permissions
+  roleless = type: permissions: name: {
+    "@type" = type;
     inherit name;
     domainId = ref "ironmoon";
     permissions = {
@@ -300,8 +300,11 @@ let
     };
     roles."@type" = "Custom";
     roles.roleIds = [ ];
-    encryptionAtRest."@type" = "Disabled";
   };
+
+  # signed in to by a program
+  programAccount =
+    name: permissions: roleless "User" permissions name // { encryptionAtRest."@type" = "Disabled"; };
 
   localOnly = {
     match = [ ];
@@ -339,6 +342,15 @@ in
       description = ''
         Groups at ${domain}, each a shared mailbox, besides postmaster.
         Its members are the users whose ZITADEL `mail_groups` claim names it.
+      '';
+    };
+    groups = lib.mkOption {
+      type = lib.types.listOf (lib.types.strMatching "[a-z0-9._-]+");
+      default = [ ];
+      example = [ "calendars" ];
+      description = ''
+        Groups at ${domain} with no member and no mail, besides the shared mailboxes: what they
+        hold, as {option}`services.stalwart.calendars`, accounts reach by share alone.
       '';
     };
     catchAll = lib.mkOption {
@@ -487,21 +499,26 @@ in
         message = "bundles.stalwart.catchAll must be one of bundles.stalwart.sharedMailboxes";
       }
       {
-        assertion = lib.all (
-          name:
-          builtins.match "[a-z0-9._-]+" name != null
-          && !lib.elem name (
-            [
-              "postmaster"
-              "root"
-              agentLocalPart
-            ]
-            # the plan's ids for accounts are their local parts, and a domain's id would clash
-            ++ lib.attrNames domains
-            ++ cfg.sharedMailboxes
-          )
-        ) (lib.attrNames cfg.programAccounts);
-        message = "bundles.stalwart.programAccounts must be local parts no other account at ${domain} has";
+        assertion =
+          let
+            declared = lib.attrNames cfg.programAccounts ++ cfg.groups;
+          in
+          lib.allUnique declared
+          && lib.all (
+            name:
+            builtins.match "[a-z0-9._-]+" name != null
+            && !lib.elem name (
+              [
+                "postmaster"
+                "root"
+                agentLocalPart
+              ]
+              # the plan's ids for accounts are their local parts, and a domain's id would clash
+              ++ lib.attrNames domains
+              ++ cfg.sharedMailboxes
+            )
+          ) declared;
+        message = "bundles.stalwart.programAccounts and bundles.stalwart.groups must be local parts no other account at ${domain} has";
       }
       {
         # the addresses agent-mail sends from
@@ -710,18 +727,9 @@ in
             encryptionAtRest."@type" = "Disabled";
           })
           (upsertOn "Account" [ "name" "domainId" ] (
-            lib.mapAttrs (_: name: {
-              "@type" = "Group";
-              inherit name;
-              domainId = ref "ironmoon";
-              # with no role, delivery to the group fails and bounces
-              permissions = {
-                "@type" = "Merge";
-                enabledPermissions = toSet [ "emailReceive" ];
-              };
-              roles."@type" = "Custom";
-              roles.roleIds = [ ];
-            }) (lib.genAttrs ([ "postmaster" ] ++ cfg.sharedMailboxes) lib.id)
+            # with no role, delivery to the group fails and bounces
+            lib.genAttrs ([ "postmaster" ] ++ cfg.sharedMailboxes) (roleless "Group" [ "emailReceive" ])
+            // lib.genAttrs cfg.groups (roleless "Group" [ ])
           ))
           (upsertOn "Account" [ "name" "domainId" ] (
             lib.mapAttrs (name: account: programAccount name account.permissions) cfg.programAccounts

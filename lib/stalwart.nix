@@ -67,6 +67,9 @@ rec {
   ref = id: "#${id}";
   toSet = names: lib.genAttrs names (_: true);
 
+  # a calendar's CalDAV path below Stalwart's HTTP origin, by the address of the account holding it
+  calendarHref = holder: path: "/dav/cal/${lib.escapeURL holder}/${path}/";
+
   fileSecret = path: {
     "@type" = "File";
     filePath = toString path;

@@ -56,41 +56,9 @@ in
   };
 
   config = lib.mkIf (cfg != { }) {
-    services.stalwart.plan.afterApply = lib.getExe (
-      pkgs.writeShellApplication {
-        name = "stalwart-app-passwords";
-        runtimeInputs = [
-          pkgs.curl
-          pkgs.jq
-        ];
-        # jq programs, whose $variables are jq's own, pass through pick()
-        excludeShellChecks = [ "SC2016" ];
-        text = ''
-          # base64 on a pipe: the password reaches neither argv nor curl's config quoting
-          auth=$(printf '%s:%s' "$STALWART_USER" "$STALWART_PASSWORD" | base64 --wrap=0)
-          admin() {
-            # under the plan step's start timeout, which would leave Stalwart in recovery mode
-            curl --fail --silent --show-error --max-time 30 \
-              --config <(printf 'header = "Authorization: Basic %s"\n' "$auth") "$@"
-          }
-          jmap() {
-            admin --header 'Content-Type: application/json' --data-binary @- "$STALWART_URL/jmap/" \
-              < <(jq --null-input --compact-output \
-                '{using: ["urn:ietf:params:jmap:core", "urn:stalwart:jmap"], methodCalls: $ARGS.positional}' \
-                --jsonargs "$@")
-          }
-
-          # a step that gets an unexpected response logs it, secrets removed, before failing
-          pick() {
-            local response
-            response=$(cat)
-            jq --exit-status "$@" <<<"$response" && return
-            echo "unexpected response: $(jq --compact-output 'walk(if type == "object" then del(.secret) else . end)' <<<"$response")" >&2
-            return 1
-          }
-
-          admin_id=$(admin "$STALWART_URL/jmap/session" | pick --raw-output '.primaryAccounts["urn:stalwart:jmap"]')
-
+    services.stalwart.plan.afterApply =
+      import ./admin-script.nix { inherit lib pkgs; } "stalwart-app-passwords"
+        ''
           # An unregistered OAuth client could trade an app password for tokens that ignore
           # its allowedIps. Updates must resend the provider's secrets, so they rotate too.
           jmap "$(
@@ -104,14 +72,6 @@ in
               signatureKey: {"@type": "Text", secret: $ENV.SIGNING_KEY}
             }}}, "o"]'
           )" | pick '.methodResponses[0][1].updated | has("singleton")' >/dev/null
-
-          account_ids=$(
-            jmap \
-              "$(jq --null-input --arg a "$admin_id" '["x:Account/query", {accountId: $a}, "q"]')" \
-              "$(jq --null-input --arg a "$admin_id" \
-                '["x:Account/get", {accountId: $a, "#ids": {resultOf: "q", name: "x:Account/query", path: "/ids"}, properties: ["emailAddress"]}, "g"]')" \
-              | pick --compact-output '.methodResponses[1][1].list | map({key: .emailAddress, value: .id}) | from_entries'
-          )
 
           app_password() {
             local address=$1 file=$2 allowed_ips=$3 description=$4 account_id old secret
@@ -141,22 +101,17 @@ in
             mv "$file.new" "$file"
           }
 
-          # a subshell in the background still stops at its first error, and stops no other account
-          failed=0
           ${lib.concatMapStrings (
             { name, value }:
-            "( app_password ${
+            "each app_password ${
               lib.escapeShellArgs [
                 name
                 (toString value.file)
                 (builtins.toJSON (lib.genAttrs value.allowedIps (_: true)))
                 value.description
               ]
-            } ) & wait \"$!\" || failed=1\n"
+            }\n"
           ) (lib.attrsToList cfg)}
-          exit "$failed"
         '';
-      }
-    );
   };
 }

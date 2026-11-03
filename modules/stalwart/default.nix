@@ -77,6 +77,7 @@ in
   imports = [
     ./app-passwords.nix
     ./backup.nix
+    ./calendars.nix
     ./submission-signer.nix
   ];
 
