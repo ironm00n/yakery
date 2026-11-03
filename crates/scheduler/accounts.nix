@@ -1,21 +1,17 @@
 # The Stalwart program accounts the scheduler signs in as, by local part, with all each may do:
-# the core's, which it checks it holds before serving, and the one the feeds write with, named
-# outside the core's `schedule-<key>` so no calendar's key can take it.
-{ lib, calendars }:
+# the core's, which it checks it holds no more than before serving, and the feeds'.
 {
   core = {
-    schedule = [
+    name = "schedule";
+    permissions = [
       "authenticate"
       "jmapCalendarGet"
       "jmapCalendarEventCreate"
       "jmapPrincipalGetAvailability"
+      "jmapPrincipalQuery"
       "calendarSchedulingSend"
     ];
-  }
-  // lib.genAttrs (map (key: "schedule-${key}") calendars) (_: [
-    "authenticate"
-    "jmapPrincipalGetAvailability"
-  ]);
+  };
   feed = {
     name = "calendar-feeds";
     permissions = [

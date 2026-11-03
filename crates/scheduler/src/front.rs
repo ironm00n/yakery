@@ -159,8 +159,9 @@ impl Front<'_> {
         };
         let by = Timestamp::now() + ask::CLAIMED_WITHIN;
         match self.ask(FrontAsk::Book { token: token.clone(), start, booker, by }).await {
-            FrontAnswer::Booked { start, duration, booker } => {
-                reply(StatusCode::OK, pages::booked(&viewer, start, duration, &booker), true)
+            FrontAnswer::Booked { start, duration, booker, owner } => {
+                let page = pages::booked(&viewer, start, duration, &booker, &owner);
+                reply(StatusCode::OK, page, true)
             }
             FrontAnswer::Refused(Refusal::SlotGone) => {
                 let zone =

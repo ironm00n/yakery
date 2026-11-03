@@ -8,16 +8,16 @@
 let
   cfg = config.bundles.scheduler;
   inherit (my-lib.ironmoon) domain schedule mail;
-  inherit (lib) mkOption types;
   ips = inputs.secrets.data.ips.${config.networking.hostName};
   address = "${ips.ipv6.prefix}::4";
   stalwart = "${mail.loopback.address}:${toString mail.loopback.port}";
-  appPassword = local: config.services.stalwart.appPasswords."${local}@${domain}".file;
-  accounts = import ../crates/scheduler/accounts.nix {
-    inherit lib;
-    calendars = lib.attrNames config.services.scheduler.calendars;
-  };
-  feed = accounts.feed.name;
+  accounts = lib.mapAttrs (_: a: a // { address = "${a.name}@${domain}"; }) (
+    import ../crates/scheduler/accounts.nix
+  );
+  appPassword = account: config.services.stalwart.appPasswords.${account.address}.file;
+  group = "calendars";
+  holder = "${group}@${domain}";
+  feeds = "feeds";
 in
 {
   imports = [
@@ -26,58 +26,54 @@ in
   ];
 
   options.bundles.scheduler = {
-    enable = lib.mkEnableOption "busy times and one-time booking links at ${schedule.host}, on Stalwart; the calendars counted are {option}`services.scheduler.calendars`";
-    owner = mkOption {
-      type = types.str;
-      description = "The account whose calendars are counted, whose Bookings calendar takes the bookings, and whose calendars the feeds are copied into.";
-    };
-    feeds = mkOption {
-      type = types.attrsOf (
-        types.submodule (
-          { name, ... }:
-          {
-            options = {
-              link = mkOption {
-                type = types.str;
-                description = "File holding the published calendar's link.";
-              };
-              label = mkOption { type = types.str; };
-              calendar = mkOption {
-                type = types.str;
-                default = name;
-                description = "The owner's calendar the feed is copied into, by its CalDAV path segment.";
-              };
-            };
-          }
-        )
-      );
+    enable = lib.mkEnableOption "busy times and one-time booking links at ${schedule.host}, on Stalwart, for whoever shares a Bookings calendar with ${accounts.core.address}";
+    feeds = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
       default = { };
-      description = "Published calendars (Outlook's ICS link, iCloud's public calendar), each counted as a calendar of its key.";
+      description = "Files holding published calendars' links (Outlook's ICS link, iCloud's public calendar), by a name for each; all are copied into one calendar the scheduler counts.";
+    };
+    readers = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Addresses the feeds' copy is shared with to read, so it shows in their calendar apps.";
     };
   };
 
   config = lib.mkIf cfg.enable {
     services.scheduler = {
       enable = true;
-      inherit (cfg) owner;
+      account = accounts.core.address;
+      appPassword = appPassword accounts.core;
+      groups = [ holder ];
       inherit (schedule) host;
-      inherit stalwart appPassword;
+      inherit stalwart;
       zone = schedule.timeZone;
-      calendars = lib.mapAttrs (_: f: { inherit (f) label; }) cfg.feeds;
     };
 
     services.calendar-feeds = {
-      account = "${feed}@${domain}";
-      password = appPassword feed;
-      feeds = lib.mapAttrs (_: f: {
-        inherit (f) link;
-        calendar = "http://${stalwart}/dav/cal/${lib.escapeURL cfg.owner}/${f.calendar}/";
-      }) cfg.feeds;
+      inherit (cfg) feeds;
+      account = accounts.feed.address;
+      password = appPassword accounts.feed;
+      calendar = "http://${stalwart}${my-lib.stalwart.calendarHref holder feeds}";
     };
 
-    bundles.stalwart.programAccounts = lib.mapAttrs (_: permissions: { inherit permissions; }) (
-      accounts.core // lib.optionalAttrs (cfg.feeds != { }) { ${feed} = accounts.feed.permissions; }
-    );
+    bundles.stalwart = {
+      programAccounts = lib.mapAttrs' (
+        _: a: lib.nameValuePair a.name { inherit (a) permissions; }
+      ) accounts;
+      groups = [ group ];
+    };
+    services.stalwart.calendars.${holder}.${feeds}.shares = {
+      ${accounts.feed.address} = [
+        "mayReadItems"
+        "mayWriteAll"
+      ];
+      ${accounts.core.address} = [ "mayReadFreeBusy" ];
+    }
+    // lib.genAttrs cfg.readers (_: [
+      "mayReadFreeBusy"
+      "mayReadItems"
+    ]);
 
     networking.interfaces.enp1s0.ipv6.addresses = [
       {

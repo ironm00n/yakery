@@ -99,11 +99,11 @@ fn the_public_week_shows_busy_time_inside_hours_and_horizon_only() {
     let blocks = shown(
         &week,
         &[
-            (busy("2026-10-26T08:00", "2026-10-26T11:00"), 0),
-            (busy("2026-10-25T08:00", "2026-10-25T11:00"), 1),
+            busy("2026-10-26T08:00", "2026-10-26T11:00"),
+            busy("2026-10-25T08:00", "2026-10-25T11:00"),
         ],
     );
-    assert_eq!(blocks, [(busy("2026-10-26T10:00", "2026-10-26T11:00"), 0)]);
+    assert_eq!(blocks, [busy("2026-10-26T10:00", "2026-10-26T11:00")]);
     let far = open(&fixture(), "2026-11-23".parse().unwrap(), at("2026-10-28T12:00"));
     assert_eq!(
         (far.len(), far[2].end),

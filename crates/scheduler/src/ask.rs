@@ -44,9 +44,9 @@ pub enum FrontAsk {
 
 #[derive(Serialize, Deserialize)]
 pub enum FrontAnswer {
-    Week { monday: jiff::civil::Date, blocks: Vec<(Period, Option<String>)>, open: Vec<Period> },
+    Week { monday: jiff::civil::Date, blocks: Vec<Period>, open: Vec<Period> },
     Link(LinkView),
-    Booked { start: Timestamp, duration: SignedDuration, booker: Booker },
+    Booked { start: Timestamp, duration: SignedDuration, booker: Booker, owner: String },
     Refused(Refusal),
 }
 

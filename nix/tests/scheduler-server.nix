@@ -1,11 +1,12 @@
-# cx33-1's Stalwart for the scheduler's VM tests: the owner, one program account per counted
-# calendar, schedule@ for Bookings, and an SMTP sink standing in for every other server; and
-# Python helpers for JMAP and the owner's calendars.
+# cx33-1's Stalwart with the scheduler bundle on, for the scheduler's VM tests: an owner, two
+# accounts only the tests sign in as, and an SMTP sink standing in for every other server; and
+# Python helpers for JMAP, CalDAV and the owner's calendars.
 { pkgs }:
 let
   inherit (pkgs) lib;
   stalwart = import ./stalwart-server.nix { inherit pkgs; };
   inherit (stalwart.my-lib.stalwart) update upsertOn1;
+  inherit (pkgs.callPackage ../../packages/stalwart { webuiOauthClientId = "test"; }) permissions;
   sink = {
     port = 2525;
     dir = "/var/lib/sink";
@@ -13,32 +14,27 @@ let
 in
 rec {
   inherit (stalwart) domain client;
-  calendarAccounts = [
-    "work"
-    "personal"
-    "other"
-    "outlook"
-  ];
-  programAccounts =
-    let
-      scheduler = import ../../crates/scheduler/accounts.nix {
-        inherit lib;
-        calendars = calendarAccounts;
-      };
-    in
-    scheduler.core
-    // {
-      ${scheduler.feed.name} = scheduler.feed.permissions;
-    }
-    // (with (pkgs.callPackage ../../packages/stalwart { webuiOauthClientId = "test"; }).permissions; {
+  accounts = import ../../crates/scheduler/accounts.nix;
+  host = "schedule.${domain}";
+
+  node = {
+    imports = [
+      (stalwart.node { users = [ "owen" ]; })
+      ../../bundles/scheduler.nix
+    ];
+    bundles.scheduler = {
+      enable = true;
+      readers = [ "owen@${domain}" ];
+    };
+    bundles.stalwart.programAccounts = with permissions; {
       # Q1's other answer: creates, and no invitations
-      schedule-nosend = [
+      schedule-nosend.permissions = [
         authenticate
         jmapCalendarGet
         jmapCalendarEventCreate
       ];
       # every read permission, so what confines it is the free/busy share alone
-      schedule-probe = [
+      schedule-probe.permissions = [
         authenticate
         jmapPrincipalGetAvailability
         jmapCalendarGet
@@ -48,13 +44,7 @@ rec {
         davCalGet
         davCalPropFind
       ];
-    });
-
-  node = {
-    imports = [ (stalwart.node { users = [ "owen" ]; }) ];
-    bundles.stalwart.programAccounts = lib.mapAttrs (_: permissions: {
-      inherit permissions;
-    }) programAccounts;
+    };
     services.stalwart.plan.sequence = lib.mkAfter [
       (upsertOn1 "MtaRoute" "sink" [ "name" ] {
         "@type" = "Relay";
@@ -89,6 +79,9 @@ rec {
     import re
 
     NY = "America/New_York"
+    SCHEDULE, FEEDER = "${accounts.core.name}", "${accounts.feed.name}"
+    GROUP = "calendars"
+    FEEDS = f"/dav/cal/{GROUP}%40${domain}/feeds/"
     observed = {}
     failures = []
 
@@ -134,6 +127,10 @@ rec {
 
     def later(t, minutes):
         return (parse(t) + datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def at(local, minutes, tz=NY):
+        s = utc(local, tz)
+        return (s, later(s, minutes))
 
     def merged(periods):
         out = []
@@ -189,6 +186,19 @@ rec {
     def calendar_href(name):
         _, body, hrefs = propfind(owen, HOME)
         return next(h for h in hrefs if f"<D:displayname>{name}</D:displayname>" in body.split(h, 1)[1].split("</D:response>", 1)[0])
+
+    # one VEVENT per (uid, local start, minutes), in New York time, as a feed publishes them
+    def ics(events):
+        lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//test//feed//EN"]
+        for uid, local, minutes in events:
+            begin = datetime.datetime.fromisoformat(local).strftime("%Y%m%dT%H%M%S")
+            lines += ["BEGIN:VEVENT", f"UID:{uid}", "DTSTAMP:20261001T000000Z", f"DTSTART;TZID={NY}:{begin}",
+                      f"DURATION:PT{minutes}M", f"SUMMARY:Feed {uid}", "END:VEVENT"]
+        return "".join(l + "\r\n" for l in lines + ["END:VCALENDAR"])
+
+    def feeds_contents(auth):
+        _, _, hrefs = propfind(auth, FEEDS)
+        return sorted(h for h in hrefs if h != FEEDS)
 
     FREE_BUSY = {"mayReadFreeBusy": True}
     BOOKINGS = {"mayReadFreeBusy": True, "mayReadItems": True, "mayWriteAll": True}

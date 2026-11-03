@@ -16,15 +16,19 @@ use crate::policy::tests::{fixture, leaked};
 /// after it landed (`false`), as a timeout or a crash would; `refuse` refuses the next create.
 #[derive(Default)]
 struct Fake {
-    busy: Vec<(Period, usize)>,
+    busy: Vec<Period>,
     events: RefCell<Vec<Value>>,
     lose: Cell<Option<bool>>,
     refuse: Cell<bool>,
 }
 
 impl Calendar for &Fake {
-    async fn busy(&self, period: Period) -> Result<Vec<(Period, usize)>> {
-        Ok(self.busy.iter().filter(|(b, _)| b.overlaps(period)).cloned().collect())
+    fn owner(&self) -> &str {
+        "owen@example.test"
+    }
+
+    async fn busy(&self, period: Period) -> Result<Vec<Period>> {
+        Ok(self.busy.iter().filter(|b| b.overlaps(period)).copied().collect())
     }
 
     async fn create(&self, event: Value) -> Result<Created> {
@@ -230,7 +234,7 @@ fn a_refusal_reopens_a_link_only_when_it_answers_the_one_send() {
 #[test]
 fn busy_time_is_read_as_far_as_the_policy_gap_reaches() {
     run(async {
-        let busy = vec![(Period { start: at("2026-10-31T00:10"), end: at("2026-10-31T00:40") }, 0)];
+        let busy = vec![Period { start: at("2026-10-31T00:10"), end: at("2026-10-31T00:40") }];
         let (setup, fake) = (Setup::new("reach"), Fake { busy, ..Fake::default() });
         let gap: Gap = "PT30M".parse().unwrap();
         let core = setup.core(&fake, Policy { gap, ..fixture() });
@@ -242,21 +246,15 @@ fn busy_time_is_read_as_far_as_the_policy_gap_reaches() {
 }
 
 #[test]
-fn the_week_drops_labels_unless_shown() {
+fn the_week_shows_busy_time_inside_bookable_hours_up_to_the_horizon() {
     run(async {
-        let busy = vec![(Period { start: monday("09:00"), end: monday("11:00") }, 1)];
+        let busy = vec![Period { start: monday("09:00"), end: monday("11:00") }];
         let (setup, fake) = (Setup::new("week"), Fake { busy, ..Fake::default() });
-        let hour = Period { start: monday("10:00"), end: monday("11:00") };
-        for (show, label) in [(true, Some("Personal".to_string())), (false, None)] {
-            let core = setup.core(&fake, Policy { show_calendars: show, ..fixture() });
-            let FrontAnswer::Week { blocks, .. } = core.front(FrontAsk::Week(1)).await else {
-                panic!()
-            };
-            assert_eq!(blocks, [(hour, label)]);
-            answers!(
-                core.front(FrontAsk::Week(5)).await,
-                FrontAnswer::Refused(Refusal::NoSuchWeek)
-            );
-        }
+        let core = setup.core(&fake, fixture());
+        let FrontAnswer::Week { blocks, .. } = core.front(FrontAsk::Week(1)).await else {
+            panic!()
+        };
+        assert_eq!(blocks, [Period { start: monday("10:00"), end: monday("11:00") }]);
+        answers!(core.front(FrontAsk::Week(5)).await, FrontAnswer::Refused(Refusal::NoSuchWeek));
     })
 }

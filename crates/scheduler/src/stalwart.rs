@@ -1,7 +1,8 @@
-//! Stalwart over JMAP on loopback, as one program account per counted calendar and `schedule@`
-//! for Bookings; and the checks at start that each account can do what it should and no more.
+//! Stalwart over JMAP on loopback, as `schedule@`: busy time from the calendars of whoever shared
+//! Bookings with it and of the groups the policy names, and bookings into Bookings.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+use std::iter;
 use std::path::Path;
 use std::time::Duration;
 
@@ -24,14 +25,21 @@ use crate::policy::Policy;
 use crate::slots::{Period, weeks};
 
 pub trait Calendar {
-    /// Busy periods overlapping `period`, each with the index of its counted calendar.
-    async fn busy(&self, period: Period) -> Result<Vec<(Period, usize)>>;
+    /// The address of the account the bookings go to.
+    fn owner(&self) -> &str;
+    async fn busy(&self, period: Period) -> Result<Vec<Period>>;
     async fn create(&self, event: Value) -> Result<Created>;
 }
 
 /// The booking's JSCalendar event, without the calendar, which only [`Stalwart`] knows.
-pub fn event(policy: &Policy, digest: Digest, limits: &Limits, booking: &Booking) -> Value {
-    let owner = format!("mailto:{}", policy.owner);
+pub fn event(
+    policy: &Policy,
+    owner: &str,
+    digest: Digest,
+    limits: &Limits,
+    booking: &Booking,
+) -> Value {
+    let owner = format!("mailto:{owner}");
     let booker = &booking.booker;
     let note = if booker.note.is_empty() { String::new() } else { format!("{}\n\n", booker.note) };
     let mut event = json!({
@@ -69,97 +77,85 @@ struct Http {
 
 pub struct Stalwart {
     http: Http,
-    schedule: Login,
-    counted: Vec<Login>,
+    login: Login,
     owner: String,
+    owner_id: String,
     bookings: String,
+    groups: Vec<String>,
 }
 
 /// The longest one call to Stalwart may take, answer and all.
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Every permission each account holds, as `/api/account` lists them: it hides the
-/// `jmapPrincipal*` ones while directory queries are off.
-const SCHEDULE: [&str; 4] =
-    ["authenticate", "calendarSchedulingSend", "jmapCalendarEventCreate", "jmapCalendarGet"];
-const COUNTED: [&str; 1] = ["authenticate"];
-
 impl Stalwart {
-    /// Signs in as each account, refusing to go on unless each sees what it should, and finds
-    /// the owner's account through schedule@'s session, the only other account there. What no
-    /// account can see goes unchecked: a free/busy share, and a share to schedule@ that grants
-    /// writing without reading.
-    pub async fn connect(policy: &Policy, credentials: &Path) -> Result<Stalwart> {
+    /// Signs in, refusing to go on unless schedule@ holds no permission beyond the policy's and
+    /// sees one account besides its own, the owner's, with Bookings its only calendar there.
+    /// What it can't see goes unchecked: a free/busy share, and a share granting writing
+    /// without reading.
+    pub async fn connect(policy: &Policy, secret: &Path) -> Result<Stalwart> {
         let client = Client::builder(TokioExecutor::new()).build_http();
         let http = Http { client, origin: format!("http://{}", policy.stalwart) };
-        let owner = policy.owner.to_string();
-        let sign_in =
-            |local: String, held, others| http.sign_in(policy, credentials, local, held, others);
-        let (schedule, mut seen) = sign_in("schedule".into(), &SCHEDULE, vec![&owner]).await?;
-        let owner = seen.remove(&owner).context("the owner's account")?;
-        let mut counted = vec![];
-        for c in &policy.calendars {
-            counted.push(sign_in(format!("schedule-{}", c.key), &COUNTED, vec![]).await?.0);
-        }
-        let calendars = http.call(&schedule, "Calendar/get", json!({"accountId": owner})).await?;
+        let address = policy.account.address.to_string();
+        let secret = std::fs::read_to_string(secret).context("the app password")?;
+        let auth = format!("Basic {}", STANDARD.encode(format!("{address}:{}", secret.trim())));
+        let mut login = Login { address, account: String::new(), auth };
+
+        // no more than the policy's, not exactly: Stalwart 0.16's `/api/account` hides the
+        // `jmapPrincipal*` permissions while directory queries are off, and v1's doesn't
+        let held: BTreeSet<String> =
+            serde_json::from_value(http.get(&login, "/api/account").await?["permissions"].take())?;
+        let beyond: Vec<_> = held.difference(&policy.account.permissions).collect();
+        ensure!(beyond.is_empty(), "{} holds {beyond:?}, beyond the policy's", login.address);
+
+        let session = http.get(&login, "/jmap/session").await?;
+        let accounts = session["accounts"].as_object().context("a JMAP session")?;
+        let name = |a: &Value| a["name"].as_str().unwrap_or_default().to_string();
+        let (own, others): (Vec<_>, Vec<_>) =
+            accounts.iter().partition(|(_, a)| name(a) == login.address);
+        let ([(own, _)], [(owner_id, owner)]) = (own.as_slice(), others.as_slice()) else {
+            let seen: Vec<String> = accounts.values().map(name).collect();
+            bail!(
+                "{} must see one account besides its own, the one that shared Bookings, not {seen:?}",
+                login.address
+            );
+        };
+        login.account = own.to_string();
+        let (owner_id, owner) = (owner_id.to_string(), name(owner));
+
+        let calendars = http.call(&login, "Calendar/get", json!({"accountId": owner_id})).await?;
         let [bookings] = calendars["list"].as_array().map(Vec::as_slice).unwrap_or_default() else {
-            bail!("schedule@ must see exactly one calendar of the owner's, Bookings");
+            bail!("schedule@ must see exactly one calendar of {owner}'s, Bookings");
         };
         let rights = &bookings["myRights"];
         let right = |r: &str| rights[r].as_bool() == Some(true);
-        let only = right("mayReadItems")
-            && right("mayWriteAll")
-            && !right("mayShare")
-            && !right("mayDelete");
         ensure!(
-            only,
+            right("mayReadItems")
+                && right("mayWriteAll")
+                && !right("mayShare")
+                && !right("mayDelete"),
             "Bookings must be shared with schedule@ to read and write items, and no more: {rights}"
         );
         let bookings = bookings["id"].as_str().context("Bookings' id")?.into();
-        Ok(Stalwart { http, schedule, counted, owner, bookings })
+
+        let mut groups = vec![];
+        for group in &policy.groups {
+            let found = http
+                .call(
+                    &login,
+                    "Principal/query",
+                    json!({"accountId": login.account, "filter": {"email": group}}),
+                )
+                .await?;
+            let [id] = found["ids"].as_array().map(Vec::as_slice).unwrap_or_default() else {
+                bail!("no account {group}");
+            };
+            groups.push(id.as_str().context("a principal id")?.into());
+        }
+        Ok(Stalwart { http, login, owner, owner_id, bookings, groups })
     }
 }
 
 impl Http {
-    /// Signs in with the app password LoadCredential gave, and checks the account holds exactly
-    /// `held` and its session lists only its own account and `others`; returns it with its
-    /// account id, and the others' ids by name.
-    async fn sign_in(
-        &self,
-        policy: &Policy,
-        credentials: &Path,
-        local: String,
-        held: &[&str],
-        others: Vec<&str>,
-    ) -> Result<(Login, BTreeMap<String, String>)> {
-        let address = format!("{local}@{}", policy.owner.domain());
-        let secret = std::fs::read_to_string(credentials.join(&local))
-            .with_context(|| format!("{local}'s app password"))?;
-        let auth = format!("Basic {}", STANDARD.encode(format!("{address}:{}", secret.trim())));
-        let mut login = Login { address, account: String::new(), auth };
-        let permissions: BTreeSet<String> =
-            serde_json::from_value(self.get(&login, "/api/account").await?["permissions"].take())?;
-        let address = &login.address;
-        ensure!(
-            permissions.iter().eq(held.iter().copied().collect::<BTreeSet<_>>().iter()),
-            "{address} holds {permissions:?}, not {held:?}"
-        );
-        let session = self.get(&login, "/jmap/session").await?;
-        let accounts = session["accounts"].as_object().context("a JMAP session")?;
-        let mut seen: BTreeMap<String, String> = accounts
-            .iter()
-            .map(|(id, a)| (a["name"].as_str().unwrap_or_default().into(), id.clone()))
-            .collect();
-        let wanted: BTreeSet<&str> = others.into_iter().chain([address.as_str()]).collect();
-        ensure!(
-            seen.keys().map(String::as_str).eq(wanted.iter().copied()),
-            "{address} sees {:?}, not {wanted:?}",
-            seen.keys()
-        );
-        login.account = seen.remove(address).expect("its own account");
-        Ok((login, seen))
-    }
-
     async fn send(
         &self,
         login: &Login,
@@ -181,7 +177,7 @@ impl Http {
         .await??;
         if status == StatusCode::UNAUTHORIZED {
             yakery_log::warn!(
-                "{} was refused; exiting to read the app passwords again",
+                "{} was refused; exiting to read the app password again",
                 login.address
             );
             std::process::exit(75);
@@ -217,16 +213,21 @@ struct Busy {
 }
 
 impl Calendar for Stalwart {
-    async fn busy(&self, period: Period) -> Result<Vec<(Period, usize)>> {
+    fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    async fn busy(&self, period: Period) -> Result<Vec<Period>> {
         let mut found = vec![];
-        for (i, login) in self.counted.iter().enumerate() {
+        for principal in iter::once(&self.owner_id).chain(&self.groups) {
             for week in weeks(period) {
-                let args = json!({"accountId": login.account, "id": self.owner, "utcStart": week.start, "utcEnd": week.end});
+                let args = json!({"accountId": self.login.account, "id": principal, "utcStart": week.start, "utcEnd": week.end});
                 let list: Vec<Busy> = serde_json::from_value(
-                    self.http.call(login, "Principal/getAvailability", args).await?["list"].take(),
+                    self.http.call(&self.login, "Principal/getAvailability", args).await?["list"]
+                        .take(),
                 )?;
                 found.extend(
-                    list.into_iter().map(|b| (Period { start: b.utc_start, end: b.utc_end }, i)),
+                    list.into_iter().map(|b| Period { start: b.utc_start, end: b.utc_end }),
                 );
             }
         }
@@ -235,8 +236,8 @@ impl Calendar for Stalwart {
 
     async fn create(&self, mut event: Value) -> Result<Created> {
         event["calendarIds"] = json!({&self.bookings: true});
-        let args = json!({"accountId": self.owner, "sendSchedulingMessages": true, "create": {"b": event}});
-        Ok(created(&self.http.call(&self.schedule, "CalendarEvent/set", args).await?))
+        let args = json!({"accountId": self.owner_id, "sendSchedulingMessages": true, "create": {"b": event}});
+        Ok(created(&self.http.call(&self.login, "CalendarEvent/set", args).await?))
     }
 }
 

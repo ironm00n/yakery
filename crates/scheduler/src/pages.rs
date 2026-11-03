@@ -98,13 +98,7 @@ pub fn message(viewer: &Viewer, title: &str, text: &str) -> Markup {
     page(viewer, title, &[], html! { p { (text) } })
 }
 
-pub fn week(
-    viewer: &Viewer,
-    n: u8,
-    monday: Date,
-    blocks: &[(Period, Option<String>)],
-    open: &[Period],
-) -> Markup {
+pub fn week(viewer: &Viewer, n: u8, monday: Date, blocks: &[Period], open: &[Period]) -> Markup {
     let half = SignedDuration::from_mins(30);
     let row = TimeRound::new().smallest(Unit::Minute).increment(30).mode(RoundMode::Trunc);
     let starts = |p: Period| {
@@ -121,6 +115,9 @@ pub fn week(
     let cell = |day: Date, row: Time| {
         Some(Period::starting(viewer.zone.to_timestamp(day.to_datetime(row)).ok()?, half))
     };
+    let meets = |slot: Option<Period>, periods: &[Period]| {
+        slot.is_some_and(|s| periods.iter().any(|p| p.overlaps(s)))
+    };
     let nav = |to: u8, text: &str| html! { a href=(viewer.query(&[("week", to.to_string())])) { (text) } " " };
     let body = html! {
         p {
@@ -135,11 +132,9 @@ pub fn week(
                         th { (row.strftime("%H:%M")) }
                         @for day in &days {
                             @let slot = cell(*day, *row);
-                            @match slot.and_then(|s| blocks.iter().find(|(b, _)| b.overlaps(s))) {
-                                Some((_, label)) => td.busy { (label.as_deref().unwrap_or("busy")) },
-                                None if slot.is_some_and(|s| open.iter().any(|o| o.overlaps(s))) => td {},
-                                None => td.closed {},
-                            }
+                            @if meets(slot, blocks) { td.busy { "busy" } }
+                            @else if meets(slot, open) { td {} }
+                            @else { td.closed {} }
                         }
                     }
                 }
@@ -204,10 +199,11 @@ pub fn booked(
     start: Timestamp,
     length: SignedDuration,
     booker: &Booker,
+    owner: &str,
 ) -> Markup {
     let body = html! {
         p { (viewer.when(start, length)) }
-        p { (booker.name) ", an invitation from " (POLICY.owner) " should reach " (booker.address) "." }
+        p { (booker.name) ", an invitation from " (owner) " should reach " (booker.address) "." }
     };
     page(viewer, "Booked", &[], body)
 }

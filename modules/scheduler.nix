@@ -1,5 +1,5 @@
 # The scheduler's two services and three sockets: the front serves nginx on a socket it is
-# handed and can open no IP socket of its own; the core holds the app passwords and the links.
+# handed and can open no IP socket of its own; the core holds the app password and the links.
 {
   config,
   lib,
@@ -9,26 +9,21 @@
 let
   cfg = config.services.scheduler;
   inherit (lib) mkOption types;
-  accounts = import ../crates/scheduler/accounts.nix {
-    inherit lib;
-    calendars = lib.attrNames cfg.calendars;
-  };
   policy = {
+    account = {
+      address = cfg.account;
+      inherit ((import ../crates/scheduler/accounts.nix).core) permissions;
+    };
     inherit (cfg)
-      owner
+      groups
       host
       stalwart
       zone
       hours
-      showCalendars
       ;
     notice = "PT${toString cfg.noticeHours}H";
     horizonWeeks = cfg.horizonWeeks;
     gap = "PT${toString cfg.gapMinutes}M";
-    calendars = lib.mapAttrsToList (key: c: {
-      inherit key;
-      inherit (c) label;
-    }) cfg.calendars;
   };
   hardened = {
     NoNewPrivileges = true;
@@ -54,7 +49,19 @@ in
 {
   options.services.scheduler = {
     enable = lib.mkEnableOption "schedule pages and one-time booking links on Stalwart";
-    owner = mkOption { type = types.str; };
+    account = mkOption {
+      type = types.str;
+      description = "The address the core signs in as; whoever shares a Bookings calendar with it is whose busy time is shown and who is booked.";
+    };
+    appPassword = mkOption {
+      type = types.str;
+      description = "File holding the account's app password.";
+    };
+    groups = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      description = "Addresses of groups whose calendars shared with the account count too.";
+    };
     host = mkOption { type = types.str; };
     stalwart = mkOption {
       type = types.str;
@@ -87,17 +94,6 @@ in
       type = types.ints.between 5 1440;
       default = 5;
     };
-    calendars = mkOption {
-      type = types.attrsOf (types.submodule { options.label = mkOption { type = types.str; }; });
-    };
-    showCalendars = mkOption {
-      type = types.bool;
-      default = true;
-    };
-    appPassword = mkOption {
-      type = types.functionTo types.str;
-      description = "The file holding an account's app password, by its local part.";
-    };
     port = mkOption {
       type = types.port;
       default = 8931;
@@ -115,12 +111,6 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = [
-      {
-        assertion = cfg.calendars != { };
-        message = "services.scheduler.calendars counts none of the owner's calendars, so every bookable hour would show free.";
-      }
-    ];
     environment.systemPackages = [ cfg.package ];
     users.groups.scheduler-front = { };
     users.users = lib.genAttrs [ "scheduler-front" "scheduler-core" ] (name: {
@@ -192,7 +182,7 @@ in
         ];
         ExecStart = "${lib.getExe cfg.package} core";
         StateDirectory = "scheduler";
-        LoadCredential = map (name: "${name}:${cfg.appPassword name}") (lib.attrNames accounts.core);
+        LoadCredential = "${policy.account.address}:${cfg.appPassword}";
         Restart = "on-failure";
         RestartSec = 5;
         RestrictAddressFamilies = [

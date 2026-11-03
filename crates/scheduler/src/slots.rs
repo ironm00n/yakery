@@ -132,10 +132,8 @@ pub fn open(policy: &Policy, monday: Date, now: Timestamp) -> Vec<Period> {
 }
 
 /// Busy time as the public page may show it: clipped to `open`.
-pub fn shown<L: Copy>(open: &[Period], busy: &[(Period, L)]) -> Vec<(Period, L)> {
-    busy.iter()
-        .flat_map(|&(b, label)| open.iter().filter_map(move |w| Some((b.clip(*w)?, label))))
-        .collect()
+pub fn shown(open: &[Period], busy: &[Period]) -> Vec<Period> {
+    busy.iter().flat_map(|b| open.iter().filter_map(|w| b.clip(*w))).collect()
 }
 
 /// Splits a read into pieces of at most a week, as Stalwart fails an answer with too many

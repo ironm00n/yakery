@@ -23,7 +23,7 @@ use crate::store::Store;
 
 const CACHED: i64 = 60;
 
-type Weeks = BTreeMap<Date, (Timestamp, Vec<(Period, usize)>)>;
+type Weeks = BTreeMap<Date, (Timestamp, Vec<Period>)>;
 
 pub struct Core<C> {
     calendar: C,
@@ -84,8 +84,8 @@ impl<C: Calendar> Core<C> {
             return Ok(());
         }
         store.apply(|links| links.sending(digest, now))?;
-        let created =
-            self.calendar.create(event(self.policy, digest, &limits, &claim.booking)).await?;
+        let event = event(self.policy, self.calendar.owner(), digest, &limits, &claim.booking);
+        let created = self.calendar.create(event).await?;
         crash_point("created");
         store.apply(|links| Ok(links.settle(digest, created)))
     }
@@ -125,16 +125,12 @@ impl<C: Calendar> Core<C> {
                 busy
             }
         };
-        let label =
-            |i: usize| self.policy.show_calendars.then(|| self.policy.calendars[i].label.clone());
         let open = open(self.policy, monday, now);
-        let blocks = shown(&open, &busy).into_iter().map(|(p, i)| (p, label(i))).collect();
-        Ok(FrontAnswer::Week { monday, blocks, open })
+        Ok(FrontAnswer::Week { monday, blocks: shown(&open, &busy), open })
     }
 
     async fn free(&self, limits: &Limits, links: &Links) -> Result<Vec<Timestamp>> {
         let busy = self.calendar.busy(reach(self.policy, limits)).await?;
-        let busy: Vec<Period> = busy.into_iter().map(|(p, _)| p).collect();
         Ok(slots(self.policy, limits, (self.clock)(), &busy, &links.taken()))
     }
 
@@ -192,6 +188,7 @@ impl<C: Calendar> Core<C> {
                 start,
                 duration: link.limits.duration,
                 booker: booking.booker,
+                owner: self.calendar.owner().into(),
             },
             _ => FrontAnswer::Refused(Refusal::SlotGone),
         })
@@ -222,11 +219,11 @@ impl<C: Calendar> Core<C> {
 
 pub async fn run(policy: &'static Policy, mut sockets: Sockets) -> Result<()> {
     let credentials = PathBuf::from(
-        std::env::var_os("CREDENTIALS_DIRECTORY")
-            .context("the app passwords, by LoadCredential")?,
+        std::env::var_os("CREDENTIALS_DIRECTORY").context("the app password, by LoadCredential")?,
     );
     let state = PathBuf::from(std::env::var_os("STATE_DIRECTORY").context("StateDirectory")?);
-    let stalwart = Stalwart::connect(policy, &credentials).await?;
+    let secret = credentials.join(policy.account.address.to_string());
+    let stalwart = Stalwart::connect(policy, &secret).await?;
     let core: &'static Core<Stalwart> =
         Box::leak(Box::new(Core::new(stalwart, Store::open(&state)?, policy, Timestamp::now)));
     core.reconcile().await;

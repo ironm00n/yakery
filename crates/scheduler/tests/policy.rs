@@ -1,18 +1,17 @@
 use super::*;
 
-/// The bundle's defaults, for an owner in New York with two counted calendars: the policy tests
-/// compile in.
+/// The bundle's defaults, for an owner in New York with one group of synced calendars: the
+/// policy tests compile in.
 pub const FIXTURE: &str = r#"{
-    "owner": "owen@example.test",
+    "account": {"address": "schedule@example.test", "permissions": ["authenticate", "jmapPrincipalQuery"]},
+    "groups": ["calendars@example.test"],
     "host": "schedule.example.test",
     "stalwart": "127.0.0.1:8080",
     "zone": "America/New_York",
     "hours": ["mon 10:00-18:00", "tue 10:00-18:00", "wed 10:00-18:00", "thu 10:00-18:00", "fri 10:00-18:00"],
     "notice": "PT4H",
     "horizonWeeks": 4,
-    "gap": "PT5M",
-    "calendars": [{"key": "work", "label": "Work"}, {"key": "personal", "label": "Personal"}],
-    "showCalendars": true
+    "gap": "PT5M"
 }"#;
 
 pub fn fixture() -> Policy {

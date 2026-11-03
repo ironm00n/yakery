@@ -34,8 +34,14 @@ fn every_page_is_script_free() {
     let hour = Period { start: at("2026-10-26T14:00:00Z"), end: at("2026-10-26T15:00:00Z") };
     let day = Period { start: at("2026-10-26T14:00:00Z"), end: at("2026-10-26T22:00:00Z") };
     for page in [
-        week(&viewer, 1, "2026-10-26".parse().unwrap(), &[(hour, Some("Work".into()))], &[day]),
-        booked(&viewer, hour.start, SignedDuration::from_mins(30), &Checked::new(form).unwrap()),
+        week(&viewer, 1, "2026-10-26".parse().unwrap(), &[hour], &[day]),
+        booked(
+            &viewer,
+            hour.start,
+            SignedDuration::from_mins(30),
+            &Checked::new(form).unwrap(),
+            "owen@example.test",
+        ),
         message(&viewer, "Not found", "No page here."),
     ]
     .map(|m| m.into_string())
@@ -82,10 +88,8 @@ fn the_week_marks_busy_half_hours_in_the_viewers_zone() {
     let hour = Period { start: at("2026-10-26T14:00:00Z"), end: at("2026-10-26T15:00:00Z") };
     let day = Period { start: at("2026-10-26T14:00:00Z"), end: at("2026-10-26T22:00:00Z") };
     let london = Viewer::new(Some("Europe/London"));
-    let page =
-        week(&london, 1, "2026-10-26".parse().unwrap(), &[(hour, Some("Work".into()))], &[day]);
-    let page = page.into_string();
-    assert_eq!(page.matches(r#"<td class="busy">Work</td>"#).count(), 2, "{page}");
+    let page = week(&london, 1, "2026-10-26".parse().unwrap(), &[hour], &[day]).into_string();
+    assert_eq!(page.matches(r#"<td class="busy">busy</td>"#).count(), 2, "{page}");
     assert!(page.contains("<th>14:00</th>") && page.contains("<th>21:30</th>"));
     assert!(!page.contains("<th>22:00</th>") && !page.contains("<th>13:30</th>"));
 }

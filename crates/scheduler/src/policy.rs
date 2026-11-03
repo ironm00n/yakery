@@ -1,6 +1,7 @@
 //! What the scheduler books by, compiled in from the Nix bundle so the core and `scheduler link`
 //! can't disagree on it.
 
+use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
 use anyhow::{Context, ensure};
@@ -63,16 +64,20 @@ text! {
     });
 }
 
+/// The program account the core signs in as, and every permission it may hold.
 #[derive(Debug, Deserialize)]
-pub struct Counted {
-    pub key: String,
-    pub label: String,
+#[serde(deny_unknown_fields)]
+pub struct Account {
+    pub address: Address,
+    pub permissions: BTreeSet<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Policy {
-    pub owner: Address,
+    pub account: Account,
+    /// Groups whose calendars count, beside the calendars of whoever shared Bookings.
+    pub groups: Vec<Address>,
     pub host: String,
     pub stalwart: String,
     #[serde(deserialize_with = "zone")]
@@ -81,8 +86,6 @@ pub struct Policy {
     pub notice: SignedDuration,
     pub horizon_weeks: u8,
     pub gap: Gap,
-    pub calendars: Vec<Counted>,
-    pub show_calendars: bool,
 }
 
 fn zone<'de, D: Deserializer<'de>>(d: D) -> Result<TimeZone, D::Error> {
