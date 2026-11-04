@@ -64,3 +64,7 @@ nix develop .
 END'
 check PASS "$NOGIT" "(cd $GIT && nix develop -c true)"
 check PASS "$NOGIT" "nix eval --apply 'x: x' nixpkgs#lib.version"
+check PASS "$NOGIT" "nix build --impure --no-link --expr '(import /abs/path/run.nix)'"
+check PASS "$NOGIT" 'nix build -f ./default.nix'
+check PASS "$NOGIT" 'nix develop --file shell.nix -c true'
+check DENY "$NOGIT" "nix build -f default.nix --override-input dep path:$NOGIT"

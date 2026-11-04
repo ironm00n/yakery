@@ -4,7 +4,7 @@
 # directory into the store, build outputs included; jj's secondary workspaces have no `.git`, so
 # `nix develop -c cargo test` there made 36 copies of up to 4.1G each on 10-02 (84G). An explicit
 # `path:`/`file:` ref copies the whole tree even inside a repo. `git+file`, registry and remote
-# refs pass. `nix` is checked wherever it is a word of a command, so wrappers such as
+# refs pass, as do `--expr` and `--file`, which name no flake. `nix` is checked wherever it is a word of a command, so wrappers such as
 # `np-heavy.sh nix develop` count, but not inside a quoted argument (friction 103); a script that
 # calls nix itself is not seen.
 
@@ -31,7 +31,7 @@ deny() {
 FLAKE_SUBCOMMANDS='develop|build|shell|run|print-dev-env|eval|flake|bundle|search|profile'
 ONE_ARG_FLAGS=' --profile -I --include --max-jobs -j --cores --log-format --store --eval-store
   --system --reference-lock-file --output-lock-file --inputs-from -o --out-link --keep -k --unset
-  -u --phase --update-input --expr --file -f --priority --apply '
+  -u --phase --update-input --priority --apply '
 TWO_ARG_FLAGS=' --option --override-input --arg --argstr --redirect --override-flake '
 
 check_dir() {
@@ -62,6 +62,7 @@ check_nix() {
     ((skip > 0)) && { skip=$((skip - 1)); continue; }
     case $a in
       -c | --command | --) break ;;
+      --expr | --file | -f) return ;;
       -*)
         [[ $ONE_ARG_FLAGS == *" $a "* ]] && skip=1
         [[ $TWO_ARG_FLAGS == *" $a "* ]] && skip=2
