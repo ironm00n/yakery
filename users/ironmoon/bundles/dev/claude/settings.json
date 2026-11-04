@@ -210,7 +210,8 @@
     "coq-lsp@local-coq-lsp": true,
     "typst-lsp@local-typst-lsp": true,
     "cc-plugin-you-should-know@builtin": true,
-    "lua-lsp@claude-plugins-official": true
+    "lua-lsp@claude-plugins-official": true,
+    "legal@synced": false
   },
   "extraKnownMarketplaces": {
     "local-coq-lsp": {
