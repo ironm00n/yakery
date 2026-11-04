@@ -19,9 +19,10 @@ use crate::{
 };
 
 #[derive(clap::Args)]
+#[command(group(ArgGroup::new("recipients").required(true).multiple(true).args(["to", "all"])))]
 #[command(group(ArgGroup::new("about").required(true).multiple(true).args(["subject", "reply"])))]
 pub struct Args {
-    #[arg(long, required_unless_present = "all")]
+    #[arg(long)]
     pub to: Vec<Address>,
     #[arg(long)]
     pub cc: Vec<Address>,

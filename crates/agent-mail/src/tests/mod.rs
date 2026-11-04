@@ -1,6 +1,7 @@
 mod auth;
 mod authority;
 mod claims;
+mod cli;
 mod files;
 mod text;
 mod wire;
