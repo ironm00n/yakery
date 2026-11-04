@@ -5,7 +5,7 @@
 # inside the caller's cwd and that cwd is not a root other sessions share; a dead PID passes.
 
 set -uo pipefail
-shopt -s extglob
+. "${BASH_SOURCE[0]%/*}/lib/shell-line.sh"
 
 payload=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
@@ -24,17 +24,6 @@ deny() {
   exit 0
 }
 by_pattern() { deny "\`$1\` picks processes by pattern, and other sessions' processes match it too."; }
-
-# One simple command per line: heredoc bodies dropped, quoted words masked (a bare "$x" or "123"
-# unquoted), redirections dropped, substitutions left as a non-literal `$` argument.
-segments() {
-  awk 'w != "" { if ($0 ~ "^\t*" w "$") w = ""; next }
-       { print }
-       match($0, /(^|[^<])<<-?[[:space:]]*["\047]?[A-Za-z_][A-Za-z0-9_]*/) {
-         w = substr($0, RSTART, RLENGTH); sub(/^[^<]?<<-?[[:space:]]*["\047]?/, "", w) }' <<<"$1" |
-    sed -E -e 's/"(\$\{?[[:alnum:]_!]+\}?|[0-9]+)"/\1/g' -e "s/'[^']*'/Q/g" -e 's/"([^"\\]|\\.)*"/Q/g' \
-      -e 's/[0-9]*[<>]+&?[[:space:]]*[^[:space:];&|()]*//g' -e 's/\$\(|`/$\n/g' -e 's/&&|\|\||[;&|()]/\n/g'
-}
 
 mapfile -t shared < <(realpath -m / "$HOME" "$HOME/workspace/redox" "$HOME/workspace/claude" "$HOME"/research/* /etc/nixos "$HOME/tmp/worktree" /tmp)
 from_bang=" $(grep -Eo '\b[A-Za-z_][A-Za-z0-9_]*=\$!' <<<"$cmd" | sed 's/=.*//' | tr '\n' ' ')"
@@ -77,15 +66,7 @@ check_kill() {
 }
 
 while read -ra w; do
-  fed=
-  while ((${#w[@]})); do
-    case ${w[0]} in
-      sudo | command | builtin | exec | nohup | setsid | nice | time | env | then | do | else | '!' | '{' | -* | *=*) w=("${w[@]:1}") ;;
-      timeout) w=("${w[@]:2}") ;;
-      xargs) fed=1; w=("${w[@]:1}") ;;
-      *) [[ -n $fed && ${w[0]##*/} != @(kill|pkill|killall) ]] && w=("${w[@]:1}") || break ;;
-    esac
-  done
+  command_word 'kill|pkill|killall'
   ((${#w[@]})) || continue
   case ${w[0]##*/} in
     pkill | killall | skill) by_pattern "${w[0]##*/}" ;;

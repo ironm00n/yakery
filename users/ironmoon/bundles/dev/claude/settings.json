@@ -78,6 +78,10 @@
           {
             "type": "command",
             "command": "bash \"$HOME/.claude/hooks/guard-kill.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/guard-jj-checkout.sh\""
           }
         ]
       },
