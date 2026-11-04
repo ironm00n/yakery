@@ -52,6 +52,7 @@ in
     home.packages = [
       claude-code
       agent-mail
+      pkgs.typst
     ];
 
     xdg.configFile."agent-mail/config.json".text = builtins.toJSON {
