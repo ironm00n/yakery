@@ -194,12 +194,33 @@ impl Records {
         topics: Vec<Topic>,
         threads: Vec<String>,
     ) -> Result<()> {
+        self.change(session, |watched| {
+            watched.topics.extend(topics);
+            watched.threads.extend(threads);
+        })
+    }
+
+    /// Takes exactly the topics and threads named out of `session`'s record, and returns those it did not hold.
+    pub fn forget(
+        &self,
+        session: &SessionId,
+        topics: Vec<Topic>,
+        threads: Vec<String>,
+    ) -> Result<Watched> {
+        let mut absent = Watched::default();
+        self.change(session, |watched| {
+            absent.topics = topics.into_iter().filter(|t| !watched.topics.remove(t)).collect();
+            absent.threads = threads.into_iter().filter(|t| !watched.threads.remove(t)).collect();
+        })?;
+        Ok(absent)
+    }
+
+    fn change(&self, session: &SessionId, edit: impl FnOnce(&mut Watched)) -> Result<()> {
         let lock = self.0.file("lock")?;
         lock.lock().context("locking the session records")?;
         let name = format!("{session}.json");
         let mut watched: Watched = self.0.load(&name)?;
-        watched.topics.extend(topics);
-        watched.threads.extend(threads);
+        edit(&mut watched);
         self.0.save(&name, &watched)
     }
 }

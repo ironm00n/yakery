@@ -7,7 +7,7 @@ use lol_html::{RewriteStrSettings, element, rewrite_str};
 use private::now;
 use text::Address;
 
-use super::succeed;
+use super::{succeed, wait::Watching};
 use crate::{
     address::{MessageId, Topic},
     mail::{Addr, Current, Email, Keyword, Mail, keywords},
@@ -47,6 +47,10 @@ pub struct Args {
     /// Content-* fields and MIME-Version; agent-mail writes every other field and adds no signature.
     #[arg(long, value_name = "FILE", conflicts_with = "attach")]
     pub mime: Option<PathBuf>,
+    /// Record neither the topic nor the thread for this Claude Code session's `wait --session`, so the replies reach
+    /// whichever session watches them.
+    #[arg(long)]
+    pub no_watch: bool,
 }
 
 enum Content {
@@ -211,6 +215,14 @@ pub fn sender(login: &Login, topic: Option<&Topic>, parent: Option<&Email>) -> R
     }
 }
 
+/// What a send from `from` records for its session's `wait --session`: its topic and its thread, unless --no-watch.
+pub fn watching(args: &Args, login: &Login, from: &Address, draft: &Current) -> Option<Watching> {
+    (!args.no_watch).then(|| Watching {
+        topic: login.topic(&from.to_string()).into_iter().collect(),
+        thread: vec![draft.as_str().to_owned()],
+    })
+}
+
 pub fn head(
     to: &Recipients,
     subject: Option<&str>,
@@ -312,11 +324,11 @@ pub async fn run(args: Args) -> Result<ExitCode> {
             }
         }
     }
-    if let Some(s) = session() {
-        let topics = login.topic(&to.from.to_string()).into_iter().collect();
-        let recorded = s.session_id.parse().and_then(|id| {
-            mail.conn.auth.store.records()?.record(&id, topics, vec![draft.as_str().to_owned()])
-        });
+    if let (Some(s), Some(watch)) = (session(), watching(&args, login, &to.from, &draft)) {
+        let recorded = s
+            .session_id
+            .parse()
+            .and_then(|id| mail.conn.auth.store.records()?.record(&id, watch.topic, watch.thread));
         if let Err(e) = recorded {
             warn!("sent, but recording its topic and thread for this session failed: {e:#}");
         }

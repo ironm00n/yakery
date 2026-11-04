@@ -115,6 +115,8 @@ impl Current {
 
 pub type Mark = (Current, &'static [Keyword]);
 
+/// Two windows of Stalwart's default request limit, 1000 a minute for each account.
+pub const BUSY_FOR: Duration = Duration::from_secs(120);
 const PING: Duration = Duration::from_secs(30);
 const SILENCE: Duration = Duration::from_secs(PING.as_secs() + 5);
 
@@ -146,10 +148,12 @@ impl Conn {
         Ok(Conn { auth, web, token })
     }
 
-    /// Runs `op` with the session's token. After a refused token it signs in again and runs it once more, unless
-    /// `locked`, when the refusal comes back so the lock can be released first; over Stalwart's limit it backs off.
+    /// Runs `op` with the session's token. After a refused token it signs in again and runs it once more; over
+    /// Stalwart's limits it backs off, for no less than any Retry-After, and gives up before [`BUSY_FOR`] of pauses.
+    /// When `locked`, either refusal comes back at once, so the lock can be released first.
     pub async fn retry<T>(&self, locked: bool, op: impl AsyncFn(Secret) -> Result<T>) -> Result<T> {
-        let (mut signed_in, mut backoff) = (locked, Duration::from_millis(500));
+        let (mut signed_in, mut backoff, mut waited) =
+            (locked, Duration::from_millis(500), Duration::ZERO);
         loop {
             let used = self.token.borrow().clone();
             let e = match op(used.clone()).await {
@@ -161,9 +165,18 @@ impl Conn {
                     self.auth.reject(&used).await?;
                     (*self.token.borrow_mut(), signed_in) = (self.auth.access().await?.token, true);
                 }
-                Failure::Busy if backoff <= Duration::from_secs(16) => {
-                    tokio::time::sleep(backoff + Duration::from_millis(below(250)? as u64)).await;
-                    backoff *= 2;
+                Failure::Busy(after) if !locked => {
+                    let pause = after.unwrap_or_default().max(backoff)
+                        + Duration::from_millis(below(250)? as u64);
+                    if waited + pause > BUSY_FOR {
+                        return Err(e.context(format!(
+                            "stalwart stayed over its limits, and another retry would wait past {}s in all",
+                            BUSY_FOR.as_secs()
+                        )));
+                    }
+                    tokio::time::sleep(pause).await;
+                    (waited, backoff) =
+                        (waited + pause, (backoff * 2).min(Duration::from_secs(16)));
                 }
                 _ => return Err(e),
             }
@@ -338,14 +351,26 @@ impl Mail {
         }
     }
 
-    /// Stalwart refuses an id outside its alphabet in Email/query; Email/get just finds no such email.
     pub async fn current(&self, id: &str) -> Result<Option<Current>> {
+        Ok(self.currents(&[id.to_owned()]).await?.remove(0))
+    }
+
+    /// The id each of `ids` has now, one query each, as many to a request as Stalwart takes, since its limit counts
+    /// requests. Stalwart refuses an id outside its alphabet in Email/query; Email/get just finds no such email.
+    pub async fn currents(&self, ids: &[String]) -> Result<Vec<Option<Current>>> {
         const FIND: Call = Call("Email/query", Some("invalidArguments"));
-        if jmap_id(id).is_err() {
-            return Ok(None);
+        let valid: Vec<&String> = ids.iter().filter(|id| jmap_id(id).is_ok()).collect();
+        let mut now = HashMap::new();
+        for chunk in valid.chunks(self.limits[2]) {
+            let calls: Vec<_> =
+                chunk.iter().map(|id| (FIND, json!({ "filter": { "id": [id] } }))).collect();
+            for (id, answer) in chunk.iter().zip(self.answers(false, &calls).await?) {
+                if let Some(found) = answer?.and_then(|f| f.ids.into_iter().next()) {
+                    now.insert(*id, Current::new(&found)?);
+                }
+            }
         }
-        let found = self.answer(false, FIND, json!({ "filter": { "id": [id] } })).await?;
-        found.and_then(|f| f.ids.into_iter().next()).map(|id| Current::new(&id)).transpose()
+        Ok(ids.iter().map(|id| now.get(id).cloned()).collect())
     }
 
     pub async fn email<V: View>(&self, id: &str) -> Result<(Current, V)> {

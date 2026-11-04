@@ -23,7 +23,7 @@ use crate::{
     auth::{Auth, Http},
     cmd::{read, wait},
     listeners::Heartbeat,
-    mail::{Conn, Current, Email, Keyword, Mail},
+    mail::{BUSY_FOR, Conn, Current, Email, Keyword, Mail},
     out::{Leftover, Outbox},
     policy::Recipients,
     store::{Access, PasswordFile, Store, Tokens},
@@ -147,10 +147,13 @@ fn seen(r: &Request) -> String {
 
 const LIMIT: &str =
     r#"{"type":"urn:ietf:params:jmap:error:limit","limit":"maxConcurrentRequests"}"#;
+const TOO_MANY: &str = r#"{"type":"about:blank","status":429,"title":"Too Many Requests","detail":"Your request has been rate limited. Please try again in a few seconds."}"#;
 
 pub enum Canned {
     Answer(Value),
     Http(u16),
+    /// Refused over the request limit, as Stalwart does, asking for a retry after this many seconds.
+    Limited(u64),
     /// Answered from the inbox.
     Pass,
     /// Written, but answered 504.
@@ -263,6 +266,11 @@ impl Stalwart {
                     let answered = match canned.map(|i| self.canned.remove(i).1) {
                         Some(Canned::Http(status)) => {
                             return reply(status, if status == 429 { LIMIT } else { "{}" });
+                        }
+                        Some(Canned::Limited(secs)) => {
+                            let mut limited = reply(429, TOO_MANY);
+                            limited.headers_mut().insert("retry-after", secs.into());
+                            return limited;
                         }
                         Some(Canned::Answer(args)) => Ok(args),
                         Some(Canned::Lost) => {
@@ -532,8 +540,68 @@ async fn stalwart_over_its_limit_is_waited_out_then_given_up_on() {
     assert!(
         start.elapsed() >= Duration::from_millis(3500) && start.elapsed() < Duration::from_secs(5)
     );
-    server.borrow_mut().canned.extend((0..7).map(|_| busy()));
-    assert_eq!(Failure::of(&mail.get::<Email>(&["a1"]).await.unwrap_err()), Failure::Busy);
+    let start = Instant::now();
+    server.borrow_mut().canned.extend((0..20).map(|_| busy()));
+    let busy = mail.get::<Email>(&["a1"]).await.unwrap_err();
+    assert_eq!(Failure::of(&busy), Failure::Busy(None));
+    assert!(start.elapsed() > Duration::from_secs(111) && start.elapsed() <= BUSY_FOR);
+    assert_eq!(
+        server.borrow().canned.len(),
+        8,
+        "12 tries: pauses doubling to 16 s, until another would pass 120 s"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn stalwart_over_its_request_limit_is_retried_after_it_asks_and_given_up_on_within_the_bound()
+{
+    let dir = Scratch::new("limited");
+    let (_wire, server, mail) = mail(&dir, Stalwart::new(vec![email("a1", json!({}))])).await;
+    let (mail, start) = (mail.unwrap(), Instant::now());
+    server.borrow_mut().canned.push(("Email/get", Canned::Limited(20)));
+    assert_eq!(mail.get::<Email>(&["a1"]).await.unwrap().len(), 1);
+    assert!(
+        start.elapsed() >= Duration::from_secs(20) && start.elapsed() < Duration::from_secs(21)
+    );
+
+    let start = Instant::now();
+    server.borrow_mut().canned.extend((0..10).map(|_| ("Email/get", Canned::Limited(59))));
+    let refused = mail.get::<Email>(&["a1"]).await.unwrap_err();
+    assert_eq!(Failure::of(&refused), Failure::Busy(Some(Duration::from_secs(59))));
+    assert!(
+        format!("{refused:#}").starts_with(
+            "stalwart stayed over its limits, and another retry would wait past 120s in all: \
+             stalwart: /jmap/: HTTP 429 Too Many Requests"
+        ),
+        "{refused:#}"
+    );
+    assert!(start.elapsed() >= Duration::from_secs(118) && start.elapsed() <= BUSY_FOR);
+
+    let start = Instant::now();
+    server.borrow_mut().canned = vec![("Email/set", Canned::Limited(59))];
+    let claimed = mail.each(true, &[(Current::test("a1"), &[Keyword::Seen][..])]).await;
+    assert!(Failure::of(&claimed.unwrap_err()).nothing_ran());
+    assert_eq!(start.elapsed(), Duration::ZERO, "under the lock, a refusal comes back at once");
+}
+
+#[tokio::test]
+async fn the_ids_threads_have_now_are_found_in_one_request() {
+    let dir = Scratch::new("currents");
+    let mut stalwart = Stalwart::new(vec![email("a1", json!({})), email("b2", json!({}))]);
+    stalwart.stale.insert("old".into(), "b2".into());
+    let (_wire, server, mail) = mail(&dir, stalwart).await;
+    let mail = mail.unwrap();
+    server.borrow_mut().log.clear();
+    let ids = ["a1", "old", "gone", "not an id"].map(String::from);
+    let now: Vec<Option<String>> = mail
+        .currents(&ids)
+        .await
+        .unwrap()
+        .iter()
+        .map(|c| c.as_ref().map(|c| c.as_str().to_owned()))
+        .collect();
+    assert_eq!(now, [Some("a1".into()), Some("b2".into()), None, None]);
+    assert_eq!(server.borrow().log, ["POST /jmap/ Email/query @t1"]);
 }
 
 #[tokio::test]
@@ -890,12 +958,16 @@ async fn a_download_is_bounded_by_its_progress_not_its_size() {
 async fn a_busy_server_is_checked_again_in_30_s_and_a_config_error_ends_the_wait() {
     let dir = Scratch::new("wait-busy");
     let mut stalwart = Stalwart::new(vec![email("a1", json!({}))]);
-    stalwart.canned.extend((0..7).map(|_| ("Email/get", Canned::Http(429))));
+    stalwart.canned.extend((0..13).map(|_| ("Email/get", Canned::Http(429))));
     let (_wire, server, mail) = mail(&dir, stalwart).await;
     let mail = mail.unwrap();
     let start = Instant::now();
     assert_eq!(wait::watch(&mail, watching(600)).await.unwrap(), ExitCode::SUCCESS);
-    assert!(start.elapsed() >= Duration::from_millis(31_500 + 30_000), "{:?}", start.elapsed());
+    assert!(
+        start.elapsed() >= Duration::from_millis(111_500 + 30_000 + 500),
+        "{:?}",
+        start.elapsed()
+    );
     server.borrow_mut().emails.clear();
     (server.borrow_mut().expire_on_stream, server.borrow_mut().refresh_refused) = (true, true);
     let ended = wait::watch(&mail, watching(600)).await.unwrap_err();

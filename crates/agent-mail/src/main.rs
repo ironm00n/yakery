@@ -72,7 +72,8 @@ pub enum Failure {
     Config,
     PasswordRefused,
     TokenRefused,
-    Busy,
+    /// Over one of Stalwart's limits, with how long it asked us to wait.
+    Busy(Option<std::time::Duration>),
     Unprocessed,
     Transient,
     Idle,
@@ -104,7 +105,7 @@ impl Failure {
     }
 
     pub fn nothing_ran(self) -> bool {
-        matches!(self, Failure::TokenRefused | Failure::Busy | Failure::Unprocessed)
+        matches!(self, Failure::TokenRefused | Failure::Busy(_) | Failure::Unprocessed)
     }
 }
 
@@ -145,6 +146,9 @@ commands! {
     Subscribe(wait::Subscribe) => wait::subscribe,
     /// List the topics and threads a Claude Code session's `wait --session` watches, this one's by default; read-only.
     Subscriptions(wait::Subscriptions) => wait::subscriptions,
+    /// Take exactly the topics and threads named out of what a Claude Code session's `wait --session` watches, this
+    /// one's by default. Until that session's mail-listener next scans, other waits still leave it Owen's word to them.
+    Unsubscribe(wait::Unsubscribe) => wait::unsubscribe,
     /// Mark mail handled, so wait neither delivers it nor lists it again.
     Done(read::Many) => read::done,
     /// Sign in if needed and show when the access token expires.

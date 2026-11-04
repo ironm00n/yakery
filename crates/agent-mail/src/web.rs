@@ -72,15 +72,21 @@ pub struct Page {
     pub url: Pinned,
     pub status: StatusCode,
     pub problem: bool,
+    /// Retry-After in seconds, the form Stalwart sends.
+    pub retry_after: Option<Duration>,
     pub text: String,
 }
 
 impl Page {
     pub async fn read(url: Pinned, response: Response) -> Result<Page> {
-        let kind = response.headers().get(header::CONTENT_TYPE);
-        let problem = kind.is_some_and(|t| t == "application/problem+json");
+        let field = |name| response.headers().get(name).and_then(|v| v.to_str().ok());
+        let problem = field(header::CONTENT_TYPE) == Some("application/problem+json");
+        let retry_after = field(header::RETRY_AFTER)
+            .and_then(|s| s.trim().parse().ok())
+            .map(Duration::from_secs);
         let status = response.status();
-        Ok(Page { url, status, problem, text: response.text().await.context("reading the reply")? })
+        let text = response.text().await.context("reading the reply")?;
+        Ok(Page { url, status, problem, retry_after, text })
     }
 
     pub fn jmap<T: DeserializeOwned>(self) -> Result<T> {
@@ -94,9 +100,11 @@ impl Page {
     pub fn failure(self) -> anyhow::Error {
         let what = format!("stalwart: {}: HTTP {}", self.url.path(), self.status);
         let problem: Value = serde_json::from_str(&self.text).unwrap_or_default();
+        let busy = self.status == StatusCode::TOO_MANY_REQUESTS
+            || self.problem && problem["limit"] == "maxConcurrentRequests";
         let kind = match (self.status.as_u16(), self.problem) {
             (401, _) => Failure::TokenRefused,
-            (_, true) if problem["limit"] == "maxConcurrentRequests" => Failure::Busy,
+            _ if busy => Failure::Busy(self.retry_after),
             (_, true) => Failure::Unprocessed,
             _ => Failure::Transient,
         };

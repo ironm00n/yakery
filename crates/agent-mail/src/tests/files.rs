@@ -201,3 +201,38 @@ fn subscriptions_says_what_a_session_recorded_and_records_nothing() {
     );
     assert_eq!(entries(&dir.0.join("locks/agent-mail/sessions")), ["a-1.json", "lock"]);
 }
+
+#[test]
+fn unsubscribe_takes_out_exactly_what_it_names_and_only_from_its_session() {
+    let dir = Scratch::new("unsubscribe");
+    let records = store(&dir, "agent@example.org").records().unwrap();
+    let (a, b): (SessionId, SessionId) = ("a-1".parse().unwrap(), "b-2".parse().unwrap());
+    let topics = || vec!["pool".parse().unwrap(), "pyret".parse().unwrap()];
+    let threads = || vec!["e1".to_owned(), "e2".to_owned()];
+    records.record(&a, topics(), threads()).unwrap();
+    records.record(&b, topics(), threads()).unwrap();
+    let named = wait::Watching {
+        topic: vec!["pool".parse().unwrap(), "absent".parse().unwrap()],
+        thread: vec!["e2".into(), "e9".into()],
+    };
+    assert_eq!(
+        wait::forget(&records, &a, named).unwrap(),
+        "session a-1 watches topics [pyret] and the threads of [e1]"
+    );
+    let absent = records
+        .forget(&a, vec!["pyret".parse().unwrap(), "pool".parse().unwrap()], vec![])
+        .unwrap();
+    assert_eq!(
+        wait::listed(&absent),
+        "topics [pool] and the threads of []",
+        "only what it held is gone"
+    );
+    assert_eq!(
+        wait::watches(&records, &a).unwrap(),
+        "session a-1 watches topics [] and the threads of [e1]"
+    );
+    assert_eq!(
+        wait::watches(&records, &b).unwrap(),
+        "session b-2 watches topics [pool, pyret] and the threads of [e1, e2]"
+    );
+}

@@ -95,22 +95,49 @@ pub struct Subscriptions {
     pub session: Option<SessionId>,
 }
 
+#[derive(clap::Args)]
+#[command(group(ArgGroup::new("watched").required(true).multiple(true).args(["topic", "thread"])))]
+pub struct Unsubscribe {
+    #[command(flatten)]
+    pub watching: Watching,
+    #[arg(long, value_name = "SESSION_ID")]
+    pub session: Option<SessionId>,
+}
+
 /// Records `given` for `id`'s `wait --session` and says what that session now watches.
 fn record(records: &Records, id: &SessionId, given: &Watching) -> Result<String> {
     records.record(id, given.topic.clone(), given.thread.clone())?;
     watches(records, id)
 }
 
-/// What `id`'s sends and subscribes recorded for its `wait --session`.
-pub fn watches(records: &Records, id: &SessionId) -> Result<String> {
-    let Watched { topics, threads } = records.of(id)?;
+pub fn listed(Watched { topics, threads }: &Watched) -> String {
     let topics: Vec<String> = topics.iter().map(Topic::to_string).collect();
     let threads: Vec<&str> = threads.iter().map(String::as_str).collect();
-    Ok(format!(
-        "session {id} watches topics [{}] and the threads of [{}]",
-        topics.join(", "),
-        threads.join(", ")
-    ))
+    format!("topics [{}] and the threads of [{}]", topics.join(", "), threads.join(", "))
+}
+
+/// What `id`'s sends and subscribes recorded for its `wait --session`.
+pub fn watches(records: &Records, id: &SessionId) -> Result<String> {
+    Ok(format!("session {id} watches {}", listed(&records.of(id)?)))
+}
+
+/// Takes `given` out of `id`'s record, warning of what it did not hold, and says what that session still watches.
+pub fn forget(records: &Records, id: &SessionId, given: Watching) -> Result<String> {
+    let absent = records.forget(id, given.topic, given.thread)?;
+    if !absent.topics.is_empty() || !absent.threads.is_empty() {
+        warn!("session {id} did not watch {}", listed(&absent));
+    }
+    watches(records, id)
+}
+
+/// The session `--session` names, else this one.
+fn target(named: Option<SessionId>, command: &str) -> Result<SessionId> {
+    let this =
+        || format!("without --session, {command} this Claude Code session's, and this is none");
+    match named {
+        Some(id) => Ok(id),
+        None => session().with_context(this)?.session_id.parse(),
+    }
 }
 
 /// Records what to watch for this Claude Code session without sending, for its `wait --session`.
@@ -123,14 +150,15 @@ pub async fn subscribe(args: Subscribe) -> Result<ExitCode> {
 
 /// Says what a Claude Code session's `wait --session` watches, this one's unless --session names another.
 pub async fn subscriptions(args: Subscriptions) -> Result<ExitCode> {
-    let id = match args.session {
-        Some(id) => id,
-        None => session()
-            .context("without --session, subscriptions lists this Claude Code session's, and this is none")?
-            .session_id
-            .parse()?,
-    };
+    let id = target(args.session, "subscriptions lists")?;
     succeed!("{}", watches(&Store::new(&Config::load()?.login)?.records()?, &id)?)
+}
+
+/// Takes topics and threads out of what a Claude Code session's `wait --session` watches, this one's unless --session
+/// names another.
+pub async fn unsubscribe(args: Unsubscribe) -> Result<ExitCode> {
+    let id = target(args.session, "unsubscribe edits")?;
+    succeed!("{}", forget(&Store::new(&Config::load()?.login)?.records()?, &id, args.watching)?)
 }
 
 /// While `session`'s mail-listener mod is live, records `given` for its wait and says so: that wait hands the session
@@ -222,8 +250,8 @@ impl Watch<'_> {
 
     async fn threads(&mut self) -> Result<HashSet<String>> {
         let mut current = vec![];
-        for start in &self.starts {
-            match self.mail.current(start).await? {
+        for (start, now) in self.starts.iter().zip(self.mail.currents(&self.starts).await?) {
+            match now {
                 Some(now) => current.push(now),
                 None if self.lost.insert(start.clone()) => {
                     note!("{start} is gone; no longer watching its thread")
@@ -376,9 +404,9 @@ impl Watch<'_> {
                 Failure::Dropped => {
                     (Duration::from_secs(1), false, format!("{e:#}; reopening the push stream"))
                 }
-                Failure::Busy => {
+                Failure::Busy(after) => {
                     let why = "stalwart stays over its request limit; checking again";
-                    (Duration::from_secs(30), false, why.into())
+                    (after.unwrap_or_default().max(Duration::from_secs(30)), false, why.into())
                 }
                 Failure::TokenRefused => sign_in("the access token expired".into()),
                 Failure::Unprocessed | Failure::Transient => sign_in(format!("{e:#}")),
