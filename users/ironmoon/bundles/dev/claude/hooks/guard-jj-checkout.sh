@@ -8,6 +8,7 @@
 
 set -uo pipefail
 . "${BASH_SOURCE[0]%/*}/lib/shell-line.sh"
+. "${BASH_SOURCE[0]%/*}/lib/jj.sh"
 
 payload=$(cat)
 command -v jq >/dev/null 2>&1 || exit 0
@@ -28,16 +29,6 @@ deny() {
   jq -cn --arg r "Blocked: $1 $instead" \
     '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'
   exit 0
-}
-
-repo_of() {
-  local d=$1
-  until [[ -d $d/.jj ]]; do
-    [[ $d == / ]] && return 1
-    d=${d%/*}
-    d=${d:-/}
-  done
-  echo "$d"
 }
 
 check_jj() {
