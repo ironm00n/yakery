@@ -53,3 +53,21 @@ check PASS "$me" 'cargo test --workspace'
 check PASS "$me" 'cat <<EOF > notes.md
 pkill -f measure.py
 EOF'
+
+root_cwd="$dir/workspace/claude"
+check PASS "$root_cwd" "KILL_GUARD_OVERRIDE='leaked test daemon, Owen approved' kill $other"
+check PASS "$root_cwd" "KILL_GUARD_OVERRIDE=leak kill -9 $other $dead"
+check PASS "$root_cwd" "env KILL_GUARD_OVERRIDE=leak kill $other"
+check DENY "$root_cwd" "KILL_GUARD_OVERRIDE= kill $other"
+check DENY "$root_cwd" "KILL_GUARD_OVERRIDE='' kill $other"
+check DENY "$root_cwd" "KILL_GUARD_OVERRIDE=leak true; kill $other"
+check DENY "$me" 'KILL_GUARD_OVERRIDE=leak pkill sleep'
+check DENY "$me" 'KILL_GUARD_OVERRIDE=leak kill $(pgrep sleep)'
+check DENY "$me" 'pgrep sleep | KILL_GUARD_OVERRIDE=leak xargs kill'
+check DENY "$me" 'KILL_GUARD_OVERRIDE=leak fuser -k 8080/tcp'
+check DENY "$me" 'KILL_GUARD_OVERRIDE=leak kill "$pid"'
+
+log="$dir/.local/state/claude/kill-overrides.log"
+grep -q "reason leaked test daemon, Owen approved" "$log" 2>/dev/null && grep -q "pid $other	sleep 300" "$log" &&
+  echo "ok   override log names the reason and the pid's command line" ||
+  echo "FAIL override log: $(cat "$log" 2>/dev/null || echo missing)"

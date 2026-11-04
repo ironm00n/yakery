@@ -3,6 +3,8 @@
 # refused, since other lanes' jobs match the same patterns: on 11-03 a lane's `pgrep -af ... ; kill`
 # took another lane's 6-minute gate test (friction 96). A literal PID passes when its /proc cwd is
 # inside the caller's cwd and that cwd is not a root other sessions share; a dead PID passes.
+# `KILL_GUARD_OVERRIDE='<reason>' kill <pid>...` skips the ownership check for literal PIDs only
+# and is logged (Owen 11-04 01:06: "change the guard so you can override with with an env var if needed").
 
 set -uo pipefail
 . "${BASH_SOURCE[0]%/*}/lib/shell-line.sh"
@@ -53,6 +55,7 @@ check_kill() {
     esac
   done
   [[ $sig == 0 || $sig == SIG0 || $sig == NULL ]] && return
+  [[ -n $override ]] && { overridden "${pids[@]}"; return; }
   for p in "${pids[@]}"; do
     [[ -e /proc/$p ]] || continue
     for r in "${shared[@]}"; do
@@ -65,9 +68,25 @@ check_kill() {
   done
 }
 
+overridden() {
+  local reason log=$HOME/.local/state/claude/kill-overrides.log p
+  reason=$(grep -oE "KILL_GUARD_OVERRIDE=('[^']*'|\"[^\"]*\"|[^[:space:];&|]*)" <<<"$cmd" | head -1)
+  reason=${reason#KILL_GUARD_OVERRIDE=}
+  reason=${reason//[\'\"]/}
+  [[ -n ${reason//[[:space:]]/} ]] || deny "KILL_GUARD_OVERRIDE needs a reason."
+  mkdir -p "${log%/*}"
+  {
+    printf '%s\tsession %s\tcwd %s\treason %s\n' "$(date -Is)" "$(jq -r '.session_id // "-"' <<<"$payload")" "$cwd" "$reason"
+    for p in "$@"; do printf '\tpid %s\t%s\n' "$p" "$(tr '\0' ' ' 2>/dev/null <"/proc/$p/cmdline" || echo '(gone)')"; done
+  } >>"$log"
+}
+
 while read -ra w; do
+  lead=("${w[@]}")
   command_word 'kill|pkill|killall'
   ((${#w[@]})) || continue
+  override=
+  for a in "${lead[@]:0:${#lead[@]}-${#w[@]}}"; do [[ $a == KILL_GUARD_OVERRIDE=?* ]] && override=1; done
   case ${w[0]##*/} in
     pkill | killall | skill) by_pattern "${w[0]##*/}" ;;
     fuser) [[ " ${w[*]:1} " =~ \ -[[:alnum:]]*k ]] && deny "\`fuser -k\` kills every process using a file or port, whoever started it." ;;
