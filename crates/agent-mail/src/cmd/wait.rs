@@ -17,7 +17,7 @@ use crate::{
     authority::{self, Signed},
     jmap::wire,
     listeners::{Leave, Listeners},
-    mail::{Addr, Body, Email, Keyword, Mail, Mark},
+    mail::{Addr, Body, Email, Keyword, Mail, Mark, names},
     out::{Asked, Outbox, is_receipt},
     prelude::*,
     show::{Answering, message, out, reminder, utc},
@@ -89,9 +89,20 @@ pub struct Subscribe {
     pub watching: Watching,
 }
 
+#[derive(clap::Args)]
+pub struct Subscriptions {
+    #[arg(long, value_name = "SESSION_ID")]
+    pub session: Option<SessionId>,
+}
+
 /// Records `given` for `id`'s `wait --session` and says what that session now watches.
 fn record(records: &Records, id: &SessionId, given: &Watching) -> Result<String> {
     records.record(id, given.topic.clone(), given.thread.clone())?;
+    watches(records, id)
+}
+
+/// What `id`'s sends and subscribes recorded for its `wait --session`.
+pub fn watches(records: &Records, id: &SessionId) -> Result<String> {
     let Watched { topics, threads } = records.of(id)?;
     let topics: Vec<String> = topics.iter().map(Topic::to_string).collect();
     let threads: Vec<&str> = threads.iter().map(String::as_str).collect();
@@ -108,6 +119,18 @@ pub async fn subscribe(args: Subscribe) -> Result<ExitCode> {
         session().context("subscribe records for a Claude Code session, and this is none")?;
     let id: SessionId = session.session_id.parse()?;
     succeed!("{}", record(&Store::new(&Config::load()?.login)?.records()?, &id, &args.watching)?)
+}
+
+/// Says what a Claude Code session's `wait --session` watches, this one's unless --session names another.
+pub async fn subscriptions(args: Subscriptions) -> Result<ExitCode> {
+    let id = match args.session {
+        Some(id) => id,
+        None => session()
+            .context("without --session, subscriptions lists this Claude Code session's, and this is none")?
+            .session_id
+            .parse()?,
+    };
+    succeed!("{}", watches(&Store::new(&Config::load()?.login)?.records()?, &id)?)
 }
 
 /// While `session`'s mail-listener mod is live, records `given` for its wait and says so: that wait hands the session
@@ -136,11 +159,8 @@ pub fn timeout(s: &str) -> Result<Duration> {
     Ok(Duration::from_secs(secs))
 }
 
-/// To and Cc are matched here rather than by the server, which answers them from its full-text index, built after
-/// ingest.
 pub fn covers(topics: &[Address], threads: &HashSet<String>, m: &Addressed) -> bool {
-    let watched = |a: &Addr| a.email.parse().is_ok_and(|a| topics.contains(&a));
-    threads.contains(&m.thread) || m.to.iter().chain(&m.cc).any(watched)
+    threads.contains(&m.thread) || names(topics, m.to.iter().chain(&m.cc))
 }
 
 struct Watch<'a> {
@@ -175,11 +195,9 @@ impl Watch<'_> {
         }
         let mut kept = vec![];
         for m in due {
-            let named =
-                m.to.iter()
-                    .chain(&m.cc)
-                    .any(|a| a.email.parse().is_ok_and(|a| watched.contains(&a)));
-            if !named || authority(self.mail, &m, &watched).await?.is_err() {
+            if !names(&watched, m.to.iter().chain(&m.cc))
+                || authority(self.mail, &m, &watched).await?.is_err()
+            {
                 kept.push(m);
             }
         }

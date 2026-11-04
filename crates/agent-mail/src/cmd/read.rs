@@ -1,17 +1,18 @@
-use std::process::ExitCode;
+use std::{num::NonZeroUsize, process::ExitCode};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, SecondsFormat, TimeDelta};
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 
 use private::{Dir, Mode, Replace};
+use text::Address;
 
 use super::succeed;
 use crate::{
     address::{MessageId, Topic},
     auth::Auth,
     jmap::wire,
-    mail::{Body, Email, Keyword, Mail, Part, QUERY, Text},
+    mail::{Body, Email, Keyword, Mail, Part, QUERY, Text, names},
     out::is_receipt,
     prelude::*,
     show::{Answering, emails, inbox_line, message, out, plain, utc},
@@ -101,11 +102,11 @@ pub fn embedded(html: &str) -> Vec<Result<(String, Vec<u8>)>> {
 
 #[derive(clap::Args)]
 pub struct Inbox {
-    /// Keep only mail addressed to the subaddress <login>+<topic>.
+    /// Keep only mail to or cc the subaddress <login>+<topic> itself, not <login>+<topic>-<more>.
     #[arg(long)]
     topic: Vec<Topic>,
-    #[arg(long, default_value_t = 10)]
-    limit: usize,
+    #[arg(long, default_value = "10")]
+    limit: NonZeroUsize,
 }
 
 #[derive(clap::Args)]
@@ -137,24 +138,53 @@ enum Rotation {
 
 pub async fn inbox(args: Inbox) -> Result<ExitCode> {
     let mail = Mail::open().await?;
+    let listed = newest(&mail, &args.topic, args.limit).await?;
+    let files: Vec<Attached> = mail.get(&listed.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
+    for m in &listed {
+        let files = files.iter().find(|f| f.id == m.id).map_or(&[][..], |f| &f.attachments);
+        out(&inbox_line(m, files))?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The newest `limit` inbox mail, only that to or cc one of `topics` when any is given. The server's filter is a first
+/// cut, so it is paged until `limit` pass.
+pub async fn newest(mail: &Mail, topics: &[Topic], limit: NonZeroUsize) -> Result<Vec<Email>> {
+    let login = mail.login().address();
+    let topics = topics.iter().map(|t| login.subaddress(t)).collect::<Result<Vec<_>>>()?;
     let mut filter = json!({ "inMailbox": mail.mailbox("inbox")? });
-    let topics = args.topic.iter().map(|t| mail.login().address().subaddress(t));
-    let topics = topics.map(|a| a.map(|a| a.to_string())).collect::<Result<Vec<_>>>()?;
-    let addressed: Vec<_> =
-        topics.iter().flat_map(|a| [json!({ "to": a }), json!({ "cc": a })]).collect();
+    let addressed: Vec<_> = topics
+        .iter()
+        .map(Address::to_string)
+        .flat_map(|a| [json!({ "to": a }), json!({ "cc": a })])
+        .collect();
     if !addressed.is_empty() {
         let any = json!({ "operator": "OR", "conditions": addressed });
         filter = json!({ "operator": "AND", "conditions": [filter, any] });
     }
     let sort = [json!({ "property": "receivedAt", "isAscending": false })];
-    let found =
-        mail.call(QUERY, json!({ "filter": filter, "sort": sort, "limit": args.limit })).await?;
-    let files: Vec<Attached> = mail.get(&found.ids).await?;
-    for m in mail.get::<Email>(&found.ids).await? {
-        let files = files.iter().find(|f| f.id == m.id).map_or(&[][..], |f| &f.attachments);
-        out(&inbox_line(&m, files))?;
+    let (mut kept, mut last) = (vec![], None::<String>);
+    loop {
+        let page = match &last {
+            Some(last) => json!({
+                "filter": filter, "sort": sort, "limit": limit, "anchor": last, "anchorOffset": 1,
+            }),
+            None => json!({ "filter": filter, "sort": sort, "limit": limit }),
+        };
+        let ids = mail.call(QUERY, page).await?.ids;
+        let more = ids.len() == limit.get();
+        last = ids.last().cloned();
+        let found: Vec<Email> = mail.get(&ids).await?;
+        kept.extend(
+            found
+                .into_iter()
+                .filter(|m| topics.is_empty() || names(&topics, m.to.iter().chain(&m.cc))),
+        );
+        if !more || kept.len() >= limit.get() {
+            kept.truncate(limit.get());
+            return Ok(kept);
+        }
     }
-    Ok(ExitCode::SUCCESS)
 }
 
 pub fn place<'a>(

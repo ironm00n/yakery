@@ -143,6 +143,8 @@ commands! {
     Wait(wait::Args) => wait::run,
     /// Record topics and threads for this Claude Code session's `wait --session`, without sending.
     Subscribe(wait::Subscribe) => wait::subscribe,
+    /// List the topics and threads a Claude Code session's `wait --session` watches, this one's by default; read-only.
+    Subscriptions(wait::Subscriptions) => wait::subscriptions,
     /// Mark mail handled, so wait neither delivers it nor lists it again.
     Done(read::Many) => read::done,
     /// Sign in if needed and show when the access token expires.

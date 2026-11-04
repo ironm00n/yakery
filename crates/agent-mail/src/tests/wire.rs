@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     collections::VecDeque,
     convert::Infallible,
+    num::NonZeroUsize,
     pin::Pin,
     process::ExitCode,
     rc::Rc,
@@ -20,7 +21,7 @@ use crate::{
     RECHECK,
     address::SessionId,
     auth::{Auth, Http},
-    cmd::wait,
+    cmd::{read, wait},
     listeners::Heartbeat,
     mail::{Conn, Current, Email, Keyword, Mail},
     out::{Leftover, Outbox},
@@ -331,14 +332,23 @@ impl Stalwart {
                 json!({ "state": state, "list": list })
             }
             "Email/query" => {
-                let ids = self.emails.iter().map(|m| &m["id"]);
+                let ids =
+                    self.emails.iter().filter(|m| addressed(&args["filter"], m)).map(|m| &m["id"]);
                 let now =
                     |i: &Value| self.stale.get(i.as_str().unwrap()).map_or(i.clone(), |c| json!(c));
                 let ids: Vec<&Value> = match args["filter"]["id"].as_array() {
                     Some(asked) => ids.filter(|i| asked.iter().any(|a| now(a) == **i)).collect(),
                     None => ids.collect(),
                 };
-                json!({ "ids": ids })
+                let start = match args["anchor"].as_str() {
+                    Some(a) => {
+                        ids.iter().position(|i| *i == a).ok_or("anchorNotFound")?
+                            + args["anchorOffset"].as_u64().unwrap_or(0) as usize
+                    }
+                    None => args["position"].as_u64().unwrap_or(0) as usize,
+                };
+                let limit = args["limit"].as_u64().map_or(usize::MAX, |l| l as usize);
+                json!({ "ids": ids.into_iter().skip(start).take(limit).collect::<Vec<_>>() })
             }
             "Thread/get" => {
                 let threads = args["ids"].as_array().unwrap().iter();
@@ -397,6 +407,31 @@ impl Stalwart {
             }
             _ => return Err("unknownMethod"),
         })
+    }
+}
+
+/// Whether `m` passes the To and Cc conditions of `filter`, which Stalwart matches word by word, so agent+pool finds
+/// agent+pool-split; every other condition passes.
+fn addressed(filter: &Value, m: &Value) -> bool {
+    let words = |s: &str| -> BTreeSet<String> {
+        s.to_lowercase()
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(String::from)
+            .collect()
+    };
+    let conditions = filter["conditions"].as_array().into_iter().flatten();
+    match filter["operator"].as_str() {
+        Some("AND") => conditions.clone().all(|f| addressed(f, m)),
+        Some("OR") => conditions.clone().any(|f| addressed(f, m)),
+        _ => ["to", "cc"].iter().all(|field| match filter[field].as_str() {
+            Some(asked) => m[field]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|a| words(asked).is_subset(&words(a["email"].as_str().unwrap()))),
+            None => true,
+        }),
     }
 }
 
@@ -932,4 +967,31 @@ async fn change_lists_that_do_not_read_or_do_not_move_and_queries_whose_pages_ke
         shown(mail.query(json!({})).await.map(|ids| ids.len())),
         "error: the mail kept changing under Email/query's pages"
     );
+}
+
+#[tokio::test]
+async fn inbox_lists_mail_to_its_topic_itself_and_pages_past_mail_to_a_longer_one() {
+    let dir = Scratch::new("inbox-topic");
+    let to = |id, a: &str| email(id, json!({ "to": [{ "email": a }] }));
+    let split = "agent+pool-split@example.org";
+    let cc = json!({ "to": [{ "email": HIM }], "cc": [{ "email": "Agent+Pool@example.org" }] });
+    let newest_first = vec![
+        to("s1", split),
+        email("p1", json!({})),
+        to("o1", "agent+other@example.org"),
+        to("s2", split),
+        email("c1", cc),
+        email("p2", json!({})),
+    ];
+    let (_wire, _server, mail) = mail(&dir, Stalwart::new(newest_first)).await;
+    let mail = mail.unwrap();
+    let listed = async |topics: &[&str], limit| {
+        let topics: Vec<_> = topics.iter().map(|t| t.parse().unwrap()).collect();
+        let found = read::newest(&mail, &topics, NonZeroUsize::new(limit).unwrap()).await.unwrap();
+        found.into_iter().map(|m| m.id).collect::<Vec<_>>()
+    };
+    assert_eq!(listed(&["pool"], 10).await, ["p1", "c1", "p2"]);
+    assert_eq!(listed(&["pool"], 2).await, ["p1", "c1"]);
+    assert_eq!(listed(&["pool-split", "other"], 10).await, ["s1", "o1", "s2"]);
+    assert_eq!(listed(&[], 2).await, ["s1", "p1"]);
 }

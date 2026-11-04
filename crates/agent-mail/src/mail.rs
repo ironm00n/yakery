@@ -2,6 +2,7 @@ use std::{cell::RefCell, fs::File};
 
 use private::{Secret, random::below};
 use reqwest::{Method, Response, header};
+use text::Address;
 
 use crate::{
     auth::Auth,
@@ -80,6 +81,12 @@ impl Email {
     pub fn has(&self, keyword: Keyword) -> bool {
         self.keywords.get(keyword.name()) == Some(&true)
     }
+}
+
+/// Matched here, not by the server, which answers its To and Cc filters from a full-text index that is built after
+/// ingest and finds agent+pool-split for agent+pool.
+pub fn names<'a>(topics: &[Address], mut on: impl Iterator<Item = &'a Addr>) -> bool {
+    on.any(|a| a.email.parse().is_ok_and(|a| topics.contains(&a)))
 }
 
 pub fn keywords(set: &[Keyword]) -> Value {

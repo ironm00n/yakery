@@ -186,3 +186,18 @@ fn a_plain_wait_stands_down_only_for_its_own_live_listener_and_records_what_it_w
     );
     assert!(records.of(&other).unwrap().topics.is_empty());
 }
+
+#[test]
+fn subscriptions_says_what_a_session_recorded_and_records_nothing() {
+    let dir = Scratch::new("subscriptions");
+    let records = store(&dir, "agent@example.org").records().unwrap();
+    let (a, b): (SessionId, SessionId) = ("a-1".parse().unwrap(), "b-2".parse().unwrap());
+    records
+        .record(&a, vec!["pool".parse().unwrap(), "pyret".parse().unwrap()], vec!["e1".into()])
+        .unwrap();
+    rows!(|id: &SessionId| wait::watches(&records, id).unwrap();
+        &a => "session a-1 watches topics [pool, pyret] and the threads of [e1]";
+        &b => "session b-2 watches topics [] and the threads of []";
+    );
+    assert_eq!(entries(&dir.0.join("locks/agent-mail/sessions")), ["a-1.json", "lock"]);
+}
