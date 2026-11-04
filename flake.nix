@@ -149,6 +149,8 @@
           pkgs = pkgs-map.${system};
         }
       );
+    # the scheduler's tests read time zones
+    crates-test-env = pkgs: { TZDIR = "${pkgs.tzdata}/share/zoneinfo"; };
     treefmtEval = eachSystem ({ pkgs, ... }: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
     mk-pkgs-stable = system:
       import nixpkgs-stable {
@@ -317,8 +319,7 @@
         # every member's tests, the shared crates' included, which no package runs; agent-mail's load the system's roots
         crates = pkgs-map.${system}.callPackage ./crates/rust.nix {
           nativeCheckInputs = [ pkgs-map.${system}.cacert ];
-          # the scheduler's tests read time zones
-          env.TZDIR = "${pkgs-map.${system}.tzdata}/share/zoneinfo";
+          env = crates-test-env pkgs-map.${system};
         };
         crates-manifest = pkgs-map.${system}.runCommand "crates-manifest" { } (
           let
@@ -435,7 +436,8 @@
           '';
         };
 
-      # the compiler and tools Nix builds the crates with, and agent-mail's build-time deployment values
+      # the compiler and tools Nix builds the crates with, checks.crates' test environment, and agent-mail's build-time
+      # deployment values
       crates = pkgs.mkShell {
         packages = with pkgs; [
           cargo
@@ -444,7 +446,7 @@
           clippy
           rust-analyzer
         ];
-        env = import ./crates/agent-mail/deployment-env.nix {
+        env = crates-test-env pkgs // import ./crates/agent-mail/deployment-env.nix {
           inherit lib;
           deployment = my-lib.ironmoon;
           correspondents = inputs.secrets.data.mail.agentCorrespondents;

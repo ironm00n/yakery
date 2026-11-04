@@ -1,5 +1,12 @@
 # Agent instructions
 
+## Crates
+
+From `crates/` in any workspace of the repo, `nix develop .#crates -c cargo test -p <package>` runs one package's
+tests (`<package>` as its Cargo.toml names it: `lib/log` is `yakery-log`), and without `-p` every member's. The shell
+holds the toolchain Nix builds with, `checks.crates`' test environment and agent-mail's build-time values. On desktop,
+prefix it with `~/tmp/np-heavy.sh`, which waits for a CPU slot and compiles through the shared sccache.
+
 ## LLM provenance
 
 **Every commit with any LLM contribution MUST include an `Assisted-by` or
