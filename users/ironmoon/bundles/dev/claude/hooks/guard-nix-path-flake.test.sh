@@ -37,3 +37,30 @@ check PASS "$NOGIT" '~/.elan/bin/lake build'
 check PASS "$NOGIT" 'nixos-rebuild build'
 check PASS "$NOGIT" 'ls /etc/nixos'
 check PASS "$NOGIT" 'nix store gc --dry-run'
+
+check DENY "$NOGIT" 'true && nix develop .'
+check DENY "$NOGIT" 'true; nix develop .#crates -c cargo test'
+check DENY "$NOGIT" 'env FOO=1 nix develop .'
+check DENY "$NOGIT" 'sudo nix build .#default'
+check DENY "$NOGIT" 'x=$(nix eval .#foo)'
+check DENY "$NOGIT" 'echo "$(nix develop -c true)"'
+check DENY "$NOGIT" '~/tmp/np-heavy.sh nix develop .#crates -c cargo test'
+check DENY "$NOGIT" 'nice -n 5 nix build .'
+check DENY "$NOGIT" 'echo . | xargs nix build'
+check DENY "$NOGIT" 'bash -lc "nix develop ."'
+check DENY "$NOGIT" "nix develop $GIT -c bash -c 'nix develop .'"
+check DENY "$NOGIT" "(cd $GIT && ls); nix develop"
+check DENY "$GIT" "env -C $NOGIT nix develop"
+check DENY "$GIT" "cd $NOGIT && cd - && nix develop"
+check DENY "$NOGIT" "echo 'nix develop' && nix develop ."
+
+check PASS "$NOGIT" "tools/mem.py add 'run crate tests with nix develop .#crates -c cargo test'"
+check PASS "$NOGIT" "echo 'see nix develop .#crates'"
+check PASS "$NOGIT" 'git commit -m "nix develop . here; then nix build"'
+check PASS "$NOGIT" "rg 'nix develop' notes"
+check PASS "$NOGIT" 'ls  # then nix develop'
+check PASS "$NOGIT" 'cat <<END > notes.md
+nix develop .
+END'
+check PASS "$NOGIT" "(cd $GIT && nix develop -c true)"
+check PASS "$NOGIT" "nix eval --apply 'x: x' nixpkgs#lib.version"

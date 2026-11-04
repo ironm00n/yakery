@@ -20,6 +20,7 @@ check DENY "$me" 'pkill -f definitely-nothing-zz'
 check DENY "$me" 'killall -9 sleep'
 check DENY "$me" 'sudo pkill sleep'
 check DENY "$me" '/run/current-system/sw/bin/pkill sleep'
+check DENY "$me" "bash -c 'pkill sleep'"
 check DENY "$me" 'kill $(pgrep -f "measure.py|cargo test --workspace")'
 check DENY "$me" 'kill -9 `pidof sleep`'
 check DENY "$me" 'pgrep -af measure.py | xargs kill'

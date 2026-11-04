@@ -49,6 +49,8 @@ check DENY "$e" 'jj -R "$ws" log'
 check DENY "$e" 'jj -R $(pwd) log'
 check DENY "$e" 'cd ~/workspace/redox && cd - && jj st'
 check DENY "$r" 'jj st -- --ignore-working-copy'
+check DENY "$e" "sh -c 'cd ~/workspace/redox && jj st'"
+check PASS "$r" "sh -c 'cd ~/tmp/worktree/x && jj st'"
 
 check PASS "$r" 'jj --ignore-working-copy st'
 check PASS "$e" 'jj -R ~/workspace/redox --ignore-working-copy log'

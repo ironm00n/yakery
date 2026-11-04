@@ -30,18 +30,6 @@ deny() {
   exit 0
 }
 
-# The absolute path a word names, from base dir $2 (empty when unknown); nothing if it can't be read
-# off the line.
-dir_of() {
-  local p=$1
-  [[ $p == '~' || $p == '~/'* ]] && p=$HOME${p:1}
-  p=${p//'${HOME}'/$HOME}
-  p=${p//'$HOME'/$HOME}
-  [[ -z $p || $p == *[\$\`*?[$mask]* || ($p != /* && -z $2) ]] && return
-  [[ $p == /* ]] || p=$2/$p
-  realpath -m -- "$p"
-}
-
 repo_of() {
   local d=$1
   until [[ -d $d/.jj ]]; do
@@ -53,6 +41,8 @@ repo_of() {
 }
 
 check_jj() {
+  [[ ${w[0]##*/} == jj ]] || return
+  set -- "${w[@]:1}"
   local a i r=$here repo c
   for ((i = 1; i <= $#; i++)); do
     a=${!i}
@@ -72,24 +62,6 @@ check_jj() {
   done
 }
 
-cwd=$(dir_of "$(field .cwd)" "")
-scopes=()
-while read -ra w; do
-  case ${w[0]-} in
-    '(') scopes+=("$cwd"); continue ;;
-    ')') ((${#scopes[@]})) && { cwd=${scopes[-1]}; unset 'scopes[-1]'; }; continue ;;
-  esac
-  command_word jj
-  ((${#w[@]})) || continue
-  here=$cwd
-  [[ -n $chdir ]] && here=$(dir_of "$chdir" "$cwd")
-  case ${w[0]##*/} in
-    cd | pushd)
-      to='~'
-      for x in "${w[@]:1}"; do [[ $x == @(-[LPe@]*|--) ]] || { to=$x; break; }; done
-      [[ $to == - ]] && cwd= || cwd=$(dir_of "$to" "$cwd") ;;
-    jj) check_jj "${w[@]:1}" ;;
-  esac
-done < <(segments "$cmd")
+each_command check_jj "$cmd" "$(dir_of "$(field .cwd)" "")" jj
 
 exit 0
