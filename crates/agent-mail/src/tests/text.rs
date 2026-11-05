@@ -603,8 +603,8 @@ fn a_reply_names_whom_and_what_it_answers() {
         ("agent@example.org", Some("tooling"), Some("agent+unboca@example.org")) => TOOLING;
         ("agent@example.org", None, Some(POOL)) => POOL;
         ("ada@agent.example.org", None, None) => "ada@agent.example.org";
-        ("agent@example.org", None, Some("agent@example.org")) => "error: send needs --topic, or \
-            --reply to mail sent to one of the login's topic addresses: agent@example.org is \
+        ("agent@example.org", None, Some("agent@example.org")) => "error: a shared login sends from \
+            a --topic, or in reply to mail sent to one of its topic addresses: agent@example.org is \
             shared by every session, so it sends only from a topic subaddress";
     );
 }

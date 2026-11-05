@@ -6,9 +6,9 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use anyhow::{Context, ensure};
+use invitation::Zone;
 use jiff::SignedDuration;
 use jiff::civil::{Time, Weekday};
-use jiff::tz::TimeZone;
 use serde::{Deserialize, Deserializer};
 use text::{Address, text};
 
@@ -104,15 +104,15 @@ pub struct Policy {
     pub host: String,
     pub stalwart: String,
     #[serde(deserialize_with = "zone")]
-    pub zone: TimeZone,
+    pub zone: Zone,
     pub hours: Vec<Window>,
     pub notice: SignedDuration,
     pub horizon_weeks: u8,
     pub gap: Gap,
 }
 
-fn zone<'de, D: Deserializer<'de>>(d: D) -> Result<TimeZone, D::Error> {
-    jiff::tz::db().get(&String::deserialize(d)?).map_err(serde::de::Error::custom)
+fn zone<'de, D: Deserializer<'de>>(d: D) -> Result<Zone, D::Error> {
+    Zone::named(&String::deserialize(d)?).map_err(serde::de::Error::custom)
 }
 
 impl Policy {
@@ -121,7 +121,7 @@ impl Policy {
     }
 
     pub fn zone_name(&self) -> &str {
-        self.zone.iana_name().expect("zones come from the tz database by name")
+        self.zone.name()
     }
 }
 

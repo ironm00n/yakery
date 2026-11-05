@@ -6,7 +6,7 @@ use text::Address;
 
 use crate::{
     auth::Auth,
-    jmap::{Call, Cap, View, jmap_id, keywords, wire},
+    jmap::{CORE, Call, Cap, View, jmap_id, keywords, wire},
     policy::Login,
     prelude::*,
     store::Config,
@@ -18,7 +18,7 @@ const PAGE: usize = 256;
 const RESTARTS: usize = 10;
 
 wire! {
-    views {
+    views under Mail {
         Email in "Email/get" {
             id: String = "id", thread: String = "threadId", received: String = "receivedAt",
             from: Vec<Addr> = "from", to: Vec<Addr> = "to", cc: Vec<Addr> = "cc",
@@ -75,6 +75,29 @@ pub const SUBMISSIONS: Call = Call::mail("EmailSubmission/query", None);
 keywords! {
     Seen = "$seen", Answered = "$answered", Handled = "$handled", MdnSent = "$mdnsent",
     AgentMail = "$agentmail", Draft = "$draft",
+}
+
+impl Answer {
+    /// The id Stalwart gave what was created under `key`, or its refusal.
+    pub fn id(&self, key: &str) -> Result<&str> {
+        let refused = || {
+            format!(
+                "stalwart did not create it: {}",
+                self.not_created.get(key).unwrap_or(&Value::Null)
+            )
+        };
+        self.created[key]["id"].as_str().with_context(refused)
+    }
+
+    /// Every update and destroy was taken, or what Stalwart refused.
+    pub fn taken(&self) -> Result<()> {
+        ensure!(
+            self.not_updated.is_empty() && self.not_destroyed.is_empty(),
+            "stalwart refused {}",
+            json!([self.not_updated, self.not_destroyed])
+        );
+        Ok(())
+    }
 }
 
 impl Email {
@@ -195,9 +218,9 @@ pub struct Mail {
     pub conn: Conn,
     session: Session,
     api: Pinned,
-    account: String,
-    /// The account calendar methods act on, when the session names one.
-    calendars: Option<String>,
+    /// The primary account of each capability the session names, as it names it: mail's, checked at open, and the
+    /// others checked when first used, so a bad one breaks only what uses it.
+    accounts: HashMap<Cap, String>,
     limits: [usize; 3],
     mailboxes: HashMap<String, String>,
 }
@@ -219,19 +242,23 @@ impl Mail {
         }
         let api = Origin::Mail.check(&session.api).context(off)?;
         check_account(&session.username, &conn.auth.login)?;
-        let account =
-            session.accounts.get("urn:ietf:params:jmap:mail").context("no mail account")?;
-        let account = jmap_id(account)?.into();
-        let calendars = session.accounts.get(Cap::Calendars.account());
-        let calendars = calendars.map(|a| jmap_id(a).map(String::from)).transpose()?;
-        let core =
-            session.capabilities.get("urn:ietf:params:jmap:core").cloned().unwrap_or_default();
+        let accounts: HashMap<Cap, String> = (Cap::ALL.iter())
+            .filter_map(|c| Some((*c, session.accounts.get(c.account())?.clone())))
+            .collect();
+        jmap_id(accounts.get(&Cap::Mail).context("no mail account")?)?;
+        let core = session.capabilities.get(CORE).cloned().unwrap_or_default();
         let limits = ["maxObjectsInGet", "maxObjectsInSet", "maxCallsInRequest"]
             .map(|n| core[n].as_u64().map_or(100, |n| n as usize).max(1));
-        let mut mail =
-            Mail { conn, session, api, account, calendars, limits, mailboxes: HashMap::new() };
+        let mut mail = Mail { conn, session, api, accounts, limits, mailboxes: HashMap::new() };
         mail.mailboxes = mail.all::<Mailbox>().await?.into_iter().map(|m| (m.role, m.id)).collect();
         Ok(mail)
+    }
+
+    fn account(&self, cap: Cap) -> Result<&str> {
+        let account = self.accounts.get(&cap);
+        jmap_id(
+            account.with_context(|| format!("the JMAP session names no {} account", cap.name()))?,
+        )
     }
 
     pub fn login(&self) -> &Login {
@@ -262,22 +289,12 @@ impl Mail {
         locked: bool,
         calls: &[(Call, Value)],
     ) -> Result<Vec<Result<Option<Answer>>>> {
-        let caps = [Cap::Mail, Cap::Calendars]
-            .into_iter()
-            .filter(|c| calls.iter().any(|(call, _)| call.2 == *c));
-        let using: Vec<&str> = ["urn:ietf:params:jmap:core"]
-            .into_iter()
-            .chain(caps.flat_map(Cap::using).copied())
-            .collect();
+        let caps = Cap::ALL.iter().copied().filter(|c| calls.iter().any(|(call, _)| call.2 == *c));
+        let using: Vec<&str> =
+            [CORE].into_iter().chain(caps.flat_map(Cap::using).copied()).collect();
         let method = |(n, (call, args)): (usize, &(Call, Value))| -> Result<Value> {
             let mut args = args.clone();
-            args["accountId"] = json!(match call.2 {
-                Cap::Mail => &self.account,
-                Cap::Calendars => self
-                    .calendars
-                    .as_ref()
-                    .context("the JMAP session names no calendars account")?,
-            });
+            args["accountId"] = json!(self.account(call.2)?);
             Ok(json!([call.0, args, n.to_string()]))
         };
         let methods: Vec<Value> = calls.iter().enumerate().map(method).collect::<Result<_>>()?;
@@ -310,11 +327,7 @@ impl Mail {
 
     pub async fn set(&self, locked: bool, args: Value) -> Result<Option<Answer>> {
         let Some(answer) = self.answer(locked, SET, args).await? else { return Ok(None) };
-        ensure!(
-            answer.not_updated.is_empty() && answer.not_destroyed.is_empty(),
-            "stalwart refused {}",
-            json!([answer.not_updated, answer.not_destroyed])
-        );
+        answer.taken()?;
         Ok(Some(answer))
     }
 
@@ -428,17 +441,11 @@ impl Mail {
     }
 
     pub fn created(answer: &Answer, key: &str) -> Result<Current> {
-        match answer.created[key]["id"].as_str() {
-            Some(id) => Current::new(id),
-            None => bail!(
-                "stalwart did not create it: {}",
-                answer.not_created.get(key).unwrap_or(&Value::Null)
-            ),
-        }
+        Current::new(answer.id(key)?)
     }
 
     pub async fn upload(&self, bytes: &[u8], kind: &str) -> Result<String> {
-        let url = fill(&self.session.upload, &[("accountId", &self.account)])?;
+        let url = fill(&self.session.upload, &[("accountId", self.account(Cap::Mail)?)])?;
         let post = async |t| {
             Web::paced(bytes, async |body| {
                 let post =
@@ -452,7 +459,7 @@ impl Mail {
     }
 
     pub async fn download(&self, blob: &str, most: usize) -> Result<Option<Vec<u8>>> {
-        let ids = [("accountId", jmap_id(&self.account)?), ("blobId", jmap_id(blob)?)];
+        let ids = [("accountId", jmap_id(self.account(Cap::Mail)?)?), ("blobId", jmap_id(blob)?)];
         let fixed = [("name", "attachment"), ("type", "application%2Foctet-stream")];
         let url = fill(&self.session.download, &[ids, fixed].concat())?;
         self.conn

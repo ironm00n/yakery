@@ -80,13 +80,13 @@ fn starts_the_clocks_repeat_or_skip_are_not_offered() {
     let back = limits("2026-11-01", "2026-11-01", 30, 5, &["sun 00:30-03:00"]);
     let starts: Vec<String> = free(&back, &[], &[])
         .iter()
-        .map(|t| t.to_zoned(fixture().zone).strftime("%H:%M").to_string())
+        .map(|t| t.to_zoned(fixture().zone.time_zone()).strftime("%H:%M").to_string())
         .collect();
     assert_eq!(starts, ["00:30", "00:45", "02:00", "02:15", "02:30"]);
     let forward = limits("2027-03-14", "2027-03-14", 30, 5, &["sun 01:00-04:00"]);
     let starts: Vec<String> = slots(&fixture(), &forward, at("2027-03-01T00:00"), &[], &[])
         .iter()
-        .map(|t| t.to_zoned(fixture().zone).strftime("%H:%M").to_string())
+        .map(|t| t.to_zoned(fixture().zone.time_zone()).strftime("%H:%M").to_string())
         .collect();
     assert_eq!(starts, ["01:00", "01:15", "01:30", "01:45", "03:00", "03:15", "03:30"]);
 }
@@ -127,7 +127,7 @@ fn a_booking_ends_inside_its_window_in_real_time() {
     let forward = limits("2027-03-14", "2027-03-14", 90, 5, &["sun 00:00-03:00"]);
     let starts: Vec<String> = slots(&fixture(), &forward, at("2027-03-01T00:00"), &[], &[])
         .iter()
-        .map(|t| t.to_zoned(fixture().zone).strftime("%H:%M").to_string())
+        .map(|t| t.to_zoned(fixture().zone.time_zone()).strftime("%H:%M").to_string())
         .collect();
     assert_eq!(starts, ["00:00", "00:15", "00:30"], "00:45 would end at 03:15 EDT");
 }

@@ -3,29 +3,73 @@
 //! it applies back to the organizer's copy.
 
 use anyhow::{Context, Result};
-use jiff::{SignedDuration, Zoned};
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, Timestamp};
 use serde_json::{Map, Value, json};
+
+/// A time zone of the tz database, known by the name JSCalendar gives an event's zone.
+#[derive(Clone, Debug)]
+pub struct Zone {
+    tz: TimeZone,
+    name: String,
+}
+
+impl Zone {
+    pub fn named(name: &str) -> Result<Zone> {
+        let tz = jiff::tz::db().get(name).with_context(|| format!("time zone {name:?}"))?;
+        let name = tz.iana_name().context("a time zone with no name")?.to_string();
+        Ok(Zone { tz, name })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn time_zone(&self) -> TimeZone {
+        self.tz.clone()
+    }
+}
+
+impl std::ops::Deref for Zone {
+    type Target = TimeZone;
+    fn deref(&self) -> &TimeZone {
+        &self.tz
+    }
+}
+
+impl std::str::FromStr for Zone {
+    type Err = anyhow::Error;
+    fn from_str(name: &str) -> Result<Zone> {
+        Zone::named(name)
+    }
+}
+
+/// A moment, and the zone an event at it keeps its local time in across a change of offset.
+#[derive(Clone, Copy, Debug)]
+pub struct At<'a> {
+    pub when: Timestamp,
+    pub zone: &'a Zone,
+}
 
 /// What an event says, each part optional, as a change to an event sets it.
 #[derive(Default)]
 pub struct Details<'a> {
     pub title: Option<&'a str>,
     pub description: Option<&'a str>,
-    /// A local time in a named zone, so a series or a later move keeps its local time across a change of offset.
-    pub start: Option<&'a Zoned>,
+    pub start: Option<At<'a>>,
     pub duration: Option<SignedDuration>,
     pub location: Option<&'a str>,
 }
 
 impl Details<'_> {
     /// The JSCalendar properties of the parts given, and only those.
-    pub fn properties(&self) -> Result<Map<String, Value>> {
-        let start = self.start.map(|at| -> Result<_> {
-            let zone = at.time_zone().iana_name().context("a time zone with no name")?;
-            Ok([
-                ("start", json!(at.datetime().strftime("%Y-%m-%dT%H:%M:%S").to_string())),
-                ("timeZone", json!(zone)),
-            ])
+    pub fn properties(&self) -> Map<String, Value> {
+        let start = self.start.map(|At { when, zone }| {
+            let local = when.to_zoned(zone.time_zone()).datetime();
+            [
+                ("start", json!(local.strftime("%Y-%m-%dT%H:%M:%S").to_string())),
+                ("timeZone", json!(zone.name())),
+            ]
         });
         let parts = [
             self.title.map(|t| ("title", json!(t))),
@@ -33,13 +77,25 @@ impl Details<'_> {
             self.duration.map(|d| ("duration", json!(d.to_string()))),
             self.location.map(|place| ("locations", json!({"place": {"name": place}}))),
         ];
-        Ok(parts
+        parts
             .into_iter()
             .flatten()
-            .chain(start.transpose()?.into_iter().flatten())
+            .chain(start.into_iter().flatten())
             .map(|(name, value)| (name.to_string(), value))
-            .collect())
+            .collect()
     }
+}
+
+/// `address` as a JSCalendar calendar address: a `mailto:` URI, its local part percent-encoded as RFC 6068 says, so
+/// a `%`, `#` or `?` in it stays part of the address.
+pub fn mailto(address: &str) -> String {
+    let (local, domain) = address.rsplit_once('@').unwrap_or((address, ""));
+    let kept = |b: u8| b.is_ascii_alphanumeric() || b"-._~!$'()*+,;".contains(&b);
+    let local: String = local
+        .bytes()
+        .map(|b| if kept(b) { char::from(b).to_string() } else { format!("%{b:02X}") })
+        .collect();
+    format!("mailto:{local}@{domain}")
 }
 
 pub struct Person<'a> {
@@ -48,8 +104,10 @@ pub struct Person<'a> {
 }
 
 pub struct Invitation<'a> {
+    /// What makes a create sent again the same event: Stalwart refuses a second event with it.
+    pub uid: &'a str,
     pub title: &'a str,
-    pub start: &'a Zoned,
+    pub start: At<'a>,
     pub duration: SignedDuration,
     pub description: Option<&'a str>,
     pub location: Option<&'a str>,
@@ -60,8 +118,7 @@ pub struct Invitation<'a> {
 }
 
 impl Invitation<'_> {
-    pub fn event(&self) -> Result<Value> {
-        let mailto = |address: &str| format!("mailto:{address}");
+    pub fn event(&self) -> Value {
         // JSCalendar's roles are a set, each present role true
         let roles: Map<String, Value> = [("owner", true), ("attendee", self.organizer_attends)]
             .into_iter()
@@ -89,12 +146,13 @@ impl Invitation<'_> {
             duration: Some(self.duration),
             location: self.location,
         };
-        let mut event = details.properties()?;
+        let mut event = details.properties();
         event.extend([
             ("@type".to_string(), json!("Event")),
+            ("uid".to_string(), json!(self.uid)),
             ("organizerCalendarAddress".to_string(), json!(mailto(self.organizer))),
             ("participants".to_string(), Value::Object(participants)),
         ]);
-        Ok(Value::Object(event))
+        Value::Object(event)
     }
 }

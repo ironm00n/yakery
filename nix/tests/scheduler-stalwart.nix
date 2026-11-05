@@ -195,8 +195,8 @@ pkgs.testers.runNixOSTest {
         "description": "Booked with link 00000000",
         "organizerCalendarAddress": "mailto:owen@${domain}",
         "participants": {
-            "owner": {"calendarAddress": "mailto:owen@${domain}", "roles": {"owner": True, "attendee": True}, "participationStatus": "accepted"},
-            "booker": {"name": "Ada Lovelace", "calendarAddress": "mailto:ada@remote.test", "roles": {"attendee": True}, "expectReply": True},
+            "organizer": {"calendarAddress": "mailto:owen@${domain}", "roles": {"owner": True, "attendee": True}, "participationStatus": "accepted"},
+            "invited0": {"name": "Ada Lovelace", "calendarAddress": "mailto:ada@remote.test", "roles": {"attendee": True}, "expectReply": True},
         },
     }
 

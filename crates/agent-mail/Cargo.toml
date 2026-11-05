@@ -23,6 +23,7 @@ libc.workspace = true
 lol_html.workspace = true
 mail-parser.workspace = true
 private.workspace = true
+ring.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true

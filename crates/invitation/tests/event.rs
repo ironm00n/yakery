@@ -1,31 +1,36 @@
-use invitation::{Details, Invitation, Person};
-use jiff::{SignedDuration, Zoned};
+use std::sync::LazyLock;
+
+use invitation::{At, Details, Invitation, Person, Zone, mailto};
+use jiff::SignedDuration;
 use serde_json::json;
 
-fn at(text: &str) -> Zoned {
-    text.parse().unwrap()
+static NEW_YORK: LazyLock<Zone> = LazyLock::new(|| Zone::named("America/New_York").unwrap());
+
+fn at(utc: &str) -> At<'static> {
+    At { when: utc.parse().unwrap(), zone: &NEW_YORK }
 }
 
 #[test]
 fn an_agents_invitation_names_it_organizer_only_and_him_invited() {
-    let start = at("2026-11-06T15:00:00-05:00[America/New_York]");
+    let start = at("2026-11-06T20:00:00Z");
     let invited = [Person { address: "owen@example.org", name: None }];
     let event = Invitation {
+        uid: "u1@example.org",
         title: "Review the NEU sync page",
         description: None,
-        start: &start,
+        start,
         duration: SignedDuration::from_mins(30),
         location: None,
         organizer: "agent+scheduler@example.org",
         organizer_attends: false,
         invited: &invited,
     }
-    .event()
-    .unwrap();
+    .event();
     assert_eq!(
         event,
         json!({
             "@type": "Event",
+            "uid": "u1@example.org",
             "title": "Review the NEU sync page",
             "start": "2026-11-06T15:00:00",
             "timeZone": "America/New_York",
@@ -41,20 +46,20 @@ fn an_agents_invitation_names_it_organizer_only_and_him_invited() {
 
 #[test]
 fn a_booked_meeting_has_its_organizer_attending_and_the_invitee_named() {
-    let start = at("2026-10-27T11:00:00-04:00[America/New_York]");
+    let start = at("2026-10-27T15:00:00Z");
     let invited = [Person { address: "ada@example.org", name: Some("Ada Lovelace") }];
     let event = Invitation {
+        uid: "u2@example.org",
         title: "Research chat with Ada Lovelace",
         description: Some("hi"),
-        start: &start,
+        start,
         duration: SignedDuration::from_mins(30),
         location: Some("WVH 366"),
         organizer: "owen@example.org",
         organizer_attends: true,
         invited: &invited,
     }
-    .event()
-    .unwrap();
+    .event();
     assert_eq!(
         event["participants"]["organizer"]["roles"],
         json!({"owner": true, "attendee": true})
@@ -65,28 +70,27 @@ fn a_booked_meeting_has_its_organizer_attending_and_the_invitee_named() {
 }
 
 #[test]
-fn a_zone_with_no_name_is_refused() {
-    let fixed = at("2026-11-06T15:00:00-05:00[-05:00]");
-    let invitation = Invitation {
-        title: "t",
-        description: None,
-        start: &fixed,
-        duration: SignedDuration::from_mins(30),
-        location: None,
-        organizer: "agent@example.org",
-        organizer_attends: false,
-        invited: &[],
-    };
-    assert!(invitation.event().is_err());
+fn only_a_named_zone_of_the_database_is_a_zone() {
+    assert_eq!(NEW_YORK.name(), "America/New_York");
+    assert!(Zone::named("-05:00").is_err());
+    assert!("Nowhere/Else".parse::<Zone>().is_err());
 }
 
 #[test]
 fn a_change_sets_only_the_parts_given() {
-    let start = at("2026-11-06T16:30:00-05:00[America/New_York]");
-    let change = Details { start: Some(&start), location: Some("WVH 366"), ..Details::default() };
+    let start = at("2026-11-06T21:30:00Z");
+    let change = Details { start: Some(start), location: Some("WVH 366"), ..Details::default() };
     assert_eq!(
-        serde_json::Value::Object(change.properties().unwrap()),
+        serde_json::Value::Object(change.properties()),
         json!({"start": "2026-11-06T16:30:00", "timeZone": "America/New_York", "locations": {"place": {"name": "WVH 366"}}})
     );
-    assert!(Details::default().properties().unwrap().is_empty());
+    assert!(Details::default().properties().is_empty());
+}
+
+#[test]
+fn a_calendar_address_keeps_its_local_part_as_one_part() {
+    assert_eq!(mailto("owen@example.org"), "mailto:owen@example.org");
+    assert_eq!(mailto("agent+pool@example.org"), "mailto:agent+pool@example.org");
+    assert_eq!(mailto("x%40evil.com#@example.org"), "mailto:x%2540evil.com%23@example.org");
+    assert_eq!(mailto("a=b?c@example.org"), "mailto:a%3Db%3Fc@example.org");
 }

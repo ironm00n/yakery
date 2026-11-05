@@ -34,7 +34,7 @@ fn the_event_names_the_owner_as_organizer_and_the_booker_as_attendee() {
     .unwrap();
     let booking = Booking { start: "2026-10-27T15:00:00Z".parse().unwrap(), booker };
     let limits = Checked::new(issue).unwrap();
-    let event = event(&fixture(), "owen@example.test", token.digest(), &limits, &booking).unwrap();
+    let event = event(&fixture(), "owen@example.test", token.digest(), &limits, &booking);
     assert_eq!(event["start"], "2026-10-27T11:00:00");
     assert_eq!(event["timeZone"], "America/New_York");
     assert_eq!(event["duration"], "PT30M");

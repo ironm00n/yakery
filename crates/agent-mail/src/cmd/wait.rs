@@ -45,7 +45,7 @@ exits!(timeout 2, deferred 3);
 // Every open inbox mail is matched on these alone, since Stalwart parses each message for an Email's attachments, and
 // a few hundred of those outlast a request.
 wire! {
-    views {
+    views under Mail {
         Addressed in "Email/get" {
             id: String = "id", thread: String = "threadId", to: Vec<Addr> = "to",
             cc: Vec<Addr> = "cc", mailboxes: HashMap<String, bool> = "mailboxIds",

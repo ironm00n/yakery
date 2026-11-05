@@ -650,13 +650,13 @@ let
 
     with subtest("an update moves his copy, the same event with a higher sequence"):
         before = owners_copy("Invite test")
-        host1.succeed(f"{agent} invite update {made} --start 2027-01-06T16:00:00Z")
+        host1.succeed(f"{agent} invite update {made} --topic invite --start 2027-01-06T16:00:00Z")
         retry(lambda _: owners_copy("Invite test")["start"] == "2027-01-06T11:00:00", timeout_seconds=60)
         after = owners_copy("Invite test")
         assert after["uid"] == before["uid"] and after.get("sequence", 0) > before.get("sequence", 0), (before, after)
 
     with subtest("a cancel takes it off his calendar, and agent@ lists no invitation"):
-        host1.succeed(f"{agent} invite cancel {made}")
+        host1.succeed(f"{agent} invite cancel {made} --topic invite")
         retry(lambda _: (owners_copy("Invite test") or {"status": "gone"})["status"] in ("gone", "cancelled"), timeout_seconds=60)
         print("owner@'s copy after the cancel, gone or marked cancelled:", owners_copy("Invite test"))
         assert host1.succeed(f"{agent} invites --topic invite").strip() == "no invitations"

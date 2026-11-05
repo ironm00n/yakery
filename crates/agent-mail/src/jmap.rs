@@ -10,42 +10,48 @@ pub fn nullable<'de, D: serde::Deserializer<'de>, T: Default + Deserialize<'de>>
 /// reply that lacks one fails; null, JMAP's empty, reads as the default.
 pub trait View: DeserializeOwned {
     const GET: &str;
-    const CAP: Cap = Cap::Mail;
+    const CAP: Cap;
     const PROPERTIES: &[&str];
     const VALUES: Option<(&str, usize)> = None;
 }
 
-/// What a method belongs to beyond JMAP's core: mail, with submission, or calendars. Each names the capabilities a
-/// request declares, and the capability whose primary account the method acts on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Cap {
-    Mail,
-    Calendars,
-}
-
+pub const CORE: &str = "urn:ietf:params:jmap:core";
 const MAIL: &str = "urn:ietf:params:jmap:mail";
 const SUBMISSION: &str = "urn:ietf:params:jmap:submission";
 const CALENDARS: &str = "urn:ietf:params:jmap:calendars";
 
-impl Cap {
-    pub const fn using(self) -> &'static [&'static str] {
-        match self {
-            Cap::Mail => &[MAIL, SUBMISSION],
-            Cap::Calendars => &[CALENDARS],
-        }
-    }
+/// `Cap => name [the capabilities a request declares] @ the one whose primary account the method acts on`.
+macro_rules! caps {
+    ($($cap:ident => $name:literal [$($urn:ident),+] @ $account:ident),* $(,)?) => {
+        /// What a method belongs to beyond JMAP's core.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub enum Cap { $($cap),* }
 
-    /// The capability the session names the method's account under, among its primary accounts.
-    pub const fn account(self) -> &'static str {
-        match self {
-            Cap::Mail => MAIL,
-            Cap::Calendars => CALENDARS,
+        impl Cap {
+            pub const ALL: &[Cap] = &[$(Cap::$cap),*];
+
+            pub const fn name(self) -> &'static str {
+                match self { $(Cap::$cap => $name),* }
+            }
+
+            pub const fn using(self) -> &'static [&'static str] {
+                match self { $(Cap::$cap => &[$($urn),+]),* }
+            }
+
+            pub const fn account(self) -> &'static str {
+                match self { $(Cap::$cap => $account),* }
+            }
         }
-    }
+    };
+}
+
+caps! {
+    Mail => "mail" [MAIL, SUBMISSION] @ MAIL,
+    Calendars => "calendars" [CALENDARS] @ CALENDARS,
 }
 
 macro_rules! wire {
-    (views { $($view:ident in $get:literal $(under $cap:ident)? $(with ($bodies:literal, $bytes:expr))? {
+    (views under $cap:ident { $($view:ident in $get:literal $(with ($bodies:literal, $bytes:expr))? {
         $($vf:ident: $vt:ty = $vp:literal),* $(,)?
     })* }
      objects { $($object:ident { $($of:ident: $ot:ty = $op:literal),* $(,)? })* }) => {
@@ -53,7 +59,7 @@ macro_rules! wire {
             wire!(@struct [] $view { $($vf: $vt = $vp),* });
             impl $crate::jmap::View for $view {
                 const GET: &str = $get;
-                $(const CAP: $crate::jmap::Cap = $crate::jmap::Cap::$cap;)?
+                const CAP: $crate::jmap::Cap = $crate::jmap::Cap::$cap;
                 const PROPERTIES: &[&str] = &[$($vp),*];
                 $(const VALUES: Option<(&str, usize)> = Some(($bodies, $bytes));)?
             }

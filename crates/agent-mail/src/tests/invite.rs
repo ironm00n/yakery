@@ -70,6 +70,8 @@ async fn a_new_invitation_is_an_event_in_the_default_calendar_that_stalwart_send
     );
     assert_eq!(event["duration"], "PT30M");
     assert_eq!(event["organizerCalendarAddress"], "mailto:agent+pool@example.org");
+    let uid = event["uid"].as_str().unwrap();
+    assert!(uid.len() == 32 + "@example.org".len() && uid.ends_with("@example.org"), "{uid}");
     assert_eq!(event["participants"]["organizer"]["roles"], json!({ "owner": true }));
     assert_eq!(event["participants"]["invited0"]["calendarAddress"], format!("mailto:{HIM}"));
 }
@@ -88,15 +90,31 @@ async fn a_login_with_no_default_calendar_makes_one_first() {
     );
 }
 
+/// An invitation from `organizer` already in the calendar, as `e1`, in `zone`.
+fn held(organizer: &str, zone: &str) -> Value {
+    json!({
+        "id": "e1", "uid": "u1", "title": "t", "start": "2026-11-06T15:00:00", "timeZone": zone,
+        "organizerCalendarAddress": format!("mailto:{organizer}"), "participants": {},
+    })
+}
+
 #[tokio::test]
 async fn an_update_sends_only_what_changes_and_a_cancel_destroys_the_event() {
     let dir = Scratch::new("invite-change");
     let mut stalwart = with_calendars(vec![]);
-    stalwart.events = vec![json!({ "id": "e1", "title": "t", "start": "2026-11-06T15:00:00" })];
+    stalwart.events = vec![held("agent+pool@example.org", "America/New_York")];
     let (_wire, server, mail) = mail(&dir, stalwart).await;
     let mail = mail.unwrap();
-    let moved =
-        asked(&["update", "e1", "--start", "2026-11-06T21:30:00Z", "--location", "WVH 366"]);
+    let moved = asked(&[
+        "update",
+        "e1",
+        "--topic",
+        "pool",
+        "--start",
+        "2026-11-06T21:30:00Z",
+        "--location",
+        "WVH 366",
+    ]);
     assert_eq!(invite(&mail, moved).await.unwrap(), "e1");
     let (_, args) = request(&server.borrow(), "CalendarEvent/set");
     assert_eq!(args["sendSchedulingMessages"], true);
@@ -104,13 +122,61 @@ async fn an_update_sends_only_what_changes_and_a_cancel_destroys_the_event() {
         args["update"],
         json!({ "e1": { "start": "2026-11-06T16:30:00", "timeZone": "America/New_York", "locations": { "place": { "name": "WVH 366" } } } })
     );
-    let nothing = invite(&mail, asked(&["update", "e1"])).await;
-    assert_eq!(nothing.map_err(|e| e.to_string()).unwrap_err(), "nothing to change");
     server.borrow_mut().requests.clear();
-    invite(&mail, asked(&["cancel", "e1"])).await.unwrap();
+    invite(&mail, asked(&["cancel", "e1", "--topic", "pool"])).await.unwrap();
     let (_, args) = request(&server.borrow(), "CalendarEvent/set");
     assert_eq!((&args["destroy"], &args["sendSchedulingMessages"]), (&json!(["e1"]), &json!(true)));
     assert!(server.borrow().events.is_empty());
+}
+
+#[tokio::test]
+async fn an_update_keeps_the_events_zone_and_another_topics_invitation_is_refused() {
+    let dir = Scratch::new("invite-zone");
+    let mut stalwart = with_calendars(vec![]);
+    stalwart.events = vec![held("agent+pool@example.org", "Europe/Paris")];
+    let (_wire, server, mail) = mail(&dir, stalwart).await;
+    let mail = mail.unwrap();
+    invite(&mail, asked(&["update", "e1", "--topic", "pool", "--start", "2026-11-06T20:00:00Z"]))
+        .await
+        .unwrap();
+    let (_, args) = request(&server.borrow(), "CalendarEvent/set");
+    assert_eq!(
+        args["update"]["e1"],
+        json!({ "start": "2026-11-06T21:00:00", "timeZone": "Europe/Paris" })
+    );
+    server.borrow_mut().requests.clear();
+    for change in [
+        &["update", "e1", "--topic", "other", "--title", "x"][..],
+        &["cancel", "e1", "--topic", "other"],
+    ] {
+        let refused = invite(&mail, asked(change)).await.map_err(|e| e.to_string());
+        assert_eq!(
+            refused.unwrap_err(),
+            "event e1 isn't an invitation from mailto:agent+other@example.org"
+        );
+    }
+    assert!(server.borrow().requests.iter().all(|r| r["methodCalls"][0][0] != "CalendarEvent/set"));
+}
+
+#[tokio::test]
+async fn an_invitation_made_again_is_the_one_already_made() {
+    let dir = Scratch::new("invite-again");
+    let (_wire, server, mail) = mail(&dir, with_calendars(vec![])).await;
+    let mail = mail.unwrap();
+    assert_eq!(invite(&mail, asked(NEW)).await.unwrap(), "e1");
+    assert_eq!(invite(&mail, asked(NEW)).await.unwrap(), "e1");
+    assert_eq!(server.borrow().events.len(), 1);
+    let other = [NEW, &["--location", "elsewhere"]].concat();
+    assert_eq!(
+        invite(&mail, asked(&other)).await.unwrap(),
+        "e1",
+        "the place doesn't make it another invitation"
+    );
+    let renamed: Vec<&str> = NEW
+        .iter()
+        .map(|w| if *w == "Review the NEU sync page" { "Another review" } else { w })
+        .collect();
+    assert_eq!(invite(&mail, asked(&renamed)).await.unwrap(), "e2");
 }
 
 #[tokio::test]
@@ -173,6 +239,8 @@ async fn a_session_with_no_calendars_account_refuses_an_invitation_and_mail_asks
 fn the_cli_refuses_what_a_change_cannot_mean() {
     let refused = |args: &[&str]| command(&[&["invite"], args].concat()).is_err();
     assert!(refused(&["cancel", "e1", "--title", "t"]));
+    assert!(refused(&["update", "e1"]));
+    assert!(refused(&["update", "e1", "--title", "t", "--zone", "Europe/Paris"]));
     assert!(refused(&["update", "e1", "--zone", "Europe/Paris"]));
     assert!(refused(&["update", "e1", "--start", "2026-11-06T15:00:00", "--zone", "Europe/Paris"]));
     assert!(refused(&[

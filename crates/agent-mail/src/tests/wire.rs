@@ -429,7 +429,17 @@ impl Stalwart {
                 })
             }
             "Calendar/get" => json!({ "list": self.calendars }),
-            "CalendarEvent/get" => json!({ "list": self.events }),
+            "CalendarEvent/get" => {
+                let asked = args["ids"].as_array();
+                let list =
+                    self.events.iter().filter(|e| asked.is_none_or(|ids| ids.contains(&e["id"])));
+                json!({ "list": list.collect::<Vec<_>>() })
+            }
+            "CalendarEvent/query" => {
+                let uid = &args["filter"]["uid"];
+                let ids = self.events.iter().filter(|e| e["uid"] == *uid).map(|e| e["id"].clone());
+                json!({ "ids": ids.collect::<Vec<_>>() })
+            }
             "Calendar/set" => {
                 let created = made(&mut self.calendars, "c", &args["create"]);
                 let default =
@@ -440,7 +450,18 @@ impl Stalwart {
                 json!({ "created": created })
             }
             "CalendarEvent/set" => {
-                let created = made(&mut self.events, "e", &args["create"]);
+                // Stalwart refuses a second event with a uid the account holds
+                let (fresh, taken): (Map<String, Value>, Map<String, Value>) =
+                    (args["create"].as_object().cloned().unwrap_or_default().into_iter())
+                        .partition(|(_, e)| {
+                            !self.events.iter().any(|held| held["uid"] == e["uid"])
+                        });
+                let created = made(&mut self.events, "e", &Value::Object(fresh));
+                let refused: Map<String, Value> = (taken.into_iter())
+                    .map(|(k, _)| {
+                        (k, json!({ "type": "invalidProperties", "properties": ["uid"] }))
+                    })
+                    .collect();
                 let mut updated = Map::new();
                 for (id, patch) in args["update"].as_object().into_iter().flatten() {
                     let event =
@@ -450,7 +471,7 @@ impl Stalwart {
                 }
                 let destroyed = args["destroy"].as_array().cloned().unwrap_or_default();
                 self.events.retain(|e| !destroyed.contains(&e["id"]));
-                json!({ "created": created, "updated": updated, "destroyed": destroyed })
+                json!({ "created": created, "notCreated": refused, "updated": updated, "destroyed": destroyed })
             }
             _ => return Err("unknownMethod"),
         })

@@ -39,6 +39,7 @@ dependencies = [
  "mail-parser",
  "private",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

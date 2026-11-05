@@ -214,7 +214,7 @@ pub fn sender(login: &Login, topic: Option<&Topic>, parent: Option<&Email>) -> R
         (Some(topic), _) => login.address().subaddress(topic),
         (None, Some(address)) => Ok(address),
         (None, None) => login.bare_sender().context(
-            "send needs --topic, or --reply to mail sent to one of the login's topic addresses",
+            "a shared login sends from a --topic, or in reply to mail sent to one of its topic addresses",
         ),
     }
 }

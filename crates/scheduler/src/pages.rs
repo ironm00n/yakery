@@ -36,7 +36,7 @@ impl Viewer {
     pub fn new(tz: Option<&str>) -> Viewer {
         match tz.and_then(|tz| jiff::tz::db().get(tz).ok().map(|zone| (tz, zone))) {
             Some((tz, zone)) => Viewer { zone, tz: Some(tz.into()) },
-            None => Viewer { zone: POLICY.zone.clone(), tz: None },
+            None => Viewer { zone: POLICY.zone.time_zone(), tz: None },
         }
     }
 

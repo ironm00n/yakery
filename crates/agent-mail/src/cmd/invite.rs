@@ -3,8 +3,9 @@
 
 use std::process::ExitCode;
 
-use invitation::{Details, Invitation, Person};
-use jiff::{SignedDuration, Timestamp, tz::TimeZone};
+use invitation::{At, Details, Invitation, Person, Zone, mailto};
+use jiff::{SignedDuration, Timestamp};
+use ring::digest::{SHA256, digest};
 use text::Address;
 
 use super::{send::sender, succeed};
@@ -13,14 +14,14 @@ use crate::{
     address::Topic,
     jmap::{Call, wire},
     mail::{Answer, Mail},
-    policy::Recipients,
+    policy::{Login, Recipients},
     prelude::*,
 };
 
 wire! {
-    views {
-        Calendar in "Calendar/get" under Calendars { id: String = "id", default: bool = "isDefault" }
-        Event in "CalendarEvent/get" under Calendars {
+    views under Calendars {
+        Calendar in "Calendar/get" { id: String = "id", default: bool = "isDefault" }
+        Event in "CalendarEvent/get" {
             id: String = "id", title: String = "title", start: String = "start", zone: String = "timeZone",
             organizer: String = "organizerCalendarAddress",
             participants: HashMap<String, Participant> = "participants",
@@ -36,6 +37,7 @@ wire! {
 
 const CALENDARS: Call = Call::calendars("Calendar/set", None);
 const EVENTS: Call = Call::calendars("CalendarEvent/set", None);
+const FIND: Call = Call::calendars("CalendarEvent/query", None);
 
 #[derive(clap::Subcommand)]
 pub enum Args {
@@ -44,7 +46,7 @@ pub enum Args {
     /// Change an invitation; Stalwart sends everyone invited the update.
     Update(Update),
     /// Cancel an invitation; Stalwart sends everyone invited the cancel.
-    Cancel { id: String },
+    Cancel(Cancel),
 }
 
 #[derive(clap::Args)]
@@ -62,25 +64,37 @@ pub struct New {
     #[arg(long)]
     duration: SignedDuration,
     /// The event's time zone, which calendar apps show it in and keep its local time by; the deployment's by default.
-    #[arg(long, value_parser = zone)]
-    zone: Option<TimeZone>,
+    #[arg(long)]
+    zone: Option<Zone>,
     #[command(flatten)]
     text: Text,
 }
 
 #[derive(clap::Args)]
+#[command(group(clap::ArgGroup::new("change").required(true).multiple(true)
+    .args(["title", "start", "duration", "location", "note"])))]
 pub struct Update {
     id: String,
+    /// The topic the invitation went from; only its organizer changes it.
+    #[arg(long)]
+    topic: Option<Topic>,
     #[arg(long)]
     title: Option<String>,
     #[arg(long)]
     start: Option<Timestamp>,
     #[arg(long)]
     duration: Option<SignedDuration>,
-    #[arg(long, value_parser = zone, requires = "start")]
-    zone: Option<TimeZone>,
+    #[arg(long, requires = "start")]
+    zone: Option<Zone>,
     #[command(flatten)]
     text: Text,
+}
+
+#[derive(clap::Args)]
+pub struct Cancel {
+    id: String,
+    #[arg(long)]
+    topic: Option<Topic>,
 }
 
 #[derive(clap::Args)]
@@ -97,14 +111,43 @@ pub struct List {
     topic: Option<Topic>,
 }
 
-fn zone(name: &str) -> Result<TimeZone, jiff::Error> {
-    jiff::tz::db().get(name)
+fn deployment_zone() -> Result<Zone> {
+    Zone::named(TIME_ZONE).context("the deployment's time zone")
 }
 
-fn zoned(at: Timestamp, zone: Option<TimeZone>) -> Result<jiff::Zoned> {
-    let zone =
-        zone.map_or_else(|| self::zone(TIME_ZONE).context("the deployment's time zone"), Ok)?;
-    Ok(at.to_zoned(zone))
+/// An invitation's uid, from what makes it the same invitation, so `invite new` run again finds the event an
+/// earlier run may have made instead of inviting twice.
+fn uid(
+    organizer: &Address,
+    invited: &[String],
+    title: &str,
+    start: Timestamp,
+    duration: SignedDuration,
+) -> String {
+    let mut invited = invited.to_vec();
+    invited.sort();
+    let key = format!("{organizer}\n{}\n{title}\n{start}\n{duration}", invited.join("\n"));
+    let hash = private::hex::encode(digest(&SHA256, key.as_bytes()).as_ref());
+    format!("{}@{}", &hash[..32], organizer.domain())
+}
+
+/// The event with `uid`, if the login's calendar holds one.
+async fn made(mail: &Mail, uid: &str) -> Result<Option<String>> {
+    Ok(mail.call(FIND, json!({ "filter": { "uid": uid } })).await?.ids.into_iter().next())
+}
+
+/// The event `id`, refused unless this session organized it: from the shared login, another topic's invitation
+/// isn't this session's to change.
+async fn mine(mail: &Mail, login: &Login, id: &str, topic: Option<&Topic>) -> Result<Event> {
+    let organizer = mailto(&sender(login, topic, None)?.to_string());
+    let event = mail
+        .get::<Event>(&[id])
+        .await?
+        .into_iter()
+        .next()
+        .with_context(|| format!("no event {id}"))?;
+    ensure!(event.organizer == organizer, "event {id} isn't an invitation from {organizer}");
+    Ok(event)
 }
 
 pub async fn run(args: Args) -> Result<ExitCode> {
@@ -118,13 +161,16 @@ pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
             let login = mail.login();
             let envelope =
                 Recipients::check(login, sender(login, new.topic.as_ref(), None)?, new.to, vec![])?;
-            let start = zoned(new.start, new.zone)?;
+            let zone = new.zone.map_or_else(deployment_zone, Ok)?;
+            let start = At { when: new.start, zone: &zone };
             let addresses: Vec<String> = envelope.to.iter().map(Address::to_string).collect();
             let invited: Vec<Person> =
                 addresses.iter().map(|a| Person { address: a, name: None }).collect();
+            let uid = uid(&envelope.from, &addresses, &new.title, new.start, new.duration);
             let mut event = Invitation {
+                uid: &uid,
                 title: &new.title,
-                start: &start,
+                start,
                 duration: new.duration,
                 description: new.text.note.as_deref(),
                 location: new.text.location.as_deref(),
@@ -132,47 +178,62 @@ pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
                 organizer_attends: false,
                 invited: &invited,
             }
-            .event()?;
+            .event();
             let calendar = calendar(mail).await?;
             event["calendarIds"] = json!({ calendar: true });
-            let answer = set(mail, json!({ "create": { "i": event } })).await?;
-            let id = answer.created["i"]["id"].as_str().map(String::from);
-            id.with_context(|| format!("stalwart made no event: {}", json!(answer.not_created)))
+            let created = set(mail, json!({ "create": { "i": event } })).await;
+            match created.and_then(|answer| Ok(answer.id("i")?.to_string())) {
+                Ok(id) => Ok(id),
+                // refused as a uid already taken, or with an answer that never came: the uid finds what was made
+                Err(e) => match made(mail, &uid).await {
+                    Ok(Some(id)) => {
+                        note!("{uid} was already made, as {id}");
+                        Ok(id)
+                    }
+                    Ok(None) => Err(e),
+                    Err(lookup) => {
+                        Err(e.context(format!("and looking {uid} up failed too: {lookup:#}")))
+                    }
+                },
+            }
         }
         Args::Update(update) => {
-            let start = update.start.map(|at| zoned(at, update.zone)).transpose()?;
+            let event = mine(mail, mail.login(), &update.id, update.topic.as_ref()).await?;
+            let zone = match (update.start, update.zone) {
+                (None, _) => None,
+                (Some(_), Some(zone)) => Some(zone),
+                (Some(_), None) => Some(Zone::named(&event.zone).or_else(|_| deployment_zone())?),
+            };
+            let start = update.start.zip(zone.as_ref()).map(|(when, zone)| At { when, zone });
             let change = Details {
                 title: update.title.as_deref(),
                 description: update.text.note.as_deref(),
-                start: start.as_ref(),
+                start,
                 duration: update.duration,
                 location: update.text.location.as_deref(),
             }
-            .properties()?;
-            ensure!(!change.is_empty(), "nothing to change");
-            let answer = set(mail, json!({ "update": { &update.id: change } })).await?;
-            ensure!(
-                answer.not_updated.is_empty(),
-                "stalwart refused the update: {}",
-                json!(answer.not_updated)
-            );
+            .properties();
+            set(mail, json!({ "update": { &update.id: change } })).await?;
             Ok(update.id)
         }
-        Args::Cancel { id } => {
-            let answer = set(mail, json!({ "destroy": [&id] })).await?;
-            ensure!(
-                answer.not_destroyed.is_empty(),
-                "stalwart refused the cancel: {}",
-                json!(answer.not_destroyed)
+        Args::Cancel(cancel) => {
+            mine(mail, mail.login(), &cancel.id, cancel.topic.as_ref()).await?;
+            set(mail, json!({ "destroy": [&cancel.id] })).await?;
+            // the uid comes from the invitation's fields, and calendars keep a cancelled uid
+            note!(
+                "inviting the same people to the same title, start and length again would reuse this uid, which their calendars hold as cancelled; change one of those"
             );
-            Ok(id)
+            Ok(cancel.id)
         }
     }
 }
 
+/// A CalendarEvent/set that Stalwart sends the scheduling messages of, and that it took whole.
 async fn set(mail: &Mail, mut args: Value) -> Result<Answer> {
     args["sendSchedulingMessages"] = json!(true);
-    mail.call(EVENTS, args).await
+    let answer = mail.call(EVENTS, args).await?;
+    answer.taken()?;
+    Ok(answer)
 }
 
 /// The login's default calendar, made first when it has none.
@@ -182,9 +243,7 @@ async fn calendar(mail: &Mail) -> Result<String> {
     }
     let made =
         json!({ "create": { "c": { "name": "Invitations" } }, "onSuccessSetIsDefault": "#c" });
-    let answer = mail.call(CALENDARS, made).await?;
-    let id = answer.created["c"]["id"].as_str().map(String::from);
-    id.with_context(|| format!("stalwart made no calendar: {}", json!(answer.not_created)))
+    Ok(mail.call(CALENDARS, made).await?.id("c")?.to_string())
 }
 
 pub async fn list(args: List) -> Result<ExitCode> {

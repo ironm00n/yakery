@@ -60,7 +60,7 @@ impl<C: Calendar> Core<C> {
     }
 
     fn today(&self) -> Date {
-        (self.clock)().to_zoned(self.policy.zone.clone()).date()
+        (self.clock)().to_zoned(self.policy.zone.time_zone()).date()
     }
 
     /// Each claim goes on its own, so one Stalwart refuses or can't be reached for leaves the others.
@@ -81,7 +81,7 @@ impl<C: Calendar> Core<C> {
             return Ok(());
         };
         store.apply(|_| Ok(next))?;
-        let event = event(self.policy, self.calendar.owner(), digest, &limits, &claim.booking)?;
+        let event = event(self.policy, self.calendar.owner(), digest, &limits, &claim.booking);
         let created = self.calendar.create(event).await?;
         crash_point("created");
         store.apply(|links| Ok(links.settle(digest, created)))
