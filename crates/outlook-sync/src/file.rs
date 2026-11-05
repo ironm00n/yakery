@@ -18,9 +18,10 @@ impl FileName {
         &self.0
     }
 
-    /// The UID the sync writes into this file, by which the file is the sync's.
-    pub fn uid(&self, host: &str) -> String {
-        format!("{}@{host}", self.0)
+    /// The UID the sync writes into this file, by which the file is the sync's: no calendar app
+    /// makes one, and no deployment's settings change it.
+    pub fn uid(&self) -> String {
+        format!("{}@outlook-sync", self.0)
     }
 }
 

@@ -26,7 +26,7 @@ fn timed(extra: serde_json::Value) -> serde_json::Value {
 /// The occurrence's file, unfolded: tests that read whole lines don't care where it folds.
 fn rendered(value: serde_json::Value) -> String {
     let Change::Present(event) = change(value) else { panic!("not an occurrence") };
-    event.ics("schedule.example.test", now()).unwrap().expect("not cancelled").replace("\r\n ", "")
+    event.ics(now()).unwrap().expect("not cancelled").replace("\r\n ", "")
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn a_timed_occurrence_is_one_vevent_in_utc_named_by_its_graph_id() {
     let ics = rendered(timed(json!({})));
     let name = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff";
     for line in [
-        format!("UID:{name}@schedule.example.test"),
+        format!("UID:{name}@outlook-sync"),
         "DTSTAMP:20261104T120000Z".into(),
         "DTSTART:20261105T150000Z".into(),
         "DTEND:20261105T163000Z".into(),
@@ -48,10 +48,10 @@ fn a_timed_occurrence_is_one_vevent_in_utc_named_by_its_graph_id() {
 #[test]
 fn the_file_the_sync_writes_reads_back_as_the_syncs_folded_as_written() {
     let Change::Present(event) = change(timed(json!({}))) else { panic!("not an occurrence") };
-    let ics = event.ics("schedule.example.test", now()).unwrap().expect("not cancelled");
+    let ics = event.ics(now()).unwrap().expect("not cancelled");
     assert!(ics.contains("\r\n "), "the UID line no longer folds:\n{ics}");
     let name = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff.ics";
-    assert!(crate::local::stamped(&name.parse().unwrap(), &ics, "schedule.example.test"));
+    assert!(crate::local::stamped(&name.parse().unwrap(), &ics));
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn all_day_free_tentative_and_private_carry_over() {
 #[test]
 fn cancelled_occurrences_and_removals_leave_the_mirror() {
     let Change::Present(cancelled) = change(timed(json!({"isCancelled": true}))) else { panic!() };
-    assert!(cancelled.ics("h", now()).unwrap().is_none());
+    assert!(cancelled.ics(now()).unwrap().is_none());
     let removed = change(json!({"id": "gone", "@removed": {"reason": "deleted"}}));
     assert!(matches!(removed, Change::Removed { id, .. } if id == "gone"));
 }
@@ -86,7 +86,7 @@ fn cancelled_occurrences_and_removals_leave_the_mirror() {
 fn text_is_escaped_and_long_lines_fold_between_characters() {
     let subject = format!("a, b; c\\d\nnext {}", "é".repeat(60));
     let Change::Present(event) = change(timed(json!({"subject": subject}))) else { panic!() };
-    let folded = event.ics("h", now()).unwrap().unwrap();
+    let folded = event.ics(now()).unwrap().unwrap();
     for line in folded.split("\r\n") {
         assert!(line.len() <= 75, "{} octets: {line}", line.len());
     }
@@ -104,5 +104,5 @@ fn a_time_outside_utc_is_refused() {
     )) else {
         panic!()
     };
-    assert!(event.ics("h", now()).is_err());
+    assert!(event.ics(now()).is_err());
 }

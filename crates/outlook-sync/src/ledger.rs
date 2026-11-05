@@ -8,9 +8,12 @@ use anyhow::Result;
 use private::Dir;
 use serde::{Deserialize, Serialize};
 
-use crate::caldav::{Entry, Mirror};
 use crate::file::FileName;
 use crate::{local, state};
+
+#[path = "caldav.rs"]
+mod caldav;
+pub use caldav::{Entry, Mirror};
 
 #[derive(Default, Serialize, Deserialize)]
 struct Record {
@@ -46,13 +49,12 @@ pub fn plan(entry: &Entry, mirrored: Option<&Mirrored>) -> Edit {
 pub struct Ledger<'a> {
     mirror: &'a Mirror,
     state: &'a Dir,
-    host: &'a str,
     record: Record,
 }
 
 impl<'a> Ledger<'a> {
-    pub fn open(mirror: &'a Mirror, state: &'a Dir, host: &'a str) -> Result<Ledger<'a>> {
-        Ok(Ledger { mirror, state, host, record: state.load(state::WRITTEN)? })
+    pub fn open(mirror: &'a Mirror, state: &'a Dir) -> Result<Ledger<'a>> {
+        Ok(Ledger { mirror, state, record: state.load(state::WRITTEN)? })
     }
 
     pub fn save(&self) -> Result<()> {
@@ -75,10 +77,6 @@ impl<'a> Ledger<'a> {
     pub fn looked_up_to(&mut self, token: String) -> Result<()> {
         self.record.token = Some(token);
         self.save()
-    }
-
-    pub async fn get(&self, file: &FileName) -> Result<Option<(String, String)>> {
-        self.mirror.get(file).await
     }
 
     pub fn record(&mut self, file: FileName, mirrored: Mirrored) -> Result<()> {
@@ -126,8 +124,8 @@ impl<'a> Ledger<'a> {
         for file in self.mirror.files().await?.difference(seen) {
             let ours = !owners_kept
                 || self.record.files.contains_key(file)
-                || (self.get(file).await?)
-                    .is_some_and(|(ics, _)| local::stamped(file, &ics, self.host));
+                || (self.mirror.get(file).await?)
+                    .is_some_and(|(ics, _)| local::stamped(file, &ics));
             if ours {
                 gone.push(file.clone());
             }

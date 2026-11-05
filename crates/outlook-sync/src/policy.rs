@@ -86,10 +86,6 @@ impl Public {
     pub fn prefix(&self) -> &str {
         &self.prefix
     }
-
-    pub fn host(&self) -> &str {
-        &self.host
-    }
 }
 
 impl Policy {

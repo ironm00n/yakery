@@ -7,11 +7,10 @@ use jiff::{SignedDuration, Timestamp};
 use private::{Dir, Secret};
 use tokio::sync::mpsc;
 
-use crate::caldav::{Entry, Mirror};
 use crate::event::Change;
 use crate::file::FileName;
 use crate::graph::{Delta, Graph, Refused};
-use crate::ledger::{Edit, Ledger, Mirrored};
+use crate::ledger::{Edit, Entry, Ledger, Mirror, Mirrored};
 use crate::local;
 use crate::policy::Policy;
 use crate::state::{self, Subscription, Tokens};
@@ -131,7 +130,7 @@ impl Sync {
             yakery_log::warn!("not signed in; run `outlook-sync login`");
             return Ok(());
         }
-        let mut ledger = Ledger::open(&self.mirror, &self.state, self.policy.public.host())?;
+        let mut ledger = Ledger::open(&self.mirror, &self.state)?;
         // a listing first records Outlook's files, so his edits of them are told from the sync's
         let listed = self.policy.write && !ledger.looked();
         if listed {
@@ -161,7 +160,7 @@ impl Sync {
                     ledger.forget(&file)?;
                 }
                 Edit::Edited(mirrored) => {
-                    let Some((ics, etag)) = ledger.get(&file).await? else { continue };
+                    let Some((ics, etag)) = self.mirror.get(&file).await? else { continue };
                     let sent = match local::graph(&ics) {
                         Err(e) => Err(Refused(format!("{e:#}"))),
                         Ok(event) => self.graph.update(&mirrored.id, event).await?,
@@ -172,8 +171,8 @@ impl Sync {
                     ledger.record(file, Mirrored { etag, ..mirrored })?;
                 }
                 Edit::New => {
-                    let Some((ics, _)) = ledger.get(&file).await? else { continue };
-                    match local::owned(&file, &ics, self.policy.public.host()) {
+                    let Some((ics, _)) = self.mirror.get(&file).await? else { continue };
+                    match local::owned(&file, &ics) {
                         Ok(None) => {
                             self.put_back(&file, Refused("the sync's file, unrecorded".into()))
                         }
@@ -265,7 +264,7 @@ impl Sync {
         let (id, ics) = match change {
             Change::Removed { id, .. } => (id, None),
             Change::Present(event) => {
-                let ics = event.ics(self.policy.public.host(), now)?;
+                let ics = event.ics(now)?;
                 (event.id, ics)
             }
         };

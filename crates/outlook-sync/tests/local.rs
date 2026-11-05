@@ -125,18 +125,23 @@ fn a_floating_time_names_no_instant_and_is_refused() {
 fn a_file_carrying_the_syncs_uid_for_its_name_never_goes_out_as_new() {
     let stem = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff";
     let file: FileName = format!("{stem}.ics").parse().unwrap();
-    let ours = ios("").replace("UID:ABC", &format!("UID:{stem}@schedule.example.test"));
-    assert!(owned(&file, &ours, "schedule.example.test").unwrap().is_none());
-    let mine = owned(&file, &ios(""), "schedule.example.test").unwrap().expect("the owner's");
+    let ours = ios("").replace("UID:ABC", &format!("UID:{stem}@outlook-sync"));
+    assert!(owned(&file, &ours).unwrap().is_none());
+    let mine = owned(&file, &ios("")).unwrap().expect("the owner's");
     assert_eq!(mine.body()["transactionId"], stem);
 }
 
 #[test]
 fn a_copy_of_the_syncs_file_under_another_name_is_the_owners() {
     let stem = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff";
-    let ours = ios("").replace("UID:ABC", &format!("UID:{stem}@schedule.example.test"));
-    let copied = owned(&"copy.ics".parse().unwrap(), &ours, "schedule.example.test")
-        .unwrap()
-        .expect("the owner's");
+    let ours = ios("").replace("UID:ABC", &format!("UID:{stem}@outlook-sync"));
+    let copied = owned(&"copy.ics".parse().unwrap(), &ours).unwrap().expect("the owner's");
     assert_eq!(copied.body()["transactionId"], "copy");
+}
+
+#[test]
+fn an_apps_uid_of_its_file_stem_at_its_own_domain_is_the_owners() {
+    let file: FileName = "4A1B-77.ics".parse().unwrap();
+    let app = ios("").replace("UID:ABC", "UID:4A1B-77@icloud.com");
+    assert!(owned(&file, &app).unwrap().is_some());
 }

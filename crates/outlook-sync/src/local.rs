@@ -99,9 +99,8 @@ fn graph_time(at: &At) -> Result<Value> {
     Ok(json!({"dateTime": civil.strftime("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": zone}))
 }
 
-pub fn stamped(file: &FileName, ics: &str, host: &str) -> bool {
-    let uid = file.uid(host);
-    vevent(ics).is_ok_and(|lines| lines.iter().any(|l| l.name == "UID" && l.value == uid))
+pub fn stamped(file: &FileName, ics: &str) -> bool {
+    vevent(ics).is_ok_and(|lines| lines.iter().any(|l| l.name == "UID" && l.value == file.uid()))
 }
 
 /// An event the owner made, as Graph's create takes it; no file the sync wrote makes one.
@@ -113,8 +112,8 @@ impl Owned {
     }
 }
 
-pub fn owned(file: &FileName, ics: &str, host: &str) -> Result<Option<Owned>> {
-    if stamped(file, ics, host) {
+pub fn owned(file: &FileName, ics: &str) -> Result<Option<Owned>> {
+    if stamped(file, ics) {
         return Ok(None);
     }
     let mut body = graph(ics)?;

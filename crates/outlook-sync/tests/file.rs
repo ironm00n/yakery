@@ -6,7 +6,7 @@ fn a_graph_id_names_its_file_by_its_sha256() {
     let stem = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff";
     let name = FileName::of("AAMkAD=/x+y");
     assert_eq!(name.to_string(), format!("{stem}.ics"));
-    assert_eq!(name.uid("schedule.example.test"), format!("{stem}@schedule.example.test"));
+    assert_eq!(name.uid(), format!("{stem}@outlook-sync"));
 }
 
 #[test]

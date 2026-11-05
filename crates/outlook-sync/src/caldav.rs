@@ -4,43 +4,13 @@ use std::collections::BTreeSet;
 use std::fmt::Display;
 
 use anyhow::{Context, Result};
-use private::{Dir, Secret};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 
 const CALENDAR: &str = "text/calendar; charset=utf-8";
 
 use crate::file::FileName;
 use crate::policy::Policy;
-
-const APP_PASSWORD: &str = "app-password";
-
-/// The account the sync signs in to Stalwart as, with the app password systemd passes in.
-pub struct Account {
-    user: String,
-    password: Secret,
-}
-
-impl Account {
-    pub fn read(policy: &Policy, credentials: &Dir) -> Result<Account> {
-        let bytes = credentials.read(APP_PASSWORD)?.context("no app-password credential")?;
-        let password = Secret::new(String::from_utf8(bytes).context("the app password")?.trim());
-        Ok(Account { user: policy.account.clone(), password })
-    }
-
-    pub fn auth(&self, request: RequestBuilder) -> RequestBuilder {
-        request.basic_auth(&self.user, Some(self.password.expose()))
-    }
-
-    /// A 401 means the app password changed, so the process exits for systemd to start it with the new one.
-    pub async fn send(&self, request: RequestBuilder, what: &str) -> Result<Response> {
-        let reply = self.auth(request).send().await.with_context(|| format!("stalwart {what}"))?;
-        if reply.status() == StatusCode::UNAUTHORIZED {
-            yakery_log::warn!("{} was refused; exiting to read the app password again", self.user);
-            std::process::exit(75);
-        }
-        Ok(reply)
-    }
-}
+use crate::stalwart::Account;
 
 pub struct Mirror {
     client: Client,
@@ -64,7 +34,7 @@ impl Mirror {
     }
 
     /// The new ETag, or None when the file is no longer the version `over` names.
-    pub async fn put(
+    pub(super) async fn put(
         &self,
         file: &FileName,
         ics: String,
@@ -98,7 +68,7 @@ impl Mirror {
         }
     }
 
-    pub async fn delete(&self, file: &FileName) -> Result<()> {
+    pub(super) async fn delete(&self, file: &FileName) -> Result<()> {
         let status = self
             .send(self.request(Method::DELETE, file), &format!("DELETE {file}"))
             .await?

@@ -2,7 +2,6 @@
 //! mailbox's events change, and a delta query of the default calendar brings the mirror up to it.
 
 mod assertion;
-mod caldav;
 mod event;
 mod file;
 mod graph;
@@ -11,6 +10,7 @@ mod local;
 mod policy;
 mod push;
 mod serve;
+mod stalwart;
 mod state;
 mod sync;
 
@@ -82,9 +82,9 @@ async fn daemon(state: Rc<Dir>, http: std::os::fd::OwnedFd) -> Result<()> {
     let credentials = PathBuf::from(
         std::env::var_os("CREDENTIALS_DIRECTORY").context("the app password, by LoadCredential")?,
     );
-    let account: &'static caldav::Account =
-        Box::leak(Box::new(caldav::Account::read(&POLICY, &Dir::open(&credentials, &[])?)?));
-    let mirror = caldav::Mirror::new(&POLICY, account)?;
+    let account: &'static stalwart::Account =
+        Box::leak(Box::new(stalwart::Account::read(&POLICY, &Dir::open(&credentials, &[])?)?));
+    let mirror = ledger::Mirror::new(&POLICY, account)?;
     let graph = graph::Graph::new(&POLICY, Credential::read(&state)?, state.clone())?;
     let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
     if POLICY.write {

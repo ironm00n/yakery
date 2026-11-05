@@ -77,7 +77,7 @@ impl When {
 }
 
 impl Event {
-    pub fn ics(&self, host: &str, now: Timestamp) -> Result<Option<String>> {
+    pub fn ics(&self, now: Timestamp) -> Result<Option<String>> {
         if self.is_cancelled {
             return Ok(None);
         }
@@ -86,7 +86,7 @@ impl Event {
             "VERSION:2.0".into(),
             "PRODID:-//ironmoon//outlook-sync//EN".into(),
             "BEGIN:VEVENT".into(),
-            format!("UID:{}", FileName::of(&self.id).uid(host)),
+            format!("UID:{}", FileName::of(&self.id).uid()),
             format!("DTSTAMP:{}", now.strftime("%Y%m%dT%H%M%SZ")),
             self.start.property("DTSTART", self.is_all_day)?,
             self.end.property("DTEND", self.is_all_day)?,

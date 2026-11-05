@@ -8,8 +8,8 @@ use reqwest::Client;
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::caldav::Account;
 use crate::policy::Policy;
+use crate::stalwart::Account;
 use crate::sync::Wake;
 
 const AGAIN: Duration = Duration::from_secs(5);
