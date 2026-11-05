@@ -25,7 +25,9 @@ use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 
 use crate::Sockets;
-use crate::ask::{self, FrontAnswer, FrontAsk, Refusal};
+use crate::ask::{
+    self, Answer, BookAsk, Booked, FrontAsk, LinkAsk, Question, Refusal, Week, WeekAsk,
+};
 use crate::checked::Checked;
 use crate::link::{Form, MOST_NAME, MOST_NOTE, Token};
 use crate::pages::{self, Problem, Viewer};
@@ -66,17 +68,17 @@ struct Front<'a> {
 impl Front<'_> {
     /// Past [`ask::ANSWERED_WITHIN`] the core has claimed nothing; a booking that got no answer
     /// otherwise may have been claimed, and its page will say.
-    async fn ask(&self, question: FrontAsk) -> FrontAnswer {
-        let books = matches!(question, FrontAsk::Book { .. });
+    async fn ask<Q: Question>(&self, question: Q) -> Answer<Q::Answer> {
+        let question: FrontAsk = question.into();
         match tokio::time::timeout(ask::ANSWERED_WITHIN, ask::ask(self.core, &question)).await {
             Ok(Ok(answer)) => answer,
             Ok(Err(e)) => {
                 yakery_log::warn!("asking the core: {e:#}");
-                FrontAnswer::Refused(if books { Refusal::Unanswered } else { Refusal::Unavailable })
+                Err(Q::LOST)
             }
             Err(_) => {
                 yakery_log::warn!("the core gave no answer within {:?}", ask::ANSWERED_WITHIN);
-                FrontAnswer::Refused(Refusal::Unavailable)
+                Err(Refusal::Unavailable)
             }
         }
     }
@@ -107,12 +109,11 @@ impl Front<'_> {
 
     async fn week(&self, query: &Query) -> Response<Full<Bytes>> {
         let (viewer, n) = (Viewer::new(query.tz.as_deref()), query.week);
-        match self.ask(FrontAsk::Week(n)).await {
-            FrontAnswer::Week { monday, blocks, open, later } => {
+        match self.ask(WeekAsk(n)).await {
+            Ok(Week { monday, blocks, open, later }) => {
                 reply(StatusCode::OK, pages::week(&viewer, n, monday, &blocks, &open, later), false)
             }
-            FrontAnswer::Refused(r) => self.refused(&viewer, r),
-            _ => self.refused(&viewer, Refusal::Unavailable),
+            Err(r) => self.refused(&viewer, r),
         }
     }
 
@@ -128,13 +129,12 @@ impl Front<'_> {
             Problem::Taken => StatusCode::CONFLICT,
         });
         let (problem, form) = retry.unzip();
-        match self.ask(FrontAsk::Link(token)).await {
-            FrontAnswer::Link(view) => {
+        match self.ask(LinkAsk(token)).await {
+            Ok(view) => {
                 let form = form.unwrap_or_default();
                 reply(status, pages::link(&viewer, &view, chosen, &form, problem), true)
             }
-            FrontAnswer::Refused(r) => self.refused(&viewer, r),
-            _ => self.refused(&viewer, Refusal::Unavailable),
+            Err(r) => self.refused(&viewer, r),
         }
     }
 
@@ -150,17 +150,16 @@ impl Front<'_> {
             }
         };
         let by = Timestamp::now() + ask::CLAIMED_WITHIN;
-        match self.ask(FrontAsk::Book { token: token.clone(), start, booker, by }).await {
-            FrontAnswer::Booked { start, duration, booker, owner } => {
+        match self.ask(BookAsk { token: token.clone(), start, booker, by }).await {
+            Ok(Booked { start, duration, booker, owner }) => {
                 let page = pages::booked(&viewer, start, duration, &booker, &owner);
                 reply(StatusCode::OK, page, true)
             }
-            FrontAnswer::Refused(Refusal::SlotGone) => {
+            Err(Refusal::SlotGone) => {
                 let again = Query { tz, ..Query::default() };
                 self.link(token, &again, Some((Problem::Taken, form))).await
             }
-            FrontAnswer::Refused(r) => self.refused(&viewer, r),
-            _ => self.refused(&viewer, Refusal::Unavailable),
+            Err(r) => self.refused(&viewer, r),
         }
     }
 

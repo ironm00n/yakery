@@ -9,11 +9,15 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use jiff::civil::Date;
 use jiff::{Timestamp, ToSpan};
+use serde_json::Value;
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 
 use crate::Sockets;
-use crate::ask::{self, AdminAnswer, AdminAsk, FrontAnswer, FrontAsk, LinkView, Refusal, Shown};
+use crate::ask::{
+    self, AdminAnswer, AdminAsk, Answer, BookAsk, Booked, FrontAsk, LinkAsk, LinkView, Question,
+    Refusal, Shown, Week, WeekAsk,
+};
 use crate::checked::Checked;
 use crate::link::{Booker, Booking, Digest, Limits, Links, QUIET, State};
 use crate::policy::Policy;
@@ -83,113 +87,28 @@ impl<C: Calendar> Core<C> {
         store.apply(|links| Ok(links.settle(digest, created)))
     }
 
-    pub async fn front(&self, ask: FrontAsk) -> FrontAnswer {
-        let answer = match ask {
-            FrontAsk::Week(n) => self.week(n).await,
-            FrontAsk::Link(token) => self.link(token.digest()).await,
-            FrontAsk::Book { token, start, booker, by } => {
-                self.book(token.digest(), start, booker, by).await
-            }
-        };
-        answer.unwrap_or_else(|e| {
+    /// An error answers Unavailable.
+    pub async fn ask<Q: Question>(&self, question: Q) -> Answer<Q::Answer>
+    where
+        Self: Answers<Q>,
+    {
+        self.answer(question).await.unwrap_or_else(|e| {
             yakery_log::warn!("{e:#}");
-            FrontAnswer::Refused(Refusal::Unavailable)
+            Err(Refusal::Unavailable)
         })
     }
 
-    async fn week(&self, n: u8) -> Result<FrontAnswer> {
-        let (now, today) = ((self.clock)(), self.today());
-        let monday =
-            today - (today.weekday().to_monday_zero_offset() as i64).days() + (7 * n as i64).days();
-        let served =
-            |monday: Date| days(self.policy, monday, monday).start <= now + self.policy.horizon();
-        if !served(monday) {
-            return Ok(FrontAnswer::Refused(Refusal::NoSuchWeek));
+    pub async fn front(&self, ask: FrontAsk) -> Value {
+        match ask {
+            FrontAsk::Week(question) => wire(self.ask(question).await),
+            FrontAsk::Link(question) => wire(self.ask(question).await),
+            FrontAsk::Book(question) => wire(self.ask(question).await),
         }
-        let fresh = self
-            .weeks
-            .borrow()
-            .get(&monday)
-            .filter(|(at, _)| now < *at + CACHED.seconds())
-            .map(|(_, b)| b.clone());
-        let busy = match fresh {
-            Some(busy) => busy,
-            None => {
-                let busy = self.calendar.busy(days(self.policy, monday, monday + 6.days())).await?;
-                self.weeks.borrow_mut().insert(monday, (now, busy.clone()));
-                busy
-            }
-        };
-        let open = open(self.policy, monday, now);
-        Ok(FrontAnswer::Week {
-            monday,
-            blocks: shown(&open, &busy),
-            open,
-            later: served(monday + 7.days()),
-        })
     }
 
     async fn free(&self, limits: &Limits, links: &Links) -> Result<Vec<Timestamp>> {
         let busy = self.calendar.busy(reach(self.policy, limits)).await?;
         Ok(slots(self.policy, limits, (self.clock)(), &busy, &links.taken()))
-    }
-
-    async fn link(&self, digest: Digest) -> Result<FrontAnswer> {
-        let links = self.store.lock().await.links().clone();
-        let Some(link) = links.live(&digest, self.today()) else {
-            return Ok(FrontAnswer::Refused(Refusal::NoSuchLink));
-        };
-        let state = match &link.state {
-            State::Open => Shown::Open(self.free(&link.limits, &links).await?),
-            State::Claiming(_) => Shown::Pending,
-            State::Booked { booking, .. } => Shown::Booked(booking.start),
-        };
-        Ok(FrontAnswer::Link(LinkView {
-            title: link.limits.title.clone(),
-            duration: link.limits.duration,
-            state,
-        }))
-    }
-
-    async fn book(
-        &self,
-        digest: Digest,
-        start: Timestamp,
-        booker: Booker,
-        by: Timestamp,
-    ) -> Result<FrontAnswer> {
-        let mut store = self.store.lock().await;
-        self.send(&mut store, digest).await?;
-        let Some(link) = store.links().live(&digest, self.today()).cloned() else {
-            return Ok(FrontAnswer::Refused(Refusal::NoSuchLink));
-        };
-        match link.state {
-            State::Open => {}
-            State::Claiming(_) => return Ok(FrontAnswer::Refused(Refusal::Pending)),
-            State::Booked { .. } => return Ok(FrontAnswer::Refused(Refusal::Used)),
-        }
-        if !self.free(&link.limits, store.links()).await?.contains(&start) {
-            return Ok(FrontAnswer::Refused(Refusal::SlotGone));
-        }
-        if (self.clock)() > by {
-            return Ok(FrontAnswer::Refused(Refusal::Unavailable));
-        }
-        let booking = Booking { start, booker };
-        store.apply(|links| links.claim(digest, booking.clone()))?;
-        crash_point("claimed");
-        if let Err(e) = self.send(&mut store, digest).await {
-            yakery_log::warn!("link {}: {e:#}", digest.id());
-            return Ok(FrontAnswer::Refused(Refusal::Pending));
-        }
-        Ok(match store.links().get(&digest).map(|l| &l.state) {
-            Some(State::Booked { .. }) => FrontAnswer::Booked {
-                start,
-                duration: link.limits.duration,
-                booker: booking.booker,
-                owner: self.calendar.owner().into(),
-            },
-            _ => FrontAnswer::Refused(Refusal::SlotGone),
-        })
     }
 
     pub async fn admin(&self, ask: AdminAsk) -> AdminAnswer {
@@ -207,6 +126,98 @@ impl<C: Calendar> Core<C> {
             .iter()
             .map(|(d, l)| (d.id(), l.limits.clone().into_inner(), l.state.to_string()))
             .collect())
+    }
+}
+
+fn wire(answer: impl serde::Serialize) -> Value {
+    serde_json::to_value(answer).expect("answers serialize")
+}
+
+pub trait Answers<Q: Question> {
+    async fn answer(&self, question: Q) -> Result<Answer<Q::Answer>>;
+}
+
+impl<C: Calendar> Answers<WeekAsk> for Core<C> {
+    async fn answer(&self, WeekAsk(n): WeekAsk) -> Result<Answer<Week>> {
+        let (now, today) = ((self.clock)(), self.today());
+        let monday =
+            today - (today.weekday().to_monday_zero_offset() as i64).days() + (7 * n as i64).days();
+        let served =
+            |monday: Date| days(self.policy, monday, monday).start <= now + self.policy.horizon();
+        if !served(monday) {
+            return Ok(Err(Refusal::NoSuchWeek));
+        }
+        let fresh = self
+            .weeks
+            .borrow()
+            .get(&monday)
+            .filter(|(at, _)| now < *at + CACHED.seconds())
+            .map(|(_, b)| b.clone());
+        let busy = match fresh {
+            Some(busy) => busy,
+            None => {
+                let busy = self.calendar.busy(days(self.policy, monday, monday + 6.days())).await?;
+                self.weeks.borrow_mut().insert(monday, (now, busy.clone()));
+                busy
+            }
+        };
+        let open = open(self.policy, monday, now);
+        Ok(Ok(Week { monday, blocks: shown(&open, &busy), open, later: served(monday + 7.days()) }))
+    }
+}
+
+impl<C: Calendar> Answers<LinkAsk> for Core<C> {
+    async fn answer(&self, LinkAsk(token): LinkAsk) -> Result<Answer<LinkView>> {
+        let digest = token.digest();
+        let links = self.store.lock().await.links().clone();
+        let Some(link) = links.live(&digest, self.today()) else {
+            return Ok(Err(Refusal::NoSuchLink));
+        };
+        let state = match &link.state {
+            State::Open => Shown::Open(self.free(&link.limits, &links).await?),
+            State::Claiming(_) => Shown::Pending,
+            State::Booked { booking, .. } => Shown::Booked(booking.start),
+        };
+        Ok(Ok(LinkView { title: link.limits.title.clone(), duration: link.limits.duration, state }))
+    }
+}
+
+impl<C: Calendar> Answers<BookAsk> for Core<C> {
+    async fn answer(&self, ask: BookAsk) -> Result<Answer<Booked>> {
+        let BookAsk { token, start, booker, by } = ask;
+        let digest = token.digest();
+        let mut store = self.store.lock().await;
+        self.send(&mut store, digest).await?;
+        let Some(link) = store.links().live(&digest, self.today()).cloned() else {
+            return Ok(Err(Refusal::NoSuchLink));
+        };
+        match link.state {
+            State::Open => {}
+            State::Claiming(_) => return Ok(Err(Refusal::Pending)),
+            State::Booked { .. } => return Ok(Err(Refusal::Used)),
+        }
+        if !self.free(&link.limits, store.links()).await?.contains(&start) {
+            return Ok(Err(Refusal::SlotGone));
+        }
+        if (self.clock)() > by {
+            return Ok(Err(Refusal::Unavailable));
+        }
+        let booking = Booking { start, booker };
+        store.apply(|links| links.claim(digest, booking.clone()))?;
+        crash_point("claimed");
+        if let Err(e) = self.send(&mut store, digest).await {
+            yakery_log::warn!("link {}: {e:#}", digest.id());
+            return Ok(Err(Refusal::Pending));
+        }
+        Ok(match store.links().get(&digest).map(|l| &l.state) {
+            Some(State::Booked { .. }) => Ok(Booked {
+                start,
+                duration: link.limits.duration,
+                booker: booking.booker,
+                owner: self.calendar.owner().into(),
+            }),
+            _ => Err(Refusal::SlotGone),
+        })
     }
 }
 

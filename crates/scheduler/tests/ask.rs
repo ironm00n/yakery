@@ -13,6 +13,6 @@ fn the_largest_link_page_fits_in_an_answer() {
         duration: SignedDuration::from_mins(15),
         state: Shown::Open(quarters),
     };
-    let bytes = serde_json::to_vec(&FrontAnswer::Link(view)).unwrap().len() as u64;
+    let bytes = serde_json::to_vec(&Answer::Ok(view)).unwrap().len() as u64;
     assert!(bytes < MOST_ANSWERED, "{bytes}");
 }

@@ -98,16 +98,16 @@ async fn issued(core: &Core<&Fake>, c: char, issue: Issue) {
     core.admin(AdminAsk::Issue { digest: token(c).digest(), limits: issue }).await.unwrap();
 }
 
-async fn book_by(core: &Core<&Fake>, c: char, start: Timestamp, by: Timestamp) -> FrontAnswer {
-    core.front(FrontAsk::Book { token: token(c), start, booker: booker(), by }).await
+async fn book_by(core: &Core<&Fake>, c: char, start: Timestamp, by: Timestamp) -> Answer<Booked> {
+    core.ask(BookAsk { token: token(c), start, booker: booker(), by }).await
 }
 
-async fn book(core: &Core<&Fake>, c: char, start: Timestamp) -> FrontAnswer {
+async fn book(core: &Core<&Fake>, c: char, start: Timestamp) -> Answer<Booked> {
     book_by(core, c, start, (core.clock)() + ask::CLAIMED_WITHIN).await
 }
 
 async fn shown(core: &Core<&Fake>, c: char) -> Shown {
-    let FrontAnswer::Link(view) = core.front(FrontAsk::Link(token(c))).await else { panic!() };
+    let Ok(view) = core.ask(LinkAsk(token(c))).await else { panic!() };
     view.state
 }
 
@@ -123,8 +123,8 @@ fn a_link_books_one_event_and_then_shows_only_its_time() {
         let (setup, fake) = (Setup::new("once"), Fake::default());
         let core = setup.core(&fake, fixture());
         issued(&core, 'a', issue(WEEK.0, WEEK.1)).await;
-        answers!(book(&core, 'a', monday("10:00")).await, FrontAnswer::Booked { .. });
-        answers!(book(&core, 'a', monday("11:00")).await, FrontAnswer::Refused(Refusal::Used));
+        answers!(book(&core, 'a', monday("10:00")).await, Ok(Booked { .. }));
+        answers!(book(&core, 'a', monday("11:00")).await, Err(Refusal::Used));
         let uid = format!("{}@schedule.example.test", crate::link::tests::A_DIGEST);
         assert_eq!(fake.events.borrow().len(), 1);
         assert_eq!(fake.events.borrow()[0]["uid"], uid);
@@ -139,14 +139,11 @@ fn a_slot_off_the_link_or_taken_by_another_link_is_refused() {
         let core = setup.core(&fake, fixture());
         issued(&core, 'a', issue(WEEK.0, WEEK.1)).await;
         issued(&core, 'b', issue(WEEK.0, WEEK.1)).await;
-        answers!(book(&core, 'a', monday("10:05")).await, FrontAnswer::Refused(Refusal::SlotGone));
-        answers!(book(&core, 'a', monday("10:00")).await, FrontAnswer::Booked { .. });
-        answers!(book(&core, 'b', monday("10:30")).await, FrontAnswer::Refused(Refusal::SlotGone));
-        answers!(book(&core, 'b', monday("10:45")).await, FrontAnswer::Booked { .. });
-        answers!(
-            book(&core, 'c', monday("12:00")).await,
-            FrontAnswer::Refused(Refusal::NoSuchLink)
-        );
+        answers!(book(&core, 'a', monday("10:05")).await, Err(Refusal::SlotGone));
+        answers!(book(&core, 'a', monday("10:00")).await, Ok(Booked { .. }));
+        answers!(book(&core, 'b', monday("10:30")).await, Err(Refusal::SlotGone));
+        answers!(book(&core, 'b', monday("10:45")).await, Ok(Booked { .. }));
+        answers!(book(&core, 'c', monday("12:00")).await, Err(Refusal::NoSuchLink));
     })
 }
 
@@ -158,10 +155,7 @@ fn a_booking_taken_after_its_deadline_claims_nothing() {
         issued(&core, 'a', issue(WEEK.0, WEEK.1)).await;
         let by = (core.clock)();
         setup.later(SignedDuration::from_secs(1));
-        answers!(
-            book_by(&core, 'a', monday("10:00"), by).await,
-            FrontAnswer::Refused(Refusal::Unavailable)
-        );
+        answers!(book_by(&core, 'a', monday("10:00"), by).await, Err(Refusal::Unavailable));
         answers!(shown(&core, 'a').await, Shown::Open(_));
         core.reconcile().await;
         assert!(fake.events.borrow().is_empty());
@@ -175,8 +169,8 @@ fn a_create_lost_on_the_way_is_sent_again_once_its_send_is_quiet() {
         let core = setup.core(&fake, fixture());
         issued(&core, 'a', issue(WEEK.0, WEEK.1)).await;
         fake.lose.set(Some(true));
-        answers!(book(&core, 'a', monday("10:00")).await, FrontAnswer::Refused(Refusal::Pending));
-        answers!(book(&core, 'a', monday("11:00")).await, FrontAnswer::Refused(Refusal::Pending));
+        answers!(book(&core, 'a', monday("10:00")).await, Err(Refusal::Pending));
+        answers!(book(&core, 'a', monday("11:00")).await, Err(Refusal::Pending));
         core.reconcile().await;
         assert!(fake.events.borrow().is_empty(), "the first send may still be in flight");
         setup.later(QUIET);
@@ -194,7 +188,7 @@ fn a_create_whose_answer_was_lost_is_booked_by_its_taken_uid_after_a_restart() {
         issued(&setup.core(&fake, fixture()), 'a', issue(WEEK.0, WEEK.1)).await;
         fake.lose.set(Some(false));
         let first = setup.core(&fake, fixture());
-        answers!(book(&first, 'a', monday("10:00")).await, FrontAnswer::Refused(Refusal::Pending));
+        answers!(book(&first, 'a', monday("10:00")).await, Err(Refusal::Pending));
         drop(first);
         setup.later(QUIET);
         let core = setup.core(&fake, fixture());
@@ -215,10 +209,10 @@ fn a_refusal_reopens_a_link_only_when_it_answers_the_one_send() {
         let core = setup.core(&fake, fixture());
         issued(&core, 'a', issue(WEEK.0, WEEK.1)).await;
         fake.refuse.set(true);
-        answers!(book(&core, 'a', monday("10:00")).await, FrontAnswer::Refused(Refusal::SlotGone));
+        answers!(book(&core, 'a', monday("10:00")).await, Err(Refusal::SlotGone));
         answers!(shown(&core, 'a').await, Shown::Open(_));
         fake.lose.set(Some(false));
-        answers!(book(&core, 'a', monday("10:00")).await, FrontAnswer::Refused(Refusal::Pending));
+        answers!(book(&core, 'a', monday("10:00")).await, Err(Refusal::Pending));
         setup.later(QUIET);
         fake.refuse.set(true);
         core.reconcile().await;
@@ -250,21 +244,15 @@ fn the_week_shows_busy_time_inside_bookable_hours_up_to_the_horizon() {
         let busy = vec![Period { start: monday("09:00"), end: monday("11:00") }];
         let (setup, fake) = (Setup::new("week"), Fake { busy, ..Fake::default() });
         let core = setup.core(&fake, fixture());
-        let FrontAnswer::Week { blocks, .. } = core.front(FrontAsk::Week(1)).await else {
-            panic!()
-        };
+        let Ok(Week { blocks, .. }) = core.ask(WeekAsk(1)).await else { panic!() };
         assert_eq!(blocks, [Period { start: monday("10:00"), end: monday("11:00") }]);
-        answers!(core.front(FrontAsk::Week(5)).await, FrontAnswer::Refused(Refusal::NoSuchWeek));
+        answers!(core.ask(WeekAsk(5)).await, Err(Refusal::NoSuchWeek));
         for n in 0..5 {
-            let FrontAnswer::Week { later, .. } = core.front(FrontAsk::Week(n)).await else {
+            let Ok(Week { later, .. }) = core.ask(WeekAsk(n)).await else {
                 continue;
             };
-            let next = core.front(FrontAsk::Week(n + 1)).await;
-            assert_eq!(
-                later,
-                matches!(next, FrontAnswer::Week { .. }),
-                "week {n} says later: {later}"
-            );
+            let next = core.ask(WeekAsk(n + 1)).await;
+            assert_eq!(later, next.is_ok(), "week {n} says later: {later}");
         }
     })
 }

@@ -23,36 +23,71 @@ pub const CLAIMED_WITHIN: SignedDuration = SignedDuration::from_secs(10);
 pub const ANSWERED_WITHIN: Duration =
     Duration::from_secs(CLAIMED_WITHIN.as_secs().unsigned_abs() + stalwart::TIMEOUT.as_secs() + 5);
 
+pub type Answer<T> = Result<T, Refusal>;
+
+/// A question of the front's, whose type names the answer it gets.
+pub trait Question: Into<FrontAsk> {
+    type Answer: Serialize + DeserializeOwned;
+    /// What an answer lost after the core took the question means.
+    const LOST: Refusal;
+}
+
+macro_rules! questions {
+    ($($question:ident => $variant:ident -> $answer:ty, lost $lost:ident;)*) => {
+        #[derive(Serialize, Deserialize)]
+        pub enum FrontAsk { $($variant($question)),* }
+
+        $(
+            impl From<$question> for FrontAsk {
+                fn from(question: $question) -> FrontAsk {
+                    FrontAsk::$variant(question)
+                }
+            }
+
+            impl Question for $question {
+                type Answer = $answer;
+                const LOST: Refusal = Refusal::$lost;
+            }
+        )*
+    };
+}
+
+questions! {
+    WeekAsk => Week -> Week, lost Unavailable;
+    LinkAsk => Link -> LinkView, lost Unavailable;
+    BookAsk => Book -> Booked, lost Unanswered;
+}
+
+/// Weeks past this one.
 #[derive(Serialize, Deserialize)]
-pub enum FrontAsk {
-    /// Weeks past this one.
-    Week(u8),
-    Link(Token),
-    Book {
-        token: Token,
-        start: Timestamp,
-        booker: Booker,
-        by: Timestamp,
-    },
+pub struct WeekAsk(pub u8);
+
+#[derive(Serialize, Deserialize)]
+pub struct LinkAsk(pub Token);
+
+#[derive(Serialize, Deserialize)]
+pub struct BookAsk {
+    pub token: Token,
+    pub start: Timestamp,
+    pub booker: Booker,
+    pub by: Timestamp,
+}
+
+/// `later` when the week after is inside the horizon too.
+#[derive(Serialize, Deserialize)]
+pub struct Week {
+    pub monday: jiff::civil::Date,
+    pub blocks: Vec<Period>,
+    pub open: Vec<Period>,
+    pub later: bool,
 }
 
 #[derive(Serialize, Deserialize)]
-pub enum FrontAnswer {
-    /// `later` when the week after is inside the horizon too.
-    Week {
-        monday: jiff::civil::Date,
-        blocks: Vec<Period>,
-        open: Vec<Period>,
-        later: bool,
-    },
-    Link(LinkView),
-    Booked {
-        start: Timestamp,
-        duration: SignedDuration,
-        booker: Booker,
-        owner: String,
-    },
-    Refused(Refusal),
+pub struct Booked {
+    pub start: Timestamp,
+    pub duration: SignedDuration,
+    pub booker: Booker,
+    pub owner: String,
 }
 
 #[derive(Serialize, Deserialize)]
