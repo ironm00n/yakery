@@ -208,6 +208,17 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
         text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
     }
 
+    /// The Slurm jobs the daemon's registry names, which is all a restarted daemon knows of its runs.
+    fn recorded_jobs(&self) -> Vec<String> {
+        fs::read_dir(self.state.join("runs"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+            .filter_map(|e| serde_json::from_slice::<serde_json::Value>(&fs::read(e.path()).ok()?).ok())
+            .filter_map(|r| r["job"].as_str().map(str::to_owned))
+            .collect()
+    }
+
     fn sbatch_args(&self, jobid: &JobId) -> Vec<String> {
         fs::read_to_string(self.fake_home.join(format!("sbatch.{jobid}.args")))
             .unwrap()
@@ -428,6 +439,8 @@ fn daemon_restart_reattaches() {
     let mut h = Harness::new(TOML);
     let run = h.start_run("push");
     let (_, _, _, jobid) = h.wait_run_dir(&[]);
+    // the fake cluster holds the job before the daemon's registry does: a kill between the two leaves nothing to reattach
+    wait_for("the registry to record the job", || h.recorded_jobs() == [jobid.to_string()]);
     h.daemon.kill().unwrap();
     h.daemon.wait().unwrap();
     let (code, _, err) = Harness::finish(run);
