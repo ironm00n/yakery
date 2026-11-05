@@ -151,6 +151,18 @@
       );
     # the scheduler's tests read time zones
     crates-test-env = pkgs: { TZDIR = "${pkgs.tzdata}/share/zoneinfo"; };
+    crates-shell =
+      pkgs: env:
+      pkgs.mkShell {
+        packages = with pkgs; [
+          cargo
+          rustc
+          rustfmt
+          clippy
+          rust-analyzer
+        ];
+        inherit env;
+      };
     treefmtEval = eachSystem ({ pkgs, ... }: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
     mk-pkgs-stable = system:
       import nixpkgs-stable {
@@ -444,21 +456,18 @@
 
       # the compiler and tools Nix builds the crates with, checks.crates' test environment, and agent-mail's build-time
       # deployment values
-      crates = pkgs.mkShell {
-        packages = with pkgs; [
-          cargo
-          rustc
-          rustfmt
-          clippy
-          rust-analyzer
-        ];
-        env = crates-test-env pkgs // import ./crates/agent-mail/deployment-env.nix {
+      crates = crates-shell pkgs (
+        crates-test-env pkgs
+        // import ./crates/agent-mail/deployment-env.nix {
           inherit lib;
           deployment = my-lib.ironmoon;
           correspondents = inputs.secrets.data.mail.agentCorrespondents;
           correspondentsFor = inputs.secrets.data.mail.agentCorrespondentsFor;
-        };
-      };
+        }
+      );
+      # the same without agent-mail's values, which read the secrets input: what a build on Explorer gets (xb's base for
+      # yakery names it), where that input can't be fetched
+      crates-cluster = crates-shell pkgs (crates-test-env pkgs);
     });
   };
 }
