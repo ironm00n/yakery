@@ -216,7 +216,7 @@
   "enableArtifact": false,
   "workflowSizeGuideline": "unrestricted",
   "enabledPlugins": {
-    "rust-analyzer-lsp@claude-plugins-official": true,
+    "rust-analyzer-lsp@claude-plugins-official": false,
     "typescript-lsp@claude-plugins-official": true,
     "pyright-lsp@claude-plugins-official": true,
     "coq-lsp@local-coq-lsp": true,
