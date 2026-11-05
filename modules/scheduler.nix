@@ -9,7 +9,19 @@
 let
   cfg = config.services.scheduler;
   inherit (lib) mkOption types;
+  layout = {
+    http.fd = "http";
+    front = {
+      fd = "front";
+      path = "/run/scheduler/front.sock";
+    };
+    admin = {
+      fd = "admin";
+      path = "/run/scheduler/admin.sock";
+    };
+  };
   policy = {
+    inherit layout;
     account = {
       address = cfg.account;
       inherit ((import ../crates/scheduler/accounts.nix).core) permissions;
@@ -123,15 +135,15 @@ in
         wantedBy = [ "sockets.target" ];
         listenStreams = [ "127.0.0.1:${toString cfg.port}" ];
         socketConfig = {
-          FileDescriptorName = "http";
+          FileDescriptorName = layout.http.fd;
           Service = "scheduler-front.service";
         };
       };
       scheduler-front = {
         wantedBy = [ "sockets.target" ];
-        listenStreams = [ "/run/scheduler/front.sock" ];
+        listenStreams = [ layout.front.path ];
         socketConfig = {
-          FileDescriptorName = "front";
+          FileDescriptorName = layout.front.fd;
           Service = "scheduler-core.service";
           SocketUser = "scheduler-core";
           SocketGroup = "scheduler-front";
@@ -140,9 +152,9 @@ in
       };
       scheduler-admin = {
         wantedBy = [ "sockets.target" ];
-        listenStreams = [ "/run/scheduler/admin.sock" ];
+        listenStreams = [ layout.admin.path ];
         socketConfig = {
-          FileDescriptorName = "admin";
+          FileDescriptorName = layout.admin.fd;
           Service = "scheduler-core.service";
           SocketMode = "0600";
         };

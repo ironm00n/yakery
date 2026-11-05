@@ -3,6 +3,11 @@ use super::*;
 /// The bundle's defaults, for an owner in New York with one group of synced calendars: the
 /// policy tests compile in.
 pub const FIXTURE: &str = r#"{
+    "layout": {
+        "http": {"fd": "http"},
+        "front": {"fd": "front", "path": "/run/scheduler/front.sock"},
+        "admin": {"fd": "admin", "path": "/run/scheduler/admin.sock"}
+    },
     "account": {"address": "schedule@example.test", "permissions": ["authenticate", "jmapPrincipalQuery"]},
     "groups": ["calendars@example.test"],
     "host": "schedule.example.test",

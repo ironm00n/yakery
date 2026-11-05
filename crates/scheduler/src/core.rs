@@ -243,7 +243,7 @@ pub async fn run(policy: &'static Policy, mut sockets: Sockets) -> Result<()> {
         listener.set_nonblocking(true)?;
         Ok(UnixListener::from_std(listener)?)
     };
-    let (front, admin) = (listener("front")?, listener("admin")?);
+    let (front, admin) = (listener(&policy.layout.front.fd)?, listener(&policy.layout.admin.fd)?);
     tokio::task::spawn_local(ask::serve(admin, move |a| core.admin(a)));
     ask::serve(front, move |a| core.front(a)).await;
     Ok(())

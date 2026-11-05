@@ -32,6 +32,7 @@ use crate::checked::Checked;
 use crate::link::{Form, MOST_NAME, MOST_NOTE, Token};
 use crate::pages::{self, Problem, Viewer};
 use crate::params::{Posted, Query};
+use crate::policy::Policy;
 
 const ANSWERING: usize = 8;
 /// The longest form the link page's fields allow: each character as up to 4 UTF-8 bytes, each
@@ -198,8 +199,9 @@ impl Front<'_> {
     }
 }
 
-pub async fn run(core: &'static Path, mut sockets: Sockets) -> Result<()> {
-    let listener = std::net::TcpListener::from(sockets.take("http")?);
+pub async fn run(policy: &'static Policy, mut sockets: Sockets) -> Result<()> {
+    let core = policy.layout.front.path.as_path();
+    let listener = std::net::TcpListener::from(sockets.take(&policy.layout.http.fd)?);
     listener.set_nonblocking(true)?;
     let listener = TcpListener::from_std(listener)?;
     let answering = Arc::new(Semaphore::new(ANSWERING));

@@ -15,7 +15,6 @@ mod store;
 
 use std::collections::BTreeMap;
 use std::os::fd::OwnedFd;
-use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
@@ -24,9 +23,6 @@ use clap::{Parser, Subcommand};
 use crate::ask::{AdminAnswer, AdminAsk};
 use crate::link::{Issue, LinkId, Token};
 use crate::policy::POLICY;
-
-const FRONT_SOCKET: &str = "/run/scheduler/front.sock";
-const ADMIN_SOCKET: &str = "/run/scheduler/admin.sock";
 
 #[derive(Parser)]
 enum Command {
@@ -82,12 +78,12 @@ fn run() -> Result<()> {
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async {
         match command {
-            Command::Front => front::run(Path::new(FRONT_SOCKET), sockets).await,
+            Command::Front => front::run(&POLICY, sockets).await,
             Command::Core => core::run(&POLICY, sockets).await,
             Command::Link(Admin::New(issue)) => {
                 let token = Token::random()?;
                 let answer: AdminAnswer = ask::ask(
-                    Path::new(ADMIN_SOCKET),
+                    &POLICY.layout.admin.path,
                     &AdminAsk::Issue { digest: token.digest(), limits: issue },
                 )
                 .await?;
@@ -96,10 +92,10 @@ fn run() -> Result<()> {
                 Ok(())
             }
             Command::Link(Admin::List) => {
-                print(ask::ask(Path::new(ADMIN_SOCKET), &AdminAsk::List).await?)
+                print(ask::ask(&POLICY.layout.admin.path, &AdminAsk::List).await?)
             }
             Command::Link(Admin::Revoke { id }) => {
-                print(ask::ask(Path::new(ADMIN_SOCKET), &AdminAsk::Revoke(id)).await?)
+                print(ask::ask(&POLICY.layout.admin.path, &AdminAsk::Revoke(id)).await?)
             }
         }
     })

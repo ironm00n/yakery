@@ -2,6 +2,7 @@
 //! can't disagree on it.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use anyhow::{Context, ensure};
@@ -69,9 +70,34 @@ pub struct Account {
     pub permissions: BTreeSet<String>,
 }
 
+/// A socket systemd passes in, by its `FileDescriptorName=`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fd {
+    pub fd: String,
+}
+
+/// A unix socket the core listens on and `scheduler link` or the front connects to.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Endpoint {
+    pub fd: String,
+    pub path: PathBuf,
+}
+
+/// The sockets as the Nix module sets them up.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Layout {
+    pub http: Fd,
+    pub front: Endpoint,
+    pub admin: Endpoint,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Policy {
+    pub layout: Layout,
     pub account: Account,
     /// Groups whose calendars count, beside the calendars of whoever shared Bookings.
     pub groups: Vec<Address>,
