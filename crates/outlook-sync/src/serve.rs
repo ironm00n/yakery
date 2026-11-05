@@ -46,7 +46,8 @@ struct Notices {
 
 impl Sync {
     async fn answer(&self, request: Request<Incoming>) -> Response<Full<Bytes>> {
-        let route = request.uri().path().strip_prefix(self.policy.prefix()).and_then(Route::of);
+        let route =
+            request.uri().path().strip_prefix(self.policy.public.prefix()).and_then(Route::of);
         let query: Vec<(String, String)> =
             form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
                 .into_owned()

@@ -9,7 +9,7 @@ use serde::Deserialize;
 pub struct Policy {
     pub client_id: String,
     pub tenant: String,
-    pub public: String,
+    pub public: Public,
     pub stalwart: String,
     pub account: String,
     pub calendar: String,
@@ -56,24 +56,43 @@ impl Route {
     }
 }
 
-impl Policy {
-    pub fn url(&self, route: Route) -> String {
-        format!("{}{}", self.public, route.path())
-    }
+/// The HTTPS prefix nginx forwards to the sync: `https://<host>/<path>`, with no trailing slash.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+pub struct Public {
+    host: String,
+    prefix: String,
+}
 
-    fn host_and_prefix(&self) -> (&str, &str) {
-        let rest = self.public.split_once("://").map_or(self.public.as_str(), |(_, r)| r);
-        rest.split_at(rest.find('/').unwrap_or(rest.len()))
+impl TryFrom<String> for Public {
+    type Error = String;
+
+    fn try_from(url: String) -> Result<Public, String> {
+        let shape = || format!("{url:?} is not https://<host>/<path> with no trailing slash");
+        let (host, path) =
+            url.strip_prefix("https://").and_then(|r| r.split_once('/')).ok_or_else(shape)?;
+        if host.is_empty() || path.is_empty() || path.ends_with('/') {
+            return Err(shape());
+        }
+        Ok(Public { host: host.into(), prefix: format!("/{path}") })
+    }
+}
+
+impl Public {
+    pub fn url(&self, route: Route) -> String {
+        format!("https://{}{}{}", self.host, self.prefix, route.path())
     }
 
     pub fn prefix(&self) -> &str {
-        self.host_and_prefix().1
+        &self.prefix
     }
 
     pub fn host(&self) -> &str {
-        self.host_and_prefix().0
+        &self.host
     }
+}
 
+impl Policy {
     pub fn authority(&self, path: &str) -> String {
         format!("https://login.microsoftonline.com/{}/oauth2/v2.0/{path}", self.tenant)
     }

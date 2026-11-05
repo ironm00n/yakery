@@ -93,7 +93,7 @@ impl Graph {
     }
 
     pub async fn redeem(&self, code: &str, verifier: &Secret) -> Result<()> {
-        let redirect = self.policy.url(Route::Callback);
+        let redirect = self.policy.public.url(Route::Callback);
         let form = [
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -145,8 +145,8 @@ impl Graph {
         let body = json!({
             "changeType": "created,updated,deleted",
             "resource": "/me/events",
-            "notificationUrl": self.policy.url(Route::Notices(Feed::Changes)),
-            "lifecycleNotificationUrl": self.policy.url(Route::Notices(Feed::Lifecycle)),
+            "notificationUrl": self.policy.public.url(Route::Notices(Feed::Changes)),
+            "lifecycleNotificationUrl": self.policy.public.url(Route::Notices(Feed::Lifecycle)),
             "expirationDateTime": expires,
             "clientState": client_state.expose(),
         });

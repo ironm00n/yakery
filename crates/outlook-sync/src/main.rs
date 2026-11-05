@@ -124,7 +124,7 @@ fn login(state: &Dir) -> Result<()> {
     query.extend_pairs([
         ("client_id", POLICY.client_id.as_str()),
         ("response_type", "code"),
-        ("redirect_uri", POLICY.url(Route::Callback).as_str()),
+        ("redirect_uri", POLICY.public.url(Route::Callback).as_str()),
         ("response_mode", "query"),
         ("scope", graph::scope(&POLICY)),
         ("state", login_state.expose()),

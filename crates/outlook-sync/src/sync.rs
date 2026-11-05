@@ -130,7 +130,7 @@ impl Sync {
             yakery_log::warn!("not signed in; run `outlook-sync login`");
             return Ok(());
         }
-        let mut ledger = Ledger::open(&self.mirror, &self.state, self.policy.host())?;
+        let mut ledger = Ledger::open(&self.mirror, &self.state, self.policy.public.host())?;
         // a listing first records Outlook's files, so his edits of them are told from the sync's
         let listed = self.policy.write && !ledger.looked();
         if listed {
@@ -172,7 +172,7 @@ impl Sync {
                 }
                 Edit::New => {
                     let Some((ics, _)) = ledger.get(&file).await? else { continue };
-                    match local::owned(&file, &ics, self.policy.host()) {
+                    match local::owned(&file, &ics, self.policy.public.host()) {
                         Ok(None) => {
                             self.put_back(&file, Refused("the sync's file, unrecorded".into()))
                         }
@@ -264,7 +264,7 @@ impl Sync {
         let (id, ics) = match change {
             Change::Removed { id, .. } => (id, None),
             Change::Present(event) => {
-                let ics = event.ics(self.policy.host(), now)?;
+                let ics = event.ics(self.policy.public.host(), now)?;
                 (event.id, ics)
             }
         };
