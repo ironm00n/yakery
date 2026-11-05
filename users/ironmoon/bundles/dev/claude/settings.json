@@ -109,6 +109,15 @@
             "command": "bash \"$HOME/.claude/hooks/session-facts.sh\""
           }
         ]
+      },
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/guard-chat-lane.sh\""
+          }
+        ]
       }
     ],
     "PermissionRequest": [
