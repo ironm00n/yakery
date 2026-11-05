@@ -4,6 +4,7 @@ members = [
     "agent-mail",
     "slurm-ci",
     "scheduler",
+    "outlook-sync",
     "agent-proto",
     "agentd",
     "agent-host",

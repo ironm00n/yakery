@@ -29,6 +29,7 @@
     ./stalwart
     ./bulwark.nix
     ./scheduler.nix
+    ./outlook-sync.nix
 
     ./displaylink
   ];

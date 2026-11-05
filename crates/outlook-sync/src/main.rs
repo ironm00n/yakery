@@ -1,0 +1,142 @@
+//! One Microsoft 365 calendar mirrored into one Stalwart calendar: Graph tells the server when the
+//! mailbox's events change, and a delta query of the default calendar brings the mirror up to it.
+
+mod assertion;
+mod caldav;
+mod event;
+mod graph;
+mod policy;
+mod serve;
+mod state;
+mod sync;
+
+use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
+use std::process::ExitCode;
+use std::rc::Rc;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use clap::Parser;
+use jiff::{Timestamp, ToSpan};
+use private::{Dir, Secret};
+use ring::digest::{SHA256, digest};
+
+use crate::assertion::Credential;
+use crate::policy::POLICY;
+use crate::state::Login;
+use crate::sync::{Shared, Sync};
+
+#[derive(Parser)]
+enum Command {
+    /// Serve Graph's notifications and the sign-in callback on the socket systemd passes in, and
+    /// keep the mirror up to date
+    Serve,
+    /// Print a sign-in link, good once for ten minutes, and wait for the sign-in to finish
+    Login,
+    /// Print the certificate the app registration needs, base64
+    Certificate,
+}
+
+/// How long a sign-in link stays good.
+const LOGIN_FOR: i64 = 10;
+
+fn state_dir() -> Result<Dir> {
+    let path = PathBuf::from(std::env::var_os("STATE_DIRECTORY").context("StateDirectory")?);
+    Dir::open(&path, &[])
+}
+
+fn credential(state: &Dir) -> Result<Credential> {
+    Credential::read(&state.path(state::KEY), &state.path(state::CERTIFICATE))
+}
+
+fn main() -> ExitCode {
+    yakery_log::exit_code(run().map(|()| ExitCode::SUCCESS))
+}
+
+fn run() -> Result<()> {
+    let command = Command::parse();
+    let sockets = private::listen_fds()?;
+    let state = state_dir()?;
+    match command {
+        Command::Certificate => {
+            println!("{}", credential(&state)?.certificate);
+            Ok(())
+        }
+        Command::Login => login(&state),
+        Command::Serve => {
+            let (_, http) = sockets
+                .into_iter()
+                .find(|(name, _)| name == "http")
+                .context("no http socket from systemd")?;
+            // reqwest is built without a provider of its own, so the workspace's one rustls crypto (ring) is set here
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+            tokio::task::LocalSet::new().block_on(&runtime, daemon(state, state_dir()?, http))
+        }
+    }
+}
+
+/// `graph` keeps the tokens in `tokens`, the same directory as `state`, opened again.
+async fn daemon(state: Dir, tokens: Dir, http: std::os::fd::OwnedFd) -> Result<()> {
+    let credentials = PathBuf::from(
+        std::env::var_os("CREDENTIALS_DIRECTORY").context("the app password, by LoadCredential")?,
+    );
+    let mirror = caldav::Mirror::new(&POLICY, &credentials.join("app-password"))?;
+    let graph = graph::Graph::new(&POLICY, credential(&state)?, tokens)?;
+    let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
+    let subscription = state.load(state::SUBSCRIPTION)?;
+    let shared = Rc::new(Shared {
+        subscription: RefCell::new(subscription),
+        validating: Cell::new(false),
+        wake,
+    });
+    let sync: &'static Sync =
+        Box::leak(Box::new(Sync { graph, mirror, state, policy: &POLICY, shared }));
+    let listener = std::net::TcpListener::from(http);
+    listener.set_nonblocking(true)?;
+    tokio::task::spawn_local(serve::serve(sync, tokio::net::TcpListener::from_std(listener)?));
+    sync.run(wakes).await;
+    Ok(())
+}
+
+fn login(state: &Dir) -> Result<()> {
+    let mut drawn = [0; 32];
+    private::random::fill(&mut drawn)?;
+    let verifier = Secret::new(URL_SAFE_NO_PAD.encode(drawn));
+    let challenge = URL_SAFE_NO_PAD.encode(digest(&SHA256, verifier.expose().as_bytes()));
+    let login_state = private::random::token(32)?;
+    let until = Timestamp::now() + LOGIN_FOR.minutes();
+    let pending = Login::Pending { state: login_state.clone(), verifier, until };
+    state.save(state::LOGIN, &Some(pending))?;
+    let mut query = form_urlencoded::Serializer::new(String::new());
+    query.extend_pairs([
+        ("client_id", POLICY.client_id.as_str()),
+        ("response_type", "code"),
+        ("redirect_uri", POLICY.redirect().as_str()),
+        ("response_mode", "query"),
+        ("scope", graph::SCOPE),
+        ("state", login_state.expose()),
+        ("code_challenge", challenge.as_str()),
+        ("code_challenge_method", "S256"),
+    ]);
+    println!(
+        "Open this link and sign in; it works once, for {LOGIN_FOR} minutes:\n\n{}?{}\n",
+        POLICY.authority("authorize"),
+        query.finish()
+    );
+    while Timestamp::now() < until {
+        std::thread::sleep(Duration::from_secs(1));
+        match state.load::<Option<Login>>(state::LOGIN)? {
+            Some(Login::Done(Ok(()))) => {
+                println!("Signed in; the sync subscribes and copies the calendar now.");
+                return Ok(());
+            }
+            Some(Login::Done(Err(e))) => anyhow::bail!("signing in failed: {e}"),
+            _ => {}
+        }
+    }
+    anyhow::bail!("no sign-in came back within {LOGIN_FOR} minutes")
+}

@@ -1391,6 +1391,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "outlook-sync"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "bytes",
+ "clap",
+ "form_urlencoded",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "jiff",
+ "private",
+ "reqwest",
+ "ring",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "tokio",
+ "yakery-log",
+]
+
+[[package]]
 name = "pem"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

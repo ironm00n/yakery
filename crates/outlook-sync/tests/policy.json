@@ -1,0 +1,10 @@
+{
+  "clientId": "00000000-0000-0000-0000-000000000000",
+  "tenant": "organizations",
+  "public": "https://schedule.example.test/neu",
+  "stalwart": "127.0.0.1:8080",
+  "account": "calendar-feeds@example.test",
+  "calendar": "/dav/cal/owen%40example.test/neu/",
+  "daysBack": 7,
+  "daysAhead": 63
+}

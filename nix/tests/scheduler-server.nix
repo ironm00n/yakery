@@ -17,60 +17,70 @@ rec {
   accounts = import ../../crates/scheduler/accounts.nix;
   host = "schedule.${domain}";
 
-  node = {
-    imports = [
-      (stalwart.node { users = [ "owen" ]; })
-      ../../bundles/scheduler.nix
-    ];
-    bundles.scheduler = {
-      enable = true;
-      readers = [ "owen@${domain}" ];
-    };
-    bundles.stalwart.programAccounts = with permissions; {
-      # Q1's other answer: creates, and no invitations
-      schedule-nosend.permissions = [
-        authenticate
-        jmapCalendarGet
-        jmapCalendarEventCreate
+  node = nodeWith { };
+
+  # `tlsHosts` as stalwart-server.nix's node takes them: vhosts a test adds, such as a stand-in for an outside service
+  nodeWith =
+    {
+      tlsHosts ? [ ],
+    }:
+    {
+      imports = [
+        (stalwart.node {
+          users = [ "owen" ];
+          inherit tlsHosts;
+        })
+        ../../bundles/scheduler.nix
       ];
-      # every read permission, so what confines it is the free/busy share alone
-      schedule-probe.permissions = [
-        authenticate
-        jmapPrincipalGetAvailability
-        jmapCalendarGet
-        jmapCalendarEventGet
-        jmapCalendarEventQuery
-        jmapCalendarEventChanges
-        davCalGet
-        davCalPropFind
+      bundles.scheduler = {
+        enable = true;
+        readers = [ "owen@${domain}" ];
+      };
+      bundles.stalwart.programAccounts = with permissions; {
+        # Q1's other answer: creates, and no invitations
+        schedule-nosend.permissions = [
+          authenticate
+          jmapCalendarGet
+          jmapCalendarEventCreate
+        ];
+        # every read permission, so what confines it is the free/busy share alone
+        schedule-probe.permissions = [
+          authenticate
+          jmapPrincipalGetAvailability
+          jmapCalendarGet
+          jmapCalendarEventGet
+          jmapCalendarEventQuery
+          jmapCalendarEventChanges
+          davCalGet
+          davCalPropFind
+        ];
+      };
+      services.stalwart.plan.sequence = lib.mkAfter [
+        (upsertOn1 "MtaRoute" "sink" [ "name" ] {
+          "@type" = "Relay";
+          name = "sink";
+          address = "127.0.0.1";
+          inherit (sink) port;
+          protocol = "smtp";
+        })
+        (update "MtaOutboundStrategy" {
+          route = {
+            match = [
+              {
+                "if" = "is_local_domain(rcpt_domain)";
+                "then" = "'local'";
+              }
+            ];
+            "else" = "'sink'";
+          };
+        })
       ];
+      systemd.services.sink = {
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig.StateDirectory = baseNameOf sink.dir;
+        script = "${lib.getExe' pkgs.python3Packages.aiosmtpd "aiosmtpd"} -n -l 127.0.0.1:${toString sink.port} -c aiosmtpd.handlers.Mailbox ${sink.dir}/mail";
+      };
     };
-    services.stalwart.plan.sequence = lib.mkAfter [
-      (upsertOn1 "MtaRoute" "sink" [ "name" ] {
-        "@type" = "Relay";
-        name = "sink";
-        address = "127.0.0.1";
-        inherit (sink) port;
-        protocol = "smtp";
-      })
-      (update "MtaOutboundStrategy" {
-        route = {
-          match = [
-            {
-              "if" = "is_local_domain(rcpt_domain)";
-              "then" = "'local'";
-            }
-          ];
-          "else" = "'sink'";
-        };
-      })
-    ];
-    systemd.services.sink = {
-      wantedBy = [ "multi-user.target" ];
-      serviceConfig.StateDirectory = baseNameOf sink.dir;
-      script = "${lib.getExe' pkgs.python3Packages.aiosmtpd "aiosmtpd"} -n -l 127.0.0.1:${toString sink.port} -c aiosmtpd.handlers.Mailbox ${sink.dir}/mail";
-    };
-  };
 
   python = stalwart.python + ''
     import datetime
