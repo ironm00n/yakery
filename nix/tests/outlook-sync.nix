@@ -236,6 +236,16 @@ pkgs.testers.runNixOSTest {
             expect("write.odd.unsent", not any(c["transactionId"] == "odd" for c in fake_log("create")), fake_log("create"))
             expect("write.odd.kept", NEU + "odd.ics" in mirrored(), mirrored())
 
+        with subtest("losing the record of the sync's writes sends none of Outlook's events back as new"):
+            creates = len(fake_log("create"))
+            server.succeed("systemctl stop outlook-sync")
+            server.succeed("rm /var/lib/outlook-sync/written.json")
+            server.succeed("systemctl start outlook-sync")
+            looked = lambda _: json.loads(server.succeed("cat /var/lib/outlook-sync/written.json || echo '{}'")).get("token")
+            retry(looked, timeout_seconds=60)
+            expect("write.lost-record.no-creates", len(fake_log("create")) == creates, fake_log("create")[creates:])
+            expect("write.lost-record.odd-kept", NEU + "odd.ics" in mirrored(), mirrored())
+
     with subtest("a restart keeps the subscription and the sign-in"):
         server.succeed("systemctl restart outlook-sync")
         server.wait_for_unit("outlook-sync.service")

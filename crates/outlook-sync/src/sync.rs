@@ -128,6 +128,12 @@ impl Sync {
             yakery_log::warn!("not signed in; run `outlook-sync login`");
             return Ok(());
         }
+        // with no record of the sync's writes, every mirror file would read as a new event of his
+        let listed =
+            self.policy.write && self.state.load::<state::Written>(state::WRITTEN)?.token.is_none();
+        if listed {
+            self.mirror(true).await?;
+        }
         if self.policy.write {
             self.edits().await?;
         }
@@ -136,7 +142,7 @@ impl Sync {
         }
         let fresh = needs.fresh_subscription || self.shared.subscription.borrow().is_none();
         self.subscription(fresh, needs.reauthorize).await?;
-        self.mirror(needs.listing).await
+        self.mirror(needs.listing && !listed).await
     }
 
     /// A created event's local file goes once sent, so the delta brings it back under its Graph id.
