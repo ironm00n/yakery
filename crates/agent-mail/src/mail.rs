@@ -78,7 +78,6 @@ keywords! {
 }
 
 impl Answer {
-    /// The id Stalwart gave what was created under `key`, or its refusal.
     pub fn id(&self, key: &str) -> Result<&str> {
         let refused = || {
             format!(
@@ -89,7 +88,6 @@ impl Answer {
         self.created[key]["id"].as_str().with_context(refused)
     }
 
-    /// Every update and destroy was taken, or what Stalwart refused.
     pub fn taken(&self) -> Result<()> {
         ensure!(
             self.not_updated.is_empty() && self.not_destroyed.is_empty(),

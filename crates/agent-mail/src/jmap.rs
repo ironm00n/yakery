@@ -23,7 +23,6 @@ const CALENDARS: &str = "urn:ietf:params:jmap:calendars";
 /// `Cap => name [the capabilities a request declares] @ the one whose primary account the method acts on`.
 macro_rules! caps {
     ($($cap:ident => $name:literal [$($urn:ident),+] @ $account:ident),* $(,)?) => {
-        /// What a method belongs to beyond JMAP's core.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum Cap { $($cap),* }
 

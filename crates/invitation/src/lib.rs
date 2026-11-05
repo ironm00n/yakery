@@ -1,13 +1,12 @@
-//! An event that invites people, as the JSCalendar that Stalwart's `CalendarEvent/set` takes and, with
-//! `sendSchedulingMessages`, writes and sends the iTIP messages from: invitations, updates, cancels, and the answers
-//! it applies back to the organizer's copy.
+//! The JSCalendar that Stalwart's `CalendarEvent/set` takes and, with `sendSchedulingMessages`, writes and sends the
+//! iTIP messages from.
 
 use anyhow::{Context, Result};
 use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
 use serde_json::{Map, Value, json};
 
-/// A time zone of the tz database, known by the name JSCalendar gives an event's zone.
+/// Only a tz database zone, whose name JSCalendar's `timeZone` takes.
 #[derive(Clone, Debug)]
 pub struct Zone {
     tz: TimeZone,
@@ -44,14 +43,12 @@ impl std::str::FromStr for Zone {
     }
 }
 
-/// A moment, and the zone an event at it keeps its local time in across a change of offset.
 #[derive(Clone, Copy, Debug)]
 pub struct At<'a> {
     pub when: Timestamp,
     pub zone: &'a Zone,
 }
 
-/// What an event says, each part optional, as a change to an event sets it.
 #[derive(Default)]
 pub struct Details<'a> {
     pub title: Option<&'a str>,
@@ -62,7 +59,7 @@ pub struct Details<'a> {
 }
 
 impl Details<'_> {
-    /// The JSCalendar properties of the parts given, and only those.
+    /// Only the parts given, so a change leaves the others as they are.
     pub fn properties(&self) -> Map<String, Value> {
         let start = self.start.map(|At { when, zone }| {
             let local = when.to_zoned(zone.time_zone()).datetime();
@@ -112,7 +109,6 @@ pub struct Invitation<'a> {
     pub description: Option<&'a str>,
     pub location: Option<&'a str>,
     pub organizer: &'a str,
-    /// Whether the organizer attends too, as the owner of a booked meeting does; an agent only invites.
     pub organizer_attends: bool,
     pub invited: &'a [Person<'a>],
 }

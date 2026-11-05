@@ -185,9 +185,7 @@ pub struct Stalwart {
     refresh_refused: bool,
     pub session: Value,
     pub log: Vec<String>,
-    /// Each request's body to the JMAP API, as sent.
     pub requests: Vec<Value>,
-    /// The account's calendars and events, for the calendar methods.
     pub calendars: Vec<Value>,
     pub events: Vec<Value>,
     /// Ids an Email/get asked attachments of, which Stalwart parses the message for.

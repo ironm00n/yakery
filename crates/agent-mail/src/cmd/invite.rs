@@ -131,13 +131,11 @@ fn uid(
     format!("{}@{}", &hash[..32], organizer.domain())
 }
 
-/// The event with `uid`, if the login's calendar holds one.
 async fn made(mail: &Mail, uid: &str) -> Result<Option<String>> {
     Ok(mail.call(FIND, json!({ "filter": { "uid": uid } })).await?.ids.into_iter().next())
 }
 
-/// The event `id`, refused unless this session organized it: from the shared login, another topic's invitation
-/// isn't this session's to change.
+/// From the shared login, another topic's invitation isn't this session's to change.
 async fn mine(mail: &Mail, login: &Login, id: &str, topic: Option<&Topic>) -> Result<Event> {
     let organizer = mailto(&sender(login, topic, None)?.to_string());
     let event = mail
@@ -154,7 +152,7 @@ pub async fn run(args: Args) -> Result<ExitCode> {
     succeed!("{}", invite(&Mail::open().await?, args).await?)
 }
 
-/// What `args` asks of `mail`'s calendar; the invitation's id.
+/// The invitation's id.
 pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
     match args {
         Args::New(new) => {
@@ -228,7 +226,6 @@ pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
     }
 }
 
-/// A CalendarEvent/set that Stalwart sends the scheduling messages of, and that it took whole.
 async fn set(mail: &Mail, mut args: Value) -> Result<Answer> {
     args["sendSchedulingMessages"] = json!(true);
     let answer = mail.call(EVENTS, args).await?;
@@ -236,7 +233,6 @@ async fn set(mail: &Mail, mut args: Value) -> Result<Answer> {
     Ok(answer)
 }
 
-/// The login's default calendar, made first when it has none.
 async fn calendar(mail: &Mail) -> Result<String> {
     if let Some(found) = mail.all::<Calendar>().await?.into_iter().find(|c| c.default) {
         return Ok(found.id);
@@ -251,7 +247,6 @@ pub async fn list(args: List) -> Result<ExitCode> {
     succeed!("{}", if lines.is_empty() { "no invitations".into() } else { lines.join("\n") })
 }
 
-/// One line per invitation this login (or its `topic`) sent: its id, local start and zone, title, and each answer.
 pub async fn invitations(mail: &Mail, args: &List) -> Result<Vec<String>> {
     let login = mail.login();
     let ours = |organizer: &str| {
