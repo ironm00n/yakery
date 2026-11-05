@@ -214,7 +214,9 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
             .unwrap()
             .flatten()
             .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-            .filter_map(|e| serde_json::from_slice::<serde_json::Value>(&fs::read(e.path()).ok()?).ok())
+            .filter_map(|e| {
+                serde_json::from_slice::<serde_json::Value>(&fs::read(e.path()).ok()?).ok()
+            })
             .filter_map(|r| r["job"].as_str().map(str::to_owned))
             .collect()
     }
