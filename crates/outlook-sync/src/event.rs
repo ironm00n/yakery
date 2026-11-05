@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use jiff::Timestamp;
 use jiff::civil::DateTime;
 use ring::digest::{SHA256, digest};
@@ -40,11 +40,29 @@ pub struct Event {
     pub location: Option<Location>,
 }
 
+/// Graph's dateTimeTimeZone, taken only in UTC, which the sync asks for by sending no
+/// `Prefer: outlook.timezone`.
 #[derive(Debug, Deserialize)]
+#[serde(try_from = "GraphTime")]
+pub struct When(DateTime);
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct When {
-    pub date_time: String,
-    pub time_zone: String,
+struct GraphTime {
+    date_time: String,
+    time_zone: String,
+}
+
+impl TryFrom<GraphTime> for When {
+    type Error = String;
+
+    fn try_from(time: GraphTime) -> Result<When, String> {
+        if time.time_zone != "UTC" {
+            return Err(format!("a time in {} where UTC was asked for", time.time_zone));
+        }
+        let parsed = time.date_time.parse();
+        parsed.map(When).map_err(|e| format!("{:?} is not a date and time: {e}", time.date_time))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,19 +73,8 @@ pub struct Location {
 }
 
 impl When {
-    fn civil(&self) -> Result<DateTime> {
-        anyhow::ensure!(
-            self.time_zone == "UTC",
-            "a time in {} where UTC was asked for",
-            self.time_zone
-        );
-        self.date_time
-            .parse()
-            .with_context(|| format!("{:?} is not a date and time", self.date_time))
-    }
-
     fn property(&self, name: &str, all_day: bool) -> Result<String> {
-        let civil = self.civil()?;
+        let civil = self.0;
         Ok(match all_day {
             true => format!("{name};VALUE=DATE:{}", civil.date().strftime(ical::DATE)),
             false => {

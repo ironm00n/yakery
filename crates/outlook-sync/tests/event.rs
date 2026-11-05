@@ -98,13 +98,10 @@ fn text_is_escaped_and_long_lines_fold_between_characters() {
 }
 
 #[test]
-fn a_time_outside_utc_is_refused() {
-    let Change::Present(event) = change(timed(
-        json!({"start": {"dateTime": "2026-11-05T15:00:00.0000000", "timeZone": "Eastern Standard Time"}}),
-    )) else {
-        panic!()
-    };
-    assert!(event.ics(now()).is_err());
+fn a_time_outside_utc_is_refused_as_graph_sends_it() {
+    let eastern =
+        json!({"dateTime": "2026-11-05T15:00:00.0000000", "timeZone": "Eastern Standard Time"});
+    assert!(serde_json::from_value::<Change>(timed(json!({"start": eastern}))).is_err());
 }
 
 #[test]
