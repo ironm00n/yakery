@@ -9,11 +9,12 @@ use private::Dir;
 use serde::{Deserialize, Serialize};
 
 use crate::caldav::{Entry, Mirror};
+use crate::file::FileName;
 use crate::{local, state};
 
 #[derive(Default, Serialize, Deserialize)]
 struct Record {
-    files: BTreeMap<String, Mirrored>,
+    files: BTreeMap<FileName, Mirrored>,
     token: Option<String>,
 }
 
@@ -76,16 +77,16 @@ impl<'a> Ledger<'a> {
         self.save()
     }
 
-    pub async fn get(&self, file: &str) -> Result<Option<(String, String)>> {
+    pub async fn get(&self, file: &FileName) -> Result<Option<(String, String)>> {
         self.mirror.get(file).await
     }
 
-    pub fn record(&mut self, file: String, mirrored: Mirrored) -> Result<()> {
+    pub fn record(&mut self, file: FileName, mirrored: Mirrored) -> Result<()> {
         self.record.files.insert(file, mirrored);
         self.save()
     }
 
-    pub fn forget(&mut self, file: &str) -> Result<()> {
+    pub fn forget(&mut self, file: &FileName) -> Result<()> {
         self.record.files.remove(file);
         self.save()
     }
@@ -94,7 +95,7 @@ impl<'a> Ledger<'a> {
     /// not yet sent, is there. Recorded in memory; [`Ledger::save`] writes it.
     pub async fn write(
         &mut self,
-        file: &str,
+        file: &FileName,
         id: String,
         ics: String,
         guarded: bool,
@@ -103,12 +104,12 @@ impl<'a> Ledger<'a> {
         let Some(etag) = self.mirror.put(file, ics, over.as_deref()).await? else {
             return Ok(false);
         };
-        self.record.files.insert(file.to_string(), Mirrored { id, etag });
+        self.record.files.insert(file.clone(), Mirrored { id, etag });
         Ok(true)
     }
 
-    pub async fn delete(&mut self, files: impl IntoIterator<Item = String>) -> Result<()> {
-        let files: Vec<String> = files.into_iter().collect();
+    pub async fn delete(&mut self, files: impl IntoIterator<Item = FileName>) -> Result<()> {
+        let files: Vec<FileName> = files.into_iter().collect();
         for file in &files {
             self.record.files.remove(file);
         }
@@ -120,7 +121,7 @@ impl<'a> Ledger<'a> {
     }
 
     /// The files a listing didn't see; with `owners_kept`, only those of the sync's.
-    pub async fn sweep(&mut self, seen: &BTreeSet<String>, owners_kept: bool) -> Result<()> {
+    pub async fn sweep(&mut self, seen: &BTreeSet<FileName>, owners_kept: bool) -> Result<()> {
         let mut gone = vec![];
         for file in self.mirror.files().await?.difference(seen) {
             let ours = !owners_kept

@@ -6,6 +6,8 @@ use jiff::civil::{Date, DateTime};
 use jiff::tz::TimeZone;
 use serde_json::{Value, json};
 
+use crate::file::FileName;
+
 struct Line {
     name: String,
     params: Vec<(String, String)>,
@@ -97,8 +99,8 @@ fn graph_time(at: &At) -> Result<Value> {
     Ok(json!({"dateTime": civil.strftime("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": zone}))
 }
 
-pub fn stamped(file: &str, ics: &str, host: &str) -> bool {
-    let uid = crate::event::uid(file, host);
+pub fn stamped(file: &FileName, ics: &str, host: &str) -> bool {
+    let uid = file.uid(host);
     vevent(ics).is_ok_and(|lines| lines.iter().any(|l| l.name == "UID" && l.value == uid))
 }
 
@@ -111,12 +113,12 @@ impl Owned {
     }
 }
 
-pub fn owned(file: &str, ics: &str, host: &str) -> Result<Option<Owned>> {
+pub fn owned(file: &FileName, ics: &str, host: &str) -> Result<Option<Owned>> {
     if stamped(file, ics, host) {
         return Ok(None);
     }
     let mut body = graph(ics)?;
-    body["transactionId"] = json!(file.trim_end_matches(".ics"));
+    body["transactionId"] = json!(file.stem());
     Ok(Some(Owned(body)))
 }
 

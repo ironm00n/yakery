@@ -1,7 +1,7 @@
 use super::*;
 
 fn entry(file: &str, etag: Option<&str>, gone: bool) -> Entry {
-    Entry { file: file.into(), etag: etag.map(str::to_string), gone }
+    Entry { file: file.parse().unwrap(), etag: etag.map(str::to_string), gone }
 }
 
 #[test]

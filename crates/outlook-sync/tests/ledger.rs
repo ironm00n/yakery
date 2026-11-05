@@ -1,7 +1,7 @@
 use super::*;
 
 fn entry(etag: Option<&str>, gone: bool) -> Entry {
-    Entry { file: "f.ics".into(), etag: etag.map(Into::into), gone }
+    Entry { file: "f.ics".parse().unwrap(), etag: etag.map(Into::into), gone }
 }
 
 fn mirrored(etag: &str) -> Mirrored {

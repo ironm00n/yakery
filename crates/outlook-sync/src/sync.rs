@@ -8,7 +8,8 @@ use private::{Dir, Secret};
 use tokio::sync::mpsc;
 
 use crate::caldav::{Entry, Mirror};
-use crate::event::{Change, file};
+use crate::event::Change;
+use crate::file::FileName;
 use crate::graph::{Delta, Graph, Refused};
 use crate::ledger::{Edit, Ledger, Mirrored};
 use crate::local;
@@ -188,7 +189,7 @@ impl Sync {
         ledger.looked_up_to(token)
     }
 
-    fn put_back(&self, file: &str, Refused(why): Refused) {
+    fn put_back(&self, file: &FileName, Refused(why): Refused) {
         yakery_log::warn!("{file}: {why}; Outlook's version comes back");
         let _ = self.shared.wake.send(Wake::PutBack);
     }
@@ -257,7 +258,7 @@ impl Sync {
     async fn apply(
         &self,
         change: Change,
-        seen: &mut BTreeSet<String>,
+        seen: &mut BTreeSet<FileName>,
         ledger: &mut Ledger<'_>,
         now: Timestamp,
     ) -> Result<()> {
@@ -268,7 +269,7 @@ impl Sync {
                 (event.id, ics)
             }
         };
-        let name = file(&id);
+        let name = FileName::of(&id);
         let Some(ics) = ics else { return ledger.delete([name]).await };
         if !ledger.write(&name, id, ics, self.policy.write).await? {
             let _ = self.shared.wake.send(Wake::Edited);

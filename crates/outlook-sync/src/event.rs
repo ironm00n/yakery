@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use jiff::Timestamp;
 use jiff::civil::DateTime;
-use ring::digest::{SHA256, digest};
 use serde::Deserialize;
+
+use crate::file::FileName;
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -75,16 +76,6 @@ impl When {
     }
 }
 
-/// Graph ids hold characters a path shouldn't.
-pub fn file(id: &str) -> String {
-    format!("{}.ics", private::hex::encode(digest(&SHA256, id.as_bytes()).as_ref()))
-}
-
-/// The UID the sync writes into `file`, by which the file is the sync's.
-pub fn uid(file: &str, host: &str) -> String {
-    format!("{}@{host}", file.trim_end_matches(".ics"))
-}
-
 impl Event {
     pub fn ics(&self, host: &str, now: Timestamp) -> Result<Option<String>> {
         if self.is_cancelled {
@@ -95,7 +86,7 @@ impl Event {
             "VERSION:2.0".into(),
             "PRODID:-//ironmoon//outlook-sync//EN".into(),
             "BEGIN:VEVENT".into(),
-            format!("UID:{}", uid(&file(&self.id), host)),
+            format!("UID:{}", FileName::of(&self.id).uid(host)),
             format!("DTSTAMP:{}", now.strftime("%Y%m%dT%H%M%SZ")),
             self.start.property("DTSTART", self.is_all_day)?,
             self.end.property("DTEND", self.is_all_day)?,

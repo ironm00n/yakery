@@ -32,9 +32,7 @@ fn rendered(value: serde_json::Value) -> String {
 #[test]
 fn a_timed_occurrence_is_one_vevent_in_utc_named_by_its_graph_id() {
     let ics = rendered(timed(json!({})));
-    // sha256sum of the Graph id
     let name = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff";
-    assert_eq!(file("AAMkAD=/x+y"), format!("{name}.ics"));
     for line in [
         format!("UID:{name}@schedule.example.test"),
         "DTSTAMP:20261104T120000Z".into(),
@@ -53,7 +51,7 @@ fn the_file_the_sync_writes_reads_back_as_the_syncs_folded_as_written() {
     let ics = event.ics("schedule.example.test", now()).unwrap().expect("not cancelled");
     assert!(ics.contains("\r\n "), "the UID line no longer folds:\n{ics}");
     let name = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff.ics";
-    assert!(crate::local::stamped(name, &ics, "schedule.example.test"));
+    assert!(crate::local::stamped(&name.parse().unwrap(), &ics, "schedule.example.test"));
 }
 
 #[test]

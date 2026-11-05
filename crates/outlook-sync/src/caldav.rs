@@ -1,6 +1,7 @@
 //! The mirror calendar in Stalwart, over CalDAV on loopback as the account it is shared with.
 
 use std::collections::BTreeSet;
+use std::fmt::Display;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -8,6 +9,7 @@ use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 
 const CALENDAR: &str = "text/calendar; charset=utf-8";
 
+use crate::file::FileName;
 use crate::policy::Policy;
 
 pub struct Mirror {
@@ -26,7 +28,7 @@ impl Mirror {
         Ok(Mirror { client, url, user: policy.account.clone(), password })
     }
 
-    fn request(&self, method: Method, file: &str) -> RequestBuilder {
+    fn request(&self, method: Method, file: impl Display) -> RequestBuilder {
         self.client
             .request(method, format!("{}{file}", self.url))
             .basic_auth(&self.user, Some(&self.password))
@@ -43,7 +45,12 @@ impl Mirror {
     }
 
     /// The new ETag, or None when the file is no longer the version `over` names.
-    pub async fn put(&self, file: &str, ics: String, over: Option<&str>) -> Result<Option<String>> {
+    pub async fn put(
+        &self,
+        file: &FileName,
+        ics: String,
+        over: Option<&str>,
+    ) -> Result<Option<String>> {
         let mut request =
             self.request(Method::PUT, file).header("content-type", CALENDAR).body(ics);
         if let Some(etag) = over {
@@ -60,7 +67,7 @@ impl Mirror {
         }
     }
 
-    pub async fn get(&self, file: &str) -> Result<Option<(String, String)>> {
+    pub async fn get(&self, file: &FileName) -> Result<Option<(String, String)>> {
         let reply = self.send(self.request(Method::GET, file), &format!("GET {file}")).await?;
         match reply.status() {
             StatusCode::NOT_FOUND => Ok(None),
@@ -72,7 +79,7 @@ impl Mirror {
         }
     }
 
-    pub async fn delete(&self, file: &str) -> Result<()> {
+    pub async fn delete(&self, file: &FileName) -> Result<()> {
         let status = self
             .send(self.request(Method::DELETE, file), &format!("DELETE {file}"))
             .await?
@@ -100,7 +107,7 @@ impl Mirror {
         }
     }
 
-    pub async fn files(&self) -> Result<BTreeSet<String>> {
+    pub async fn files(&self) -> Result<BTreeSet<FileName>> {
         let body = "<propfind xmlns='DAV:'><prop><getetag/></prop></propfind>".to_string();
         let xml =
             self.multistatus(b"PROPFIND", body).await?.context("stalwart refused PROPFIND")?;
@@ -133,14 +140,15 @@ fn etag(headers: &reqwest::header::HeaderMap) -> Option<String> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Entry {
-    pub file: String,
+    pub file: FileName,
     pub etag: Option<String>,
     pub gone: bool,
 }
 
 /// Tags match by local name, whatever namespace prefix the server picked.
 fn responses(xml: &str) -> (Vec<Entry>, Option<String>) {
-    let (mut entries, mut token, mut current) = (vec![], None, None::<Entry>);
+    let (mut entries, mut token) = (vec![], None);
+    let mut current: Option<(Option<FileName>, Option<String>, bool)> = None;
     for tag in xml.split('<') {
         let Some((name, text)) = tag.split_once('>') else { continue };
         let closing = name.starts_with('/');
@@ -150,25 +158,25 @@ fn responses(xml: &str) -> (Vec<Entry>, Option<String>) {
             .map_or(name.trim_start_matches('/'), |(_, l)| l);
         let local = local.split_whitespace().next().unwrap_or_default();
         match (local, closing) {
-            ("response", false) => {
-                current = Some(Entry { file: String::new(), etag: None, gone: false })
-            }
+            ("response", false) => current = Some((None, None, false)),
             ("response", true) => {
-                entries.extend(current.take().filter(|e| e.file.ends_with(".ics")))
+                if let Some((Some(file), etag, gone)) = current.take() {
+                    entries.push(Entry { file, etag, gone });
+                }
             }
             ("href", false) => {
-                if let Some(e) = current.as_mut() {
-                    e.file = text.rsplit_once('/').map_or(text, |(_, f)| f).to_string();
+                if let Some((file, _, _)) = current.as_mut() {
+                    *file = text.rsplit_once('/').map_or(text, |(_, f)| f).parse().ok();
                 }
             }
             ("getetag", false) => {
-                if let Some(e) = current.as_mut() {
-                    e.etag = Some(text.replace("&quot;", "\""));
+                if let Some((_, etag, _)) = current.as_mut() {
+                    *etag = Some(text.replace("&quot;", "\""));
                 }
             }
             ("status", false) if text.contains(" 404") => {
-                if let Some(e) = current.as_mut() {
-                    e.gone = true;
+                if let Some((_, _, gone)) = current.as_mut() {
+                    *gone = true;
                 }
             }
             ("sync-token", false) if current.is_none() => token = Some(text.to_string()),

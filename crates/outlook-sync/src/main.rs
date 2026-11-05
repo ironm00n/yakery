@@ -4,6 +4,7 @@
 mod assertion;
 mod caldav;
 mod event;
+mod file;
 mod graph;
 mod ledger;
 mod local;
