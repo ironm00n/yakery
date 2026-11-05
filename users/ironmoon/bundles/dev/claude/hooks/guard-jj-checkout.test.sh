@@ -79,3 +79,23 @@ check DENY "$c" 'jj rebase -d master' '{"agent_id":"a1","transcript_path":"'"$pr
 check DENY "$c" 'jj rebase -d master' "$dispatch" "$dir/jobs/x"
 check DENY "$c" 'jj rebase -d master' "{\"transcript_path\":\"$projects-workspace-redox/s1.jsonl\"}"
 check DENY "$c" 'cd ~/workspace/redox && jj st' "$dispatch"
+
+# a loop's variable stays unreadable: the reader doesn't unroll loops, since its line-level reading of one parts from
+# the shell's (an adversary's pass on 11-05 found seven ways, these three among them)
+check DENY "$e" 'for ws in ~/tmp/worktree/x ~/workspace/redox; do jj -R "$ws" log; done'
+check DENY "$e" 'for f in <(true); do cd ~/workspace/redox; jj st; done'
+check DENY "$r" "for ws in ~/tmp/worktree/x; do sh -c 'jj -R \"\$ws\" st'; done"
+
+# a reader that fails, at its first awk or a later one, blocks the call (a PreToolUse hook's exit 2) instead of
+# letting the line through
+real=$(command -v awk)
+for from in 1 2; do
+  mkdir -p "$dir/broken$from"
+  printf '#!/bin/sh\nn=$(($(cat %s/broken%s/n 2>/dev/null || echo 0) + 1)); echo $n >%s/broken%s/n\n[ $n -ge %s ] && exit 2\nexec %s "$@"\n' \
+    "$dir" "$from" "$dir" "$from" "$from" "$real" >"$dir/broken$from/awk"
+  chmod +x "$dir/broken$from/awk"
+  jq -cn --arg c 'jj -R ~/tmp/worktree/x log' --arg cwd "$e" '{tool_name:"Bash", tool_input:{command:$c}, cwd:$cwd}' |
+    PATH="$dir/broken$from:$PATH" HOME="$dir" bash "$h" >/dev/null 2>&1
+  [ $? = 2 ] && echo "ok   exit 2 with a reader failing from awk call $from" ||
+    echo "FAIL want exit 2 with a reader failing from awk call $from"
+done

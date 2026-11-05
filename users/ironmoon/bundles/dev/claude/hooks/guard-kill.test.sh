@@ -72,3 +72,9 @@ log="$dir/.local/state/claude/kill-overrides.log"
 grep -q "reason leaked test daemon, Owen approved" "$log" 2>/dev/null && grep -q "pid $other	sleep 300" "$log" &&
   echo "ok   override log names the reason and the pid's command line" ||
   echo "FAIL override log: $(cat "$log" 2>/dev/null || echo missing)"
+
+# a reader that fails blocks the call (a PreToolUse hook's exit 2) instead of letting the line through
+mkdir -p "$dir/broken" && printf '#!/bin/sh\nexit 2\n' >"$dir/broken/awk" && chmod +x "$dir/broken/awk"
+jq -cn --arg c "kill $mine" --arg cwd "$me" '{tool_name:"Bash", tool_input:{command:$c}, cwd:$cwd}' |
+  PATH="$dir/broken:$PATH" HOME=$dir bash "$h" >/dev/null 2>&1
+[ $? = 2 ] && echo "ok   a reader that fails exits 2" || echo "FAIL a reader that fails: want exit 2"

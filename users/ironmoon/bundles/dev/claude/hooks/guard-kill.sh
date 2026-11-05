@@ -81,6 +81,7 @@ overridden() {
   } >>"$log"
 }
 
+read_segments "$cmd"
 while read -ra w; do
   lead=("${w[@]}")
   command_word 'kill|pkill|killall'
@@ -94,6 +95,6 @@ while read -ra w; do
       [[ -n $fed ]] && by_pattern "xargs kill"
       check_kill "${w[@]:1}" ;;
   esac
-done < <(segments "$cmd")
+done <<<"$lines"
 
 exit 0

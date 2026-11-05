@@ -47,19 +47,27 @@ unquote() {
 
 # One simple command per line: heredoc bodies dropped; quotes and comments resolved by `unquote`,
 # until no `sh -c` script is left quoted; redirections dropped; `$(` and backticks left as a `$`
-# argument; each paren on a line of its own, so a caller can scope a subshell's `cd`.
+# argument; each paren on a line of its own, so a caller can scope a subshell's `cd`. Fails when a step does.
 segments() {
   local line prev
   line=$(awk 'w != "" { if ($0 ~ "^\t*" w "$") w = ""; next }
        { print }
        match($0, /(^|[^<])<<-?[[:space:]]*["\047]?[A-Za-z_][A-Za-z0-9_]*/) {
-         w = substr($0, RSTART, RLENGTH); sub(/^[^<]?<<-?[[:space:]]*["\047]?/, "", w) }' <<<"$1")
+         w = substr($0, RSTART, RLENGTH); sub(/^[^<]?<<-?[[:space:]]*["\047]?/, "", w) }' <<<"$1") || return
   until [[ $line == "${prev-}" ]]; do
     prev=$line
-    line=$(unquote <<<"$line")
+    line=$(unquote <<<"$line") || return
   done
   sed -E -e 's/[0-9]*[<>]+&?[[:space:]]*[^[:space:];&|()]*//g' -e 's/\$\(/$\n(/g' -e 's/`/$\n/g' \
     -e 's/[()]/\n&\n/g' -e 's/&&|\|\||[;&|]/\n/g' <<<"$line"
+}
+
+# Sets `lines` to line $1's `segments`. A line they fail on blocks the call, by a PreToolUse hook's exit 2, so a fault
+# in the reader can't let every command through.
+read_segments() {
+  lines=$(segments "$1") && return
+  echo "Blocked: the hook couldn't read this command line, so it can't tell what the line runs." >&2
+  exit 2
 }
 
 # The absolute path a word names, from base dir $2 (empty when unknown); nothing if it can't be read
@@ -78,7 +86,8 @@ dir_of() {
 # `command_word "$4"` and `here` the dir it runs in, empty when the line doesn't say (a variable,
 # `cd -`). `cd` and `pushd` move it, a subshell scopes it.
 each_command() {
-  local f=$1 cwd=$3 names=$4 scopes=() to x
+  local f=$1 cwd=$3 names=$4 scopes=() to x lines
+  read_segments "$2"
   while read -ra w; do
     case ${w[0]-} in
       '(') scopes+=("$cwd"); continue ;;
@@ -95,7 +104,7 @@ each_command() {
         [[ $to == - ]] && cwd= || cwd=$(dir_of "$to" "$cwd") ;;
       *) "$f" ;;
     esac
-  done < <(segments "$2")
+  done <<<"$lines"
 }
 
 # Drops the words before the command proper (sudo, env, timeout, VAR=x, if, ...) from the array `w`.
