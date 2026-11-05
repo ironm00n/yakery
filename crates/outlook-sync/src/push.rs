@@ -1,5 +1,5 @@
-//! Stalwart's JMAP push, as the sync's account: a state change in the owner's account, which the
-//! mirror's share makes reachable, wakes the loop to look at the mirror for his edits.
+//! Stalwart's JMAP push, as the sync's account: the mirror's share makes the owner's account's
+//! state changes reachable.
 
 use std::path::Path;
 use std::time::Duration;
@@ -12,7 +12,6 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::policy::Policy;
 use crate::sync::Wake;
 
-/// How long after a dropped stream the listener connects again.
 const AGAIN: Duration = Duration::from_secs(5);
 
 pub async fn listen(policy: &'static Policy, password: &Path, wake: UnboundedSender<Wake>) {
@@ -48,21 +47,20 @@ async fn stream(policy: &Policy, password: &Path, wake: &UnboundedSender<Wake>) 
         .await?
         .error_for_status()?;
     // the mirror may have changed while no stream was open
-    let _ = wake.send(Wake::Local);
+    let _ = wake.send(Wake::Edited);
     let mut pending = String::new();
     while let Some(chunk) = reply.chunk().await? {
         pending.push_str(&String::from_utf8_lossy(&chunk));
         while let Some(end) = pending.find("\n\n") {
             let event: String = pending.drain(..end + 2).collect();
             if changed(&event, &owner) {
-                let _ = wake.send(Wake::Local);
+                let _ = wake.send(Wake::Edited);
             }
         }
     }
     anyhow::bail!("the stream ended")
 }
 
-/// Whether a server-sent event is a StateChange naming the owner's account.
 fn changed(event: &str, owner: &str) -> bool {
     event.lines().filter_map(|l| l.strip_prefix("data:")).any(|data| {
         serde_json::from_str::<Value>(data.trim())

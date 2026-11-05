@@ -1,7 +1,3 @@
-//! The public paths nginx forwards: Graph's notifications and lifecycle events, each answered at
-//! once and handed to the loop only if it names our subscription and its secret, and the sign-in
-//! callback, which redeems a code only for the sign-in `outlook-sync login` started.
-
 use std::convert::Infallible;
 use std::time::Duration;
 
@@ -158,7 +154,6 @@ impl Sync {
     }
 }
 
-/// Serves each connection on its own local task.
 pub async fn serve(sync: &'static Sync, listener: TcpListener) {
     loop {
         let Ok((stream, _)) = listener.accept().await else { continue };

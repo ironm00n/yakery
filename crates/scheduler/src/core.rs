@@ -59,9 +59,7 @@ impl<C: Calendar> Core<C> {
         (self.clock)().to_zoned(self.policy.zone.clone()).date()
     }
 
-    /// Sends every claim that is due, each on its own, so a link Stalwart refuses or can't be
-    /// reached for leaves the others; at start, before the core answers anything, and then
-    /// every [`QUIET`].
+    /// Each claim goes on its own, so one Stalwart refuses or can't be reached for leaves the others.
     pub async fn reconcile(&self) {
         let mut store = self.store.lock().await;
         if let Err(e) = store.apply(|links| Ok(links.expire(self.today()))) {
@@ -74,7 +72,6 @@ impl<C: Calendar> Core<C> {
         }
     }
 
-    /// Sends the link's create if it is claiming and due, and settles it on Stalwart's answer.
     async fn send(&self, store: &mut Store, digest: Digest) -> Result<()> {
         let Some((next, limits, claim)) = store.links().sending(digest, (self.clock)()) else {
             return Ok(());

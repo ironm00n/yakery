@@ -1,13 +1,11 @@
-//! An event as the owner left it in the mirror, read back into the Graph event body that carries
-//! his edit to Outlook. Only what the mirror writes, and what a calendar app sets when making an
-//! event, is read: times, all-day, title, place, description and a recurrence Graph can express.
+//! Reads only what the mirror writes and what a calendar app sets when making an event: times,
+//! all-day, title, place, description and a recurrence Graph can express.
 
 use anyhow::{Context, Result, bail};
 use jiff::civil::{Date, DateTime};
 use jiff::tz::TimeZone;
 use serde_json::{Value, json};
 
-/// One content line, unfolded: its name, its parameters and its value.
 struct Line {
     name: String,
     params: Vec<(String, String)>,
@@ -33,7 +31,6 @@ fn lines(ics: &str) -> Vec<Line> {
         .collect()
 }
 
-/// The first VEVENT's lines.
 fn vevent(ics: &str) -> Result<Vec<Line>> {
     let mut inside = false;
     let mut out = vec![];
@@ -64,15 +61,14 @@ fn unescape(text: &str) -> String {
     out
 }
 
-/// A DTSTART, DTEND or UNTIL: an all-day date, or a time in the zone the calendar app named, which
-/// Graph needs for a recurrence to keep its local time across a change of offset.
+/// Zoned keeps the zone the calendar app named, which Graph needs for a recurrence to keep its
+/// local time across a change of offset.
 #[derive(Debug, PartialEq, Eq)]
 pub enum At {
     Date(Date),
     Zoned(jiff::Zoned),
 }
 
-/// `value` as a date when `date`, else as a time in UTC (`Z`) or in `zone`.
 fn parse_at(value: &str, date: bool, zone: Option<TimeZone>) -> Result<At> {
     if date {
         return Ok(At::Date(Date::strptime("%Y%m%d", value)?));
@@ -101,7 +97,6 @@ fn graph_time(at: &At) -> Result<Value> {
     Ok(json!({"dateTime": civil.strftime("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": zone}))
 }
 
-/// The event's properties as Graph takes them, for a create or an update.
 pub fn graph(ics: &str) -> Result<Value> {
     let lines = vevent(ics)?;
     let get = |name: &str| lines.iter().find(|l| l.name == name);
@@ -152,9 +147,7 @@ fn day(code: &str) -> Result<&'static str> {
         .with_context(|| format!("weekday {code:?}"))
 }
 
-/// An RRULE as Graph's patternedRecurrence, for the forms Graph has a pattern for; anything else
-/// is refused, and the event stays in the mirror unsent. Graph reads the range's dates in the
-/// start's zone, so they are taken there.
+/// Graph reads the range's dates in the start's zone, so they are taken there.
 fn recurrence(rule: &str, start: &At) -> Result<Value> {
     let parts: Vec<(&str, &str)> = rule.split(';').filter_map(|p| p.split_once('=')).collect();
     let part = |k: &str| parts.iter().find(|(n, _)| *n == k).map(|(_, v)| *v);

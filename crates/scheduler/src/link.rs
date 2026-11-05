@@ -1,4 +1,3 @@
-//! One-time links: a token kept only as its digest, what the link may book, and whether it has.
 //! Every change is a pure function from one set of links to the next, which the core persists
 //! before acting on it.
 
@@ -20,7 +19,6 @@ use crate::slots::{Period, Taken};
 
 const TOKEN_BYTES: usize = 32;
 
-/// 256 bits, printed once by `scheduler link new` and then held only by whoever has the URL.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(try_from = "Secret")]
 pub struct Token(Secret);
@@ -52,11 +50,9 @@ impl Token {
     }
 }
 
-/// A token's SHA-256: what the core keeps, and what the event's UID is made of.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Digest([u8; 32]);
 
-/// The first 8 hex of a digest, for listing and revoking.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct LinkId([u8; 4]);
 
@@ -75,7 +71,6 @@ impl Digest {
     }
 }
 
-/// What `scheduler link new` asks for; a [`Limits`] once checked.
 #[derive(Clone, Debug, Serialize, Deserialize, clap::Args)]
 pub struct Issue {
     /// First day, in the owner's zone
@@ -120,11 +115,10 @@ impl Check for Issue {
     }
 }
 
-/// The longest window a link may have.
 pub const MOST_WEEKS: i64 = 8;
 pub const DURATIONS: std::ops::RangeInclusive<SignedDuration> =
     SignedDuration::from_mins(15)..=SignedDuration::from_hours(8);
-/// The longest title, place, name and note, in characters.
+/// In characters.
 pub const MOST_TITLE: usize = 100;
 pub const MOST_NAME: usize = 100;
 pub const MOST_NOTE: usize = 2000;
@@ -133,8 +127,6 @@ fn plain(s: &str, most: usize) -> bool {
     (1..=most).contains(&s.chars().count()) && !s.chars().any(char::is_control)
 }
 
-/// What a booker types; a [`Booker`] once checked, by the front for its answer and by the core
-/// again.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Form {
     pub name: String,
@@ -190,8 +182,6 @@ pub struct Booking {
 /// with its insert, so a create is sent again only once its last send can't be in flight.
 pub const QUIET: SignedDuration = SignedDuration::from_mins(2);
 
-/// A booking whose create may or may not have reached Stalwart, each send written down before it
-/// goes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claim {
     pub booking: Booking,
@@ -238,7 +228,6 @@ pub struct Link {
     pub state: State,
 }
 
-/// What Stalwart made of a create.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Created {
     Event(String),
@@ -257,7 +246,6 @@ impl Links {
         self.0.get(digest)
     }
 
-    /// The link, while its window hasn't ended.
     pub fn live(&self, digest: &Digest, today: Date) -> Option<&Link> {
         self.0.get(digest).filter(|l| l.limits.until >= today)
     }

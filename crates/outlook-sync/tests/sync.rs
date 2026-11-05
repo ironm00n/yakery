@@ -14,8 +14,8 @@ fn a_listing_reaches_back_and_ahead_by_the_policy_days() {
 fn each_wake_asks_for_its_own_part_of_a_run() {
     let graph = Needs { graph: true, ..Needs::default() };
     let listing = Needs { listing: true, ..graph };
-    assert_eq!(needs(&[Wake::Local]), Needs::default());
-    assert_eq!(needs(&[Wake::Changed, Wake::Local]), graph);
+    assert_eq!(needs(&[Wake::Edited]), Needs::default());
+    assert_eq!(needs(&[Wake::Changed, Wake::Edited]), graph);
     assert_eq!(needs(&[Wake::Reauthorize]), Needs { reauthorize: true, ..graph });
     assert_eq!(needs(&[Wake::Removed]), Needs { fresh_subscription: true, ..listing });
     for wake in [Wake::Daily, Wake::Missed, Wake::Refused, Wake::SignedIn] {

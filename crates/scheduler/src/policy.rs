@@ -11,7 +11,6 @@ use jiff::tz::TimeZone;
 use serde::{Deserialize, Deserializer};
 use text::{Address, text};
 
-/// Time kept free between a booking and any other event, at least [`Gap::FLOOR`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Gap(SignedDuration);
 
@@ -33,7 +32,6 @@ const DAYS: [(&str, Weekday); 7] = [
     ("sun", Weekday::Sunday),
 ];
 
-/// Bookable hours on one weekday, in the owner's zone: `mon 10:00-18:00`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Window {
     pub day: Weekday,
@@ -64,7 +62,6 @@ text! {
     });
 }
 
-/// The program account the core signs in as, and every permission it may hold.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Account {

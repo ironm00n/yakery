@@ -1,6 +1,3 @@
-//! When a booking may start, and what the public week shows: pure functions of the policy, a
-//! link's limits, the clock and busy time.
-
 use jiff::civil::{Date, DateTime, DateTimeRound, Time};
 use jiff::{RoundMode, SignedDuration, Timestamp, ToSpan, Unit};
 use serde::{Deserialize, Serialize};
@@ -35,7 +32,6 @@ impl Period {
     }
 }
 
-/// A booking the core already holds; a new one keeps the larger of their two gaps from it.
 #[derive(Clone, Copy, Debug)]
 pub struct Taken {
     pub period: Period,
@@ -55,12 +51,10 @@ fn windows(
     })
 }
 
-/// The gap a link keeps: its own, or the policy's when that is larger.
 fn gap(policy: &Policy, limits: &Limits) -> Gap {
     limits.gap.max(policy.gap)
 }
 
-/// What a link's busy time is read across: its days, midnight to midnight, widened by its gap.
 pub fn reach(policy: &Policy, limits: &Limits) -> Period {
     days(policy, limits.from, limits.until).padded(gap(policy, limits).get())
 }
@@ -82,8 +76,6 @@ fn starts(
         .filter(move |&start| end.is_some_and(|end| start + length <= end))
 }
 
-/// Every start the link may book: in its hours and window, past the notice, and the gap clear
-/// of busy time and of what is taken.
 pub fn slots(
     policy: &Policy,
     limits: &Limits,
@@ -112,12 +104,10 @@ fn midnight(policy: &Policy, day: Date) -> Timestamp {
         .expect("the scheduler's dates are in range")
 }
 
-/// The days `from..=until` in the owner's zone, midnight to midnight.
 pub fn days(policy: &Policy, from: Date, until: Date) -> Period {
     Period { start: midnight(policy, from), end: midnight(policy, until + 1.day()) }
 }
 
-/// The week's bookable hours from `monday`, inside the horizon.
 pub fn open(policy: &Policy, monday: Date, now: Timestamp) -> Vec<Period> {
     let horizon = Period { start: now, end: now + policy.horizon() };
     windows(&policy.hours, monday, monday + 6.days())
@@ -131,7 +121,7 @@ pub fn open(policy: &Policy, monday: Date, now: Timestamp) -> Vec<Period> {
         .collect()
 }
 
-/// Busy time as the public page may show it: clipped to `open`.
+/// The public page shows busy time only inside open hours.
 pub fn shown(open: &[Period], busy: &[Period]) -> Vec<Period> {
     busy.iter().flat_map(|b| open.iter().filter_map(|w| b.clip(*w))).collect()
 }

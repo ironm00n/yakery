@@ -1,5 +1,4 @@
-//! The certificate credential: the app proves itself to Entra with a short JWT signed by a key
-//! that never leaves the host, in the form Microsoft's certificate-credentials page gives.
+//! The client assertion as Microsoft's certificate-credentials page gives it.
 
 use std::path::Path;
 
@@ -14,9 +13,7 @@ use serde_json::json;
 
 pub struct Credential {
     key: RsaKeyPair,
-    /// Base64url SHA-256 of the certificate's DER, the header's `x5t#S256`.
     thumbprint: String,
-    /// The certificate's DER, base64, as the app registration takes it.
     pub certificate: String,
 }
 
@@ -41,7 +38,6 @@ impl Credential {
         Ok(Credential { key, thumbprint, certificate })
     }
 
-    /// A client assertion for the token endpoint `audience`, good for five minutes.
     pub fn assertion(&self, client_id: &str, audience: &str, now: Timestamp) -> Result<String> {
         let header = json!({"alg": "PS256", "typ": "JWT", "x5t#S256": self.thumbprint});
         let at = now.as_second();

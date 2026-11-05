@@ -26,7 +26,6 @@ const STYLE: &str = "body{font:16px/1.4 system-ui,sans-serif;max-width:60rem;mar
 table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:.1rem .3rem;font-size:.8rem}\
 .busy{background:#c66;color:#fff}.closed{background:#eee}.slots a{display:inline-block;margin:.2rem}";
 
-/// Who is looking, in which zone; `tz` is set only when they chose one.
 pub struct Viewer {
     pub zone: TimeZone,
     pub tz: Option<String>,
@@ -151,7 +150,6 @@ pub fn week(
     page(viewer, "When I'm busy", &[("week", n.to_string())], body)
 }
 
-/// What was wrong with a booking a link's page is shown again for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Problem {
     Field(Field),
@@ -167,7 +165,6 @@ impl std::fmt::Display for Problem {
     }
 }
 
-/// A link's page; with `chosen`, the booking form for that slot in a `<dialog open>`.
 pub fn link(
     viewer: &Viewer,
     view: &LinkView,

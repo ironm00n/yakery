@@ -121,7 +121,6 @@ impl Front<'_> {
         }
     }
 
-    /// A link's page; `retry` is a form sent back with what was wrong with it.
     async fn link(
         &self,
         token: Token,

@@ -1,6 +1,3 @@
-//! Stalwart over JMAP on loopback, as `schedule@`: busy time from the calendars of whoever shared
-//! Bookings with it and of the groups the policy names, and bookings into Bookings.
-
 use std::collections::BTreeSet;
 use std::iter;
 use std::path::Path;
@@ -25,7 +22,6 @@ use crate::policy::Policy;
 use crate::slots::{Period, weeks};
 
 pub trait Calendar {
-    /// The address of the account the bookings go to.
     fn owner(&self) -> &str;
     async fn busy(&self, period: Period) -> Result<Vec<Period>>;
     async fn create(&self, event: Value) -> Result<Created>;
@@ -84,7 +80,6 @@ pub struct Stalwart {
     groups: Vec<String>,
 }
 
-/// The longest one call to Stalwart may take, answer and all.
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
 impl Stalwart {

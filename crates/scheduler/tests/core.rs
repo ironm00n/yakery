@@ -70,7 +70,6 @@ fn monday(time: &str) -> Timestamp {
     at(&format!("2026-10-26T{time}"))
 }
 
-/// A links file and a clock, which every core a test starts over them shares.
 struct Setup {
     dir: PathBuf,
     clock: Rc<Cell<Timestamp>>,

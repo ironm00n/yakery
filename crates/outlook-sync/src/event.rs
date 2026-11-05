@@ -1,13 +1,9 @@
-//! Graph's occurrences as the delta query returns them, and each as the iCalendar file the mirror
-//! holds, named by its Graph id so every listing rewrites the same files.
-
 use anyhow::{Context, Result};
 use jiff::Timestamp;
 use jiff::civil::DateTime;
 use ring::digest::{SHA256, digest};
 use serde::Deserialize;
 
-/// One entry of a delta page: an occurrence as it now is, or the id of one that is gone.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum Change {
@@ -41,7 +37,6 @@ pub struct Event {
     pub location: Option<Location>,
 }
 
-/// Graph's `dateTimeTimeZone`, in UTC since no `Prefer: outlook.timezone` is sent.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct When {
@@ -80,13 +75,12 @@ impl When {
     }
 }
 
-/// The mirror's file name for an occurrence: Graph ids hold characters a path shouldn't.
+/// Graph ids hold characters a path shouldn't.
 pub fn file(id: &str) -> String {
     format!("{}.ics", private::hex::encode(digest(&SHA256, id.as_bytes()).as_ref()))
 }
 
 impl Event {
-    /// The occurrence as one VEVENT, or None when Outlook shows it cancelled, which the mirror drops.
     pub fn ics(&self, host: &str, now: Timestamp) -> Result<Option<String>> {
         if self.is_cancelled {
             return Ok(None);
@@ -140,8 +134,7 @@ fn escape(text: &str) -> String {
     out
 }
 
-/// RFC 5545 §3.1: lines of at most 75 octets, continued after CRLF and a space, split between
-/// characters.
+/// RFC 5545 §3.1, split between characters.
 fn fold(line: &str) -> String {
     let mut out = String::with_capacity(line.len() + line.len() / 70 * 3 + 2);
     let mut width = 0;

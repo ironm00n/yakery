@@ -1,13 +1,7 @@
-//! What the sync keeps between runs, one JSON file each in its state directory. Losing any of it
-//! costs no events: the next full listing rewrites the mirror, and a lost refresh token means
-//! signing in again.
-
 use jiff::Timestamp;
 use private::Secret;
 use serde::{Deserialize, Serialize};
 
-/// The sign-in `outlook-sync login` started, which the callback finishes once, leaving how it went
-/// for the command to print.
 #[derive(Serialize, Deserialize)]
 pub enum Login {
     Pending { state: Secret, verifier: Secret, until: Timestamp },
@@ -32,9 +26,7 @@ pub struct Delta {
     pub link: Option<String>,
 }
 
-/// What the sync last wrote to each mirror file: the occurrence's Graph id and the ETag Stalwart
-/// gave the write, so the owner's edits tell themselves apart from the sync's own; and the
-/// sync-collection token the last look at the mirror ended on.
+/// The ETag of the sync's own last write to each file tells the owner's edits apart.
 #[derive(Default, Serialize, Deserialize)]
 pub struct Written {
     pub files: std::collections::BTreeMap<String, Copy>,

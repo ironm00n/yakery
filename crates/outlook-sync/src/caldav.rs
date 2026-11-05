@@ -42,8 +42,7 @@ impl Mirror {
         Ok(reply)
     }
 
-    /// Writes `file`, only over the version `over` names when one is given; the new ETag, or
-    /// None when someone changed the file since.
+    /// The new ETag, or None when the file is no longer the version `over` names.
     pub async fn put(&self, file: &str, ics: String, over: Option<&str>) -> Result<Option<String>> {
         let mut request =
             self.request(Method::PUT, file).header("content-type", CALENDAR).body(ics);
@@ -101,7 +100,6 @@ impl Mirror {
         }
     }
 
-    /// The files the calendar holds, by name.
     pub async fn files(&self) -> Result<BTreeSet<String>> {
         let body = "<propfind xmlns='DAV:'><prop><getetag/></prop></propfind>".to_string();
         let xml =
@@ -109,8 +107,7 @@ impl Mirror {
         Ok(responses(&xml).0.into_iter().filter(|e| !e.gone).map(|e| e.file).collect())
     }
 
-    /// What changed in the calendar since `token`, and the token to ask from next; everything,
-    /// as changed, when `token` is None or the server no longer knows it.
+    /// Everything counts as changed when `token` is None or the server no longer knows it.
     pub async fn changes(&self, token: Option<&str>) -> Result<(Vec<Entry>, String)> {
         let request = |token: Option<&str>| {
             format!(
@@ -134,7 +131,6 @@ fn etag(headers: &reqwest::header::HeaderMap) -> Option<String> {
     headers.get("etag").and_then(|v| v.to_str().ok()).map(str::to_string)
 }
 
-/// One response of a multistatus, for an event file.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Entry {
     pub file: String,
@@ -142,8 +138,7 @@ pub struct Entry {
     pub gone: bool,
 }
 
-/// A multistatus's responses for `.ics` files, and its sync-token, whatever namespace prefix the
-/// server picked.
+/// Tags match by local name, whatever namespace prefix the server picked.
 fn responses(xml: &str) -> (Vec<Entry>, Option<String>) {
     let (mut entries, mut token, mut current) = (vec![], None, None::<Entry>);
     for tag in xml.split('<') {

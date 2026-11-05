@@ -1,7 +1,3 @@
-//! The links file, which only [`Store::apply`] changes: it writes the next links whole, through
-//! `private::Dir`, before the core acts on them, and after a failed write it holds what the disk
-//! does.
-
 use std::path::Path;
 
 use anyhow::Result;

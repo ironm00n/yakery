@@ -9,7 +9,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 pub trait Check: Sized {
     type Problem: fmt::Display;
 
-    /// The value as it is kept, or what is wrong with it.
     fn check(self) -> Result<Self, Self::Problem>;
 }
 

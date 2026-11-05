@@ -1,8 +1,3 @@
-//! One loop that does all the work, woken by notifications, lifecycle events, Stalwart's push, a
-//! sign-in and a daily timer: send the owner's edits in the mirror to Outlook, when writing back
-//! is on; keep the subscription alive; and bring the mirror up to Graph by a delta run, or by a
-//! fresh listing over a new window, which also drops what Graph no longer lists.
-
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -21,26 +16,21 @@ use crate::state::{self, Subscription, Tokens};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Wake {
     Changed,
-    /// The mirror may hold an edit of the owner's.
-    Local,
+    Edited,
     Daily,
     Missed,
     Reauthorize,
-    /// Graph refused an edit of the owner's to one of its events, so a fresh listing puts
-    /// Outlook's version back.
     Refused,
     Removed,
     SignedIn,
 }
 
-/// What the wakes since the last successful run ask of the next one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Needs {
-    /// Past the owner's edits: the subscription kept and the mirror brought up to Graph.
+    /// The subscription kept and the mirror brought up to Graph.
     pub graph: bool,
     pub fresh_subscription: bool,
     pub reauthorize: bool,
-    /// A fresh listing over the window rather than a delta run.
     pub listing: bool,
 }
 
@@ -48,7 +38,7 @@ impl Wake {
     pub fn needs(self) -> Needs {
         let graph = Needs { graph: true, ..Needs::default() };
         match self {
-            Wake::Local => Needs::default(),
+            Wake::Edited => Needs::default(),
             Wake::Changed => graph,
             Wake::Reauthorize => Needs { reauthorize: true, ..graph },
             Wake::Removed => Needs { fresh_subscription: true, listing: true, ..graph },
@@ -76,13 +66,11 @@ pub fn needs<'a>(wakes: impl IntoIterator<Item = &'a Wake>) -> Needs {
 }
 
 const DAILY: Duration = Duration::from_secs(24 * 60 * 60);
-/// How long after a failed run the loop tries again, should no notification come first.
 const RETRY: Duration = Duration::from_secs(5 * 60);
 
-/// What the server and the loop share: the subscription notifications are checked against, and
-/// whether a subscribe of ours is waiting on Graph's validation request.
 pub struct Shared {
     pub subscription: RefCell<Option<Subscription>>,
+    /// A subscribe of ours is waiting on Graph's validation request to the notification URL.
     pub validating: Cell<bool>,
     pub wake: mpsc::UnboundedSender<Wake>,
 }
@@ -99,7 +87,7 @@ impl Shared {
 pub struct Sync {
     pub graph: Graph,
     pub mirror: Mirror,
-    pub state: Dir,
+    pub state: std::rc::Rc<Dir>,
     pub policy: &'static Policy,
     pub shared: std::rc::Rc<Shared>,
 }
@@ -108,7 +96,6 @@ impl Sync {
     pub async fn run(&self, mut wakes: mpsc::UnboundedReceiver<Wake>) {
         let mut daily = tokio::time::interval(DAILY);
         let mut retry: Option<tokio::time::Instant> = None;
-        // kept until a run succeeds, so a retry still does what the failed run was woken for
         let mut pending = BTreeSet::new();
         loop {
             tokio::select! {
@@ -141,7 +128,6 @@ impl Sync {
             yakery_log::warn!("not signed in; run `outlook-sync login`");
             return Ok(());
         }
-        // his edits go first, so a delta can't write over one before it is sent
         if self.policy.write {
             self.edits().await?;
         }
@@ -153,10 +139,7 @@ impl Sync {
         self.mirror(needs.listing).await
     }
 
-    /// Sends Outlook what the owner changed in the mirror since the last look: an edited
-    /// occurrence as an update, a deleted one as a delete, and an event he made as a create, whose
-    /// local copy then goes, so the delta brings back Outlook's. An edit of Outlook's event that
-    /// can't go is overwritten by Outlook's version; an event of his that can't go stays.
+    /// A created event's local file goes once sent, so the delta brings it back under its Graph id.
     async fn edits(&self) -> Result<()> {
         let mut written: state::Written = self.state.load(state::WRITTEN)?;
         let (entries, token) = self.mirror.changes(written.token.as_deref()).await?;
@@ -204,8 +187,6 @@ impl Sync {
         self.state.save(state::WRITTEN, &written)
     }
 
-    /// Logs an edit of one of Outlook's events that didn't go, and asks for the fresh listing that
-    /// puts Outlook's version back.
     fn put_back(&self, file: &str, Refused(why): Refused) {
         yakery_log::warn!("{file}: {why}; Outlook's version comes back");
         let _ = self.shared.wake.send(Wake::Refused);
@@ -306,15 +287,14 @@ impl Sync {
             written.files.remove(&name);
             return Ok(());
         };
-        // with writing back on, only over the version the sync wrote: a newer one is the owner's,
-        // and his edit goes to Outlook before Outlook's version comes back
+        // a version newer than the sync's is an owner edit not yet sent
         let over = written.files.get(&name).filter(|_| self.policy.write).map(|c| c.etag.clone());
         match self.mirror.put(&name, ics, over.as_deref()).await? {
             Some(etag) => {
                 written.files.insert(name.clone(), state::Copy { id, etag });
             }
             None => {
-                let _ = self.shared.wake.send(Wake::Local);
+                let _ = self.shared.wake.send(Wake::Edited);
             }
         }
         seen.insert(name);
@@ -322,12 +302,10 @@ impl Sync {
     }
 }
 
-/// Days as 24 hours each: a timestamp has no calendar to add days in.
 fn days(n: i64) -> SignedDuration {
     SignedDuration::from_hours(24 * n)
 }
 
-/// The span a fresh listing asks Graph for.
 fn window(policy: &Policy, now: Timestamp) -> (Timestamp, Timestamp) {
     (now - days(policy.days_back), now + days(policy.days_ahead))
 }

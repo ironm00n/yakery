@@ -1,6 +1,3 @@
-//! Entra and Microsoft Graph over HTTPS: tokens from a code or a refresh token, the one
-//! subscription on the mailbox's events, and delta pages of the default calendar's occurrences.
-
 use std::cell::RefCell;
 
 use anyhow::{Context, Result, bail};
@@ -16,8 +13,6 @@ use crate::policy::{Feed, Policy, Route};
 use crate::state::{self, Subscription, Tokens};
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
-/// What the sign-in asks for: writing back needs Calendars.ReadWrite, which an admin of the
-/// tenant may have to grant.
 pub fn scope(policy: &Policy) -> &'static str {
     match policy.write {
         true => "openid offline_access https://graph.microsoft.com/Calendars.ReadWrite",
@@ -31,7 +26,7 @@ pub struct Graph {
     client: Client,
     credential: Credential,
     policy: &'static Policy,
-    state: Dir,
+    state: std::rc::Rc<Dir>,
     access: RefCell<Option<(Secret, Timestamp)>>,
 }
 
@@ -42,7 +37,6 @@ struct Granted {
     expires_in: i64,
 }
 
-/// One page of a delta query: its changes, and where the next page or the next run starts.
 pub struct Page {
     pub changes: Vec<Change>,
     pub next: Option<String>,
@@ -51,17 +45,20 @@ pub struct Page {
 
 pub enum Delta {
     Page(Page),
-    /// The delta link is no longer good, and only a fresh listing is.
     Expired,
 }
 
-/// Why Graph won't take an edit of the owner's as it is.
 pub struct Refused(pub String);
 
+/// Refused when Graph won't take the event as it is; a failure a retry may fix is the outer error.
 pub type Sent = std::result::Result<(), Refused>;
 
 impl Graph {
-    pub fn new(policy: &'static Policy, credential: Credential, state: Dir) -> Result<Graph> {
+    pub fn new(
+        policy: &'static Policy,
+        credential: Credential,
+        state: std::rc::Rc<Dir>,
+    ) -> Result<Graph> {
         let client = Client::builder()
             .https_only(true)
             .timeout(std::time::Duration::from_secs(30))
@@ -94,7 +91,6 @@ impl Graph {
         Ok(granted)
     }
 
-    /// Redeems the callback's code, which is the only way to a first refresh token.
     pub async fn redeem(&self, code: &str, verifier: &Secret) -> Result<()> {
         let redirect = self.policy.url(Route::Callback);
         let form = [
@@ -175,7 +171,7 @@ impl Graph {
         })
     }
 
-    /// Pushes the subscription's end out by its lifetime; false when Graph no longer has it.
+    /// False when Graph no longer has the subscription.
     pub async fn renew(&self, subscription: &mut Subscription) -> Result<bool> {
         let expires = Timestamp::now() + LIFETIME.minutes();
         let url = format!("{GRAPH}/subscriptions/{}", subscription.id);
@@ -201,8 +197,6 @@ impl Graph {
         }
     }
 
-    /// A write of one event: an error when trying again may work, Refused when Graph won't take
-    /// this event as it is.
     async fn write(&self, method: Method, url: &str, body: Option<Value>) -> Result<Sent> {
         let (status, text) = self.call(method.clone(), url, body).await?;
         match status.as_u16() {
@@ -212,7 +206,7 @@ impl Graph {
         }
     }
 
-    /// Creates the owner's new event; `transaction` makes a retried create the same event.
+    /// `transaction` makes a retried create the same event.
     pub async fn create(&self, mut event: Value, transaction: &str) -> Result<Sent> {
         event["transactionId"] = json!(transaction);
         self.write(Method::POST, &format!("{GRAPH}/me/events"), Some(event)).await
@@ -229,7 +223,6 @@ impl Graph {
         self.write(Method::DELETE, &format!("{GRAPH}/me/events/{}", urlencode(id)), None).await
     }
 
-    /// The first page of a fresh listing over `[from, to)`.
     pub fn listing(from: Timestamp, to: Timestamp) -> String {
         let mut query = form_urlencoded::Serializer::new(String::new());
         query.append_pair("startDateTime", &from.to_string());
