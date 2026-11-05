@@ -208,13 +208,4 @@ in
       ]
       ++ config.host.additional-user-pkgs;
   };
-
-  # Explorer takes only RC's key from 2026-11-06 09:00 and only the old one before; ssh tries them in order
-  programs.ssh.extraConfig = ''
-    Host login.explorer.northeastern.edu xfer.discovery.neu.edu
-      User duckham.o
-      IdentityFile ~/.ssh/duckham.o-20261027T134519Z
-      IdentityFile ~/.ssh/id_ed25519
-      IdentitiesOnly yes
-  '';
 }

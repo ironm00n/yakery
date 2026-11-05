@@ -16,6 +16,7 @@ in
     ../../../users/home-manager.nix
     ../../../users/ironmoon/user.nix
     ../../../users/ironmoon/signing.nix
+    ../../../users/ironmoon/explorer-ssh.nix
   ];
 
   bundles.fonts.enable = mkDefault true;

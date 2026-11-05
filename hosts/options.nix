@@ -95,5 +95,10 @@ in
       type = types.nullOr (types.strMatching "[0-9A-F]{40}");
       default = null;
     };
+
+    explorer-ssh = mkOption {
+      type = types.bool;
+      default = false;
+    };
   };
 }
