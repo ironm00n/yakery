@@ -45,12 +45,20 @@ pub struct StateDir {
     root: PathBuf,
 }
 
+const PARTIAL: &str = "tmp";
+
 impl StateDir {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         for sub in ["runs", "tls"] {
             fs::create_dir_all(root.join(sub))
                 .with_context(|| format!("create {}", root.join(sub).display()))?;
+        }
+        for entry in fs::read_dir(root.join("runs"))? {
+            let path = entry?.path();
+            if path.extension().is_some_and(|e| e == PARTIAL) {
+                fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+            }
         }
         Ok(StateDir { root })
     }
@@ -65,7 +73,7 @@ impl StateDir {
 
     pub fn save(&self, rec: &RunRecord) -> Result<()> {
         let path = self.record_path(&rec.run);
-        let tmp = path.with_extension("json.tmp");
+        let tmp = path.with_extension(format!("json.{PARTIAL}"));
         write_private(&tmp, &serde_json::to_vec_pretty(rec)?)?;
         fs::rename(&tmp, &path).with_context(|| format!("rename {}", path.display()))
     }
@@ -174,5 +182,21 @@ mod tests {
         for e in fs::read_dir(dir.path().join("runs")).unwrap() {
             assert_eq!(e.unwrap().metadata().unwrap().permissions().mode() & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn open_drops_a_save_killed_before_its_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = StateDir::open(dir.path()).unwrap();
+        let a = record();
+        state.save(&a).unwrap();
+        fs::write(dir.path().join("runs").join(format!("{}.json.tmp", a.run)), b"{").unwrap();
+        let state = StateDir::open(dir.path()).unwrap();
+        assert_eq!(state.load_all().unwrap(), vec![a.clone()]);
+        let names: Vec<_> = fs::read_dir(dir.path().join("runs"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, [format!("{}.json", a.run)]);
     }
 }
