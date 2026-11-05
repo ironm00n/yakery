@@ -11,61 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::file::FileName;
-
-struct Line {
-    name: String,
-    params: Vec<(String, String)>,
-    value: String,
-}
-
-fn lines(ics: &str) -> Vec<Line> {
-    let unfolded = ics.replace("\r\n ", "").replace("\r\n\t", "").replace("\n ", "");
-    unfolded
-        .lines()
-        .filter_map(|l| {
-            let (head, value) = l.split_once(':')?;
-            let mut parts = head.split(';');
-            let name = parts.next()?.to_ascii_uppercase();
-            let params = parts
-                .filter_map(|p| {
-                    p.split_once('=')
-                        .map(|(k, v)| (k.to_ascii_uppercase(), v.trim_matches('"').to_string()))
-                })
-                .collect();
-            Some(Line { name, params, value: value.to_string() })
-        })
-        .collect()
-}
-
-fn vevent(ics: &str) -> Result<Vec<Line>> {
-    let mut inside = false;
-    let mut out = vec![];
-    for line in lines(ics) {
-        match (line.name.as_str(), line.value.as_str()) {
-            ("BEGIN", "VEVENT") => inside = true,
-            ("END", "VEVENT") if inside => return Ok(out),
-            _ if inside => out.push(line),
-            _ => {}
-        }
-    }
-    bail!("no VEVENT")
-}
-
-fn unescape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        match (c, c == '\\') {
-            (_, true) => match chars.next() {
-                Some('n' | 'N') => out.push('\n'),
-                Some(other) => out.push(other),
-                None => {}
-            },
-            (c, false) => out.push(c),
-        }
-    }
-    out
-}
+use crate::ical::{self, Line, unescape, vevent};
 
 /// Zoned keeps the zone the calendar app named, which Graph needs for a recurrence to keep its
 /// local time across a change of offset.
@@ -77,14 +23,14 @@ pub enum At {
 
 fn parse_at(value: &str, date: bool, zone: Option<TimeZone>) -> Result<At> {
     if date {
-        return Ok(At::Date(Date::strptime("%Y%m%d", value)?));
+        return Ok(At::Date(Date::strptime(ical::DATE, value)?));
     }
     let (civil, zone) = match (value.strip_suffix('Z'), zone) {
         (Some(utc), _) => (utc, TimeZone::UTC),
         (None, Some(zone)) => (value, zone),
         (None, None) => bail!("a floating time ({value}), which names no instant"),
     };
-    Ok(At::Zoned(DateTime::strptime("%Y%m%dT%H%M%S", civil)?.to_zoned(zone)?))
+    Ok(At::Zoned(DateTime::strptime(ical::DATE_TIME, civil)?.to_zoned(zone)?))
 }
 
 fn at(line: &Line) -> Result<At> {
@@ -171,7 +117,7 @@ pub fn graph(ics: &str) -> Result<Value> {
         "end": graph_time(&end)?,
         "isAllDay": matches!(start, At::Date(_)),
         "location": {"displayName": get("LOCATION").map(|l| unescape(&l.value)).unwrap_or_default()},
-        "showAs": if get("TRANSP").is_some_and(|l| l.value == "TRANSPARENT") { "free" } else { "busy" },
+        "showAs": if ical::free(get("TRANSP").map(|l| l.value.as_str())) { "free" } else { "busy" },
         "body": {"contentType": "text", "content": get("DESCRIPTION").map(|l| unescape(&l.value)).unwrap_or_default()},
     });
     if let Some(rule) = get("RRULE") {

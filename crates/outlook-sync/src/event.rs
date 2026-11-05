@@ -5,6 +5,7 @@ use ring::digest::{SHA256, digest};
 use serde::Deserialize;
 
 use crate::file::FileName;
+use crate::ical::{self, escape, fold};
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -68,11 +69,10 @@ impl When {
     fn property(&self, name: &str, all_day: bool) -> Result<String> {
         let civil = self.civil()?;
         Ok(match all_day {
-            true => format!("{name};VALUE=DATE:{}", civil.date().strftime("%Y%m%d")),
-            false => format!(
-                "{name}:{}",
-                civil.to_zoned(jiff::tz::TimeZone::UTC)?.strftime("%Y%m%dT%H%M%SZ")
-            ),
+            true => format!("{name};VALUE=DATE:{}", civil.date().strftime(ical::DATE)),
+            false => {
+                format!("{name}:{}", civil.to_zoned(jiff::tz::TimeZone::UTC)?.strftime(ical::UTC))
+            }
         })
     }
 }
@@ -96,7 +96,7 @@ impl Event {
             "PRODID:-//ironmoon//outlook-sync//EN".into(),
             "BEGIN:VEVENT".into(),
             format!("UID:{}", FileName::of(&self.id).uid()),
-            format!("DTSTAMP:{}", now.strftime("%Y%m%dT%H%M%SZ")),
+            format!("DTSTAMP:{}", now.strftime(ical::UTC)),
             self.start.property("DTSTART", self.is_all_day)?,
             self.end.property("DTEND", self.is_all_day)?,
         ];
@@ -109,7 +109,7 @@ impl Event {
             v.filter(|v| !v.is_empty()).map(|v| format!("{k}:{}", escape(v)))
         }));
         let free = matches!(self.show_as.as_deref(), Some("free" | "workingElsewhere"));
-        lines.push(format!("TRANSP:{}", if free { "TRANSPARENT" } else { "OPAQUE" }));
+        lines.push(format!("TRANSP:{}", ical::transp(free)));
         if self.show_as.as_deref() == Some("tentative") {
             lines.push("STATUS:TENTATIVE".into());
         }
@@ -119,39 +119,6 @@ impl Event {
         lines.extend(["END:VEVENT".into(), "END:VCALENDAR".into()]);
         Ok(Some(lines.iter().map(|l| fold(l)).collect()))
     }
-}
-
-/// RFC 5545 §3.3.11 TEXT.
-fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '\\' | ';' | ',' => {
-                out.push('\\');
-                out.push(c);
-            }
-            '\n' => out.push_str("\\n"),
-            '\r' => {}
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-/// RFC 5545 §3.1, split between characters.
-fn fold(line: &str) -> String {
-    let mut out = String::with_capacity(line.len() + line.len() / 70 * 3 + 2);
-    let mut width = 0;
-    for c in line.chars() {
-        if width + c.len_utf8() > 75 {
-            out.push_str("\r\n ");
-            width = 1;
-        }
-        out.push(c);
-        width += c.len_utf8();
-    }
-    out.push_str("\r\n");
-    out
 }
 
 #[cfg(test)]

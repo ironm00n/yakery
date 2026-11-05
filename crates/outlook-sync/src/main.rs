@@ -5,6 +5,7 @@ mod assertion;
 mod event;
 mod file;
 mod graph;
+mod ical;
 mod ledger;
 mod local;
 mod policy;
