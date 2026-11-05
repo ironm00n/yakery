@@ -127,7 +127,7 @@ fn plain(s: &str, most: usize) -> bool {
     (1..=most).contains(&s.chars().count()) && !s.chars().any(char::is_control)
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Form {
     pub name: String,
     pub address: String,

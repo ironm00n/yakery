@@ -7,6 +7,7 @@ mod core;
 mod front;
 mod link;
 mod pages;
+mod params;
 mod policy;
 mod slots;
 mod stalwart;

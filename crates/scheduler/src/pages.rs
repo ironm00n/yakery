@@ -13,6 +13,7 @@ use text::Address;
 
 use crate::ask::{LinkView, Shown};
 use crate::link::{Booker, Field, Form, MOST_NAME, MOST_NOTE};
+use crate::params::{Key, Slot};
 use crate::policy::POLICY;
 use crate::slots::{Period, days};
 
@@ -47,10 +48,10 @@ impl Viewer {
         self.tz.as_deref().unwrap_or(POLICY.zone_name())
     }
 
-    fn query(&self, pairs: &[(&str, String)]) -> String {
+    fn query(&self, pairs: &[(Key, String)]) -> String {
         let mut query = form_urlencoded::Serializer::new(String::new());
-        query.extend_pairs(pairs.iter().map(|(k, v)| (*k, v.as_str())));
-        query.extend_pairs(self.tz.iter().map(|tz| ("tz", tz)));
+        query.extend_pairs(pairs.iter().map(|(k, v)| (k.name(), v.as_str())));
+        query.extend_pairs(self.tz.iter().map(|tz| (Key::Tz.name(), tz)));
         format!("?{}", query.finish())
     }
 
@@ -68,7 +69,7 @@ impl Viewer {
     }
 }
 
-fn page(viewer: &Viewer, title: &str, keep: &[(&str, String)], body: Markup) -> Markup {
+fn page(viewer: &Viewer, title: &str, keep: &[(Key, String)], body: Markup) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" {
@@ -82,7 +83,7 @@ fn page(viewer: &Viewer, title: &str, keep: &[(&str, String)], body: Markup) -> 
                 form method="get" {
                     "Times are in " (viewer.zone_name()) ". "
                     @for (name, value) in keep { input type="hidden" name=(name) value=(value); }
-                    input name="tz" list="zones" value=(viewer.zone_name()) aria-label="Time zone";
+                    input name=(Key::Tz) list="zones" value=(viewer.zone_name()) aria-label="Time zone";
                     datalist id="zones" { @for zone in ZONES.iter() { option value=(zone) {} } }
                     button { "Change zone" }
                 }
@@ -124,7 +125,7 @@ pub fn week(
     let meets = |slot: Option<Period>, periods: &[Period]| {
         slot.is_some_and(|s| periods.iter().any(|p| p.overlaps(s)))
     };
-    let nav = |to: u8, text: &str| html! { a href=(viewer.query(&[("week", to.to_string())])) { (text) } " " };
+    let nav = |to: u8, text: &str| html! { a href=(viewer.query(&[(Key::Week, to.to_string())])) { (text) } " " };
     let body = html! {
         p {
             @if n > 0 { (nav(n - 1, "Earlier week")) }
@@ -147,7 +148,7 @@ pub fn week(
             }
         }
     };
-    page(viewer, "When I'm busy", &[("week", n.to_string())], body)
+    page(viewer, "When I'm busy", &[(Key::Week, n.to_string())], body)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,17 +187,17 @@ pub fn link(
             p { (view.duration.as_mins()) " minutes. Choose a time:" }
             @for (day, starts) in by_day(viewer, slots) {
                 h2 { (day.strftime("%A %-d %B")) }
-                p.slots { @for s in starts { a href=(viewer.query(&[("slot", s.as_second().to_string())])) { (viewer.time(s)) } } }
+                p.slots { @for s in starts { a href=(viewer.query(&[(Key::Slot, Slot(s).to_string())])) { (viewer.time(s)) } } }
             }
             @if let Some(start) = chosen.filter(|c| slots.contains(c)) {
                 dialog open {
                     h2 { (viewer.when(start, view.duration)) }
                     form method="post" {
-                        input type="hidden" name="slot" value=(start.as_second());
-                        @if let Some(tz) = &viewer.tz { input type="hidden" name="tz" value=(tz); }
-                        p { label { "Name " input name="name" required maxlength=(MOST_NAME) value=(form.name); } }
-                        p { label { "Email " input name="address" type="email" required maxlength=(Address::MOST) value=(form.address); } }
-                        p { label { "Note " textarea name="note" maxlength=(MOST_NOTE) { (form.note) } } }
+                        input type="hidden" name=(Key::Slot) value=(Slot(start));
+                        @if let Some(tz) = &viewer.tz { input type="hidden" name=(Key::Tz) value=(tz); }
+                        p { label { "Name " input name=(Key::Name) required maxlength=(MOST_NAME) value=(form.name); } }
+                        p { label { "Email " input name=(Key::Address) type="email" required maxlength=(Address::MOST) value=(form.address); } }
+                        p { label { "Note " textarea name=(Key::Note) maxlength=(MOST_NOTE) { (form.note) } } }
                         button { "Book" }
                     }
                     form method="dialog" { button { "Back" } }

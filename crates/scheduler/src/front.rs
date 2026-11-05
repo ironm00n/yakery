@@ -1,7 +1,6 @@
 //! The front: every byte from the internet is parsed here, by a process with no credentials, no
 //! state and no IP socket of its own, which asks the core for what each page shows.
 
-use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::path::Path;
 use std::sync::Arc;
@@ -30,6 +29,7 @@ use crate::ask::{self, FrontAnswer, FrontAsk, Refusal};
 use crate::checked::Checked;
 use crate::link::{Form, MOST_NAME, MOST_NOTE, Token};
 use crate::pages::{self, Problem, Viewer};
+use crate::params::{Posted, Query};
 
 const ANSWERING: usize = 8;
 /// The longest form the link page's fields allow: each character as up to 4 UTF-8 bytes, each
@@ -59,10 +59,6 @@ fn reply(status: StatusCode, markup: Markup, noindex: bool) -> Response<Full<Byt
     reply.body(Full::new(Bytes::from(markup.into_string()))).expect("static headers")
 }
 
-fn pairs(bytes: &[u8]) -> BTreeMap<String, String> {
-    form_urlencoded::parse(bytes).into_owned().collect()
-}
-
 struct Front<'a> {
     core: &'a Path,
 }
@@ -86,7 +82,7 @@ impl Front<'_> {
     }
 
     async fn answer(&self, request: Request<Incoming>) -> Response<Full<Bytes>> {
-        let query = pairs(request.uri().query().unwrap_or_default().as_bytes());
+        let query = Query::parse(request.uri().query().unwrap_or_default().as_bytes());
         let path = request.uri().path().to_string();
         let token = path.strip_prefix("/b/").map(Token::parse);
         match (request.method().clone(), token) {
@@ -98,7 +94,7 @@ impl Front<'_> {
             )
             .await
             {
-                Ok(Ok(body)) => self.book(token, pairs(&body.to_bytes())).await,
+                Ok(Ok(body)) => self.book(token, Posted::parse(&body.to_bytes())).await,
                 _ => self.refused(&Viewer::new(None), Refusal::Unavailable),
             },
             _ => reply(
@@ -109,9 +105,8 @@ impl Front<'_> {
         }
     }
 
-    async fn week(&self, query: &BTreeMap<String, String>) -> Response<Full<Bytes>> {
-        let viewer = Viewer::new(query.get("tz").map(String::as_str));
-        let n = query.get("week").and_then(|w| w.parse().ok()).unwrap_or(0);
+    async fn week(&self, query: &Query) -> Response<Full<Bytes>> {
+        let (viewer, n) = (Viewer::new(query.tz.as_deref()), query.week);
         match self.ask(FrontAsk::Week(n)).await {
             FrontAnswer::Week { monday, blocks, open, later } => {
                 reply(StatusCode::OK, pages::week(&viewer, n, monday, &blocks, &open, later), false)
@@ -124,12 +119,10 @@ impl Front<'_> {
     async fn link(
         &self,
         token: Token,
-        query: &BTreeMap<String, String>,
+        query: &Query,
         retry: Option<(Problem, Form)>,
     ) -> Response<Full<Bytes>> {
-        let viewer = Viewer::new(query.get("tz").map(String::as_str));
-        let chosen = query.get("slot").and_then(|s| s.parse().ok());
-        let chosen = chosen.and_then(|s| Timestamp::from_second(s).ok());
+        let (viewer, chosen) = (Viewer::new(query.tz.as_deref()), query.slot);
         let status = retry.as_ref().map_or(StatusCode::OK, |(problem, _)| match problem {
             Problem::Field(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Problem::Taken => StatusCode::CONFLICT,
@@ -145,18 +138,15 @@ impl Front<'_> {
         }
     }
 
-    async fn book(&self, token: Token, fields: BTreeMap<String, String>) -> Response<Full<Bytes>> {
-        let field = |name: &str| fields.get(name).cloned().unwrap_or_default();
-        let form = Form { name: field("name"), address: field("address"), note: field("note") };
-        let viewer = Viewer::new(fields.get("tz").map(String::as_str));
-        let Some(start) = field("slot").parse().ok().and_then(|s| Timestamp::from_second(s).ok())
-        else {
-            return self.refused(&viewer, Refusal::SlotGone);
-        };
+    async fn book(&self, token: Token, posted: Posted) -> Response<Full<Bytes>> {
+        let Posted { tz, slot, form } = posted;
+        let viewer = Viewer::new(tz.as_deref());
+        let Some(start) = slot else { return self.refused(&viewer, Refusal::SlotGone) };
         let booker = match Checked::new(form.clone()) {
             Ok(booker) => booker,
             Err(field) => {
-                return self.link(token, &fields, Some((Problem::Field(field), form))).await;
+                let again = Query { tz, week: 0, slot: Some(start) };
+                return self.link(token, &again, Some((Problem::Field(field), form))).await;
             }
         };
         let by = Timestamp::now() + ask::CLAIMED_WITHIN;
@@ -166,9 +156,8 @@ impl Front<'_> {
                 reply(StatusCode::OK, page, true)
             }
             FrontAnswer::Refused(Refusal::SlotGone) => {
-                let zone =
-                    fields.iter().filter(|(k, _)| *k == "tz").map(|(k, v)| (k.clone(), v.clone()));
-                self.link(token, &zone.collect(), Some((Problem::Taken, form))).await
+                let again = Query { tz, ..Query::default() };
+                self.link(token, &again, Some((Problem::Taken, form))).await
             }
             FrontAnswer::Refused(r) => self.refused(&viewer, r),
             _ => self.refused(&viewer, Refusal::Unavailable),
