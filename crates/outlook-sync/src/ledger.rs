@@ -1,6 +1,7 @@
-//! The mirror and the sync's record of what it wrote there. A record may miss a file the sync
-//! wrote, which the file's UID still names as the sync's, but never names a file the sync deleted,
-//! which would read as the owner's delete of Outlook's event.
+//! The mirror and the sync's record of what it wrote there. A stop at any point may leave the
+//! record missing a file the sync wrote, whose UID still names it as the sync's, or holding one in
+//! flight; never naming a file the sync deleted, or one with an ETag older than the sync's last
+//! write to it, which would read as the owner's delete or edit of Outlook's event.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,16 +22,24 @@ struct Record {
     token: Option<String>,
 }
 
-/// The ETag of the sync's own last write to a file tells the owner's edits apart.
+/// The ETag of the sync's own last write to a file tells the owner's edits apart; None while a
+/// write of the file is in flight.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mirrored {
     pub id: String,
-    pub etag: String,
+    pub etag: Option<String>,
+}
+
+pub struct Put {
+    pub file: FileName,
+    pub id: String,
+    pub ics: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Edit {
     Unchanged,
+    Unsettled,
     Deleted(Mirrored),
     Edited(Mirrored),
     New,
@@ -38,9 +47,10 @@ pub enum Edit {
 
 pub fn plan(entry: &Entry, mirrored: Option<&Mirrored>) -> Edit {
     match (mirrored, entry.gone) {
+        (Some(Mirrored { etag: None, .. }), _) => Edit::Unsettled,
         (Some(m), true) => Edit::Deleted(m.clone()),
         (None, true) => Edit::Unchanged,
-        (Some(m), false) if entry.etag.as_deref() == Some(m.etag.as_str()) => Edit::Unchanged,
+        (Some(m), false) if entry.etag == m.etag => Edit::Unchanged,
         (Some(m), false) => Edit::Edited(m.clone()),
         (None, false) => Edit::New,
     }
@@ -57,7 +67,7 @@ impl<'a> Ledger<'a> {
         Ok(Ledger { mirror, state, record: state.load(state::WRITTEN)? })
     }
 
-    pub fn save(&self) -> Result<()> {
+    fn save(&self) -> Result<()> {
         self.state.save(state::WRITTEN, &self.record)
     }
 
@@ -89,25 +99,38 @@ impl<'a> Ledger<'a> {
         self.save()
     }
 
-    /// With `guarded`, only over the sync's own last version: false when a newer one, an owner edit
-    /// not yet sent, is there. Recorded in memory; [`Ledger::save`] writes it.
-    pub async fn write(
-        &mut self,
-        file: &FileName,
-        id: String,
-        ics: String,
-        guarded: bool,
-    ) -> Result<bool> {
-        let over = self.record.files.get(file).filter(|_| guarded).map(|m| m.etag.clone());
-        let Some(etag) = self.mirror.put(file, ics, over.as_deref()).await? else {
-            return Ok(false);
-        };
-        self.record.files.insert(file.clone(), Mirrored { id, etag });
-        Ok(true)
+    /// With `guarded`, each file only over the sync's own last version; the files a newer one, an
+    /// owner edit not yet sent, kept are returned.
+    pub async fn write(&mut self, puts: Vec<Put>, guarded: bool) -> Result<Vec<FileName>> {
+        if puts.is_empty() {
+            return Ok(vec![]);
+        }
+        let overs: Vec<Option<String>> = (puts.iter())
+            .map(|p| {
+                self.record.files.get(&p.file).filter(|_| guarded).and_then(|m| m.etag.clone())
+            })
+            .collect();
+        for p in &puts {
+            self.record.files.insert(p.file.clone(), Mirrored { id: p.id.clone(), etag: None });
+        }
+        self.save()?;
+        let mut kept = vec![];
+        for (Put { file, id, ics }, over) in puts.into_iter().zip(overs) {
+            let etag = self.mirror.put(&file, ics, over.as_deref()).await?;
+            if etag.is_none() {
+                kept.push(file.clone());
+            }
+            self.record.files.insert(file, Mirrored { id, etag: etag.or(over) });
+        }
+        self.save()?;
+        Ok(kept)
     }
 
     pub async fn delete(&mut self, files: impl IntoIterator<Item = FileName>) -> Result<()> {
         let files: Vec<FileName> = files.into_iter().collect();
+        if files.is_empty() {
+            return Ok(());
+        }
         for file in &files {
             self.record.files.remove(file);
         }

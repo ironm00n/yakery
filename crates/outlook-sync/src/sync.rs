@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use crate::event::Change;
 use crate::file::FileName;
 use crate::graph::{Delta, Graph, Refused};
-use crate::ledger::{Edit, Entry, Ledger, Mirror, Mirrored};
+use crate::ledger::{Edit, Entry, Ledger, Mirror, Mirrored, Put};
 use crate::local;
 use crate::policy::Policy;
 use crate::state::{self, Subscription, Tokens};
@@ -153,6 +153,9 @@ impl Sync {
         for (Entry { file, .. }, edit) in planned {
             match edit {
                 Edit::Unchanged => {}
+                Edit::Unsettled => {
+                    self.put_back(&file, Refused("a write of the sync's was cut off".into()))
+                }
                 Edit::Deleted(mirrored) => {
                     if let Err(refused) = self.graph.remove(&mirrored.id).await? {
                         self.put_back(&file, refused);
@@ -168,7 +171,7 @@ impl Sync {
                     if let Err(refused) = sent {
                         self.put_back(&file, refused);
                     }
-                    ledger.record(file, Mirrored { etag, ..mirrored })?;
+                    ledger.record(file, Mirrored { etag: Some(etag), ..mirrored })?;
                 }
                 Edit::New => {
                     let Some((ics, _)) = self.mirror.get(&file).await? else { continue };
@@ -238,10 +241,12 @@ impl Sync {
                 Delta::Expired if !full => return Box::pin(self.mirror(ledger, true)).await,
                 Delta::Expired => anyhow::bail!("graph refused a fresh listing as expired"),
             };
-            for change in page.changes {
-                self.apply(change, &mut seen, ledger, now).await?;
+            let (puts, gone) = sort(page.changes, now)?;
+            seen.extend(puts.iter().map(|p| p.file.clone()));
+            ledger.delete(gone).await?;
+            if !ledger.write(puts, self.policy.write).await?.is_empty() {
+                let _ = self.shared.wake.send(Wake::Edited);
             }
-            ledger.save()?;
             match (page.next, page.delta) {
                 (Some(next), _) => url = next,
                 (None, Some(delta)) => break delta,
@@ -253,29 +258,20 @@ impl Sync {
         }
         self.state.save(state::DELTA, &state::Delta { link: Some(link) })
     }
+}
 
-    async fn apply(
-        &self,
-        change: Change,
-        seen: &mut BTreeSet<FileName>,
-        ledger: &mut Ledger<'_>,
-        now: Timestamp,
-    ) -> Result<()> {
-        let (id, ics) = match change {
-            Change::Removed { id, .. } => (id, None),
-            Change::Present(event) => {
-                let ics = event.ics(now)?;
-                (event.id, ics)
-            }
-        };
-        let name = FileName::of(&id);
-        let Some(ics) = ics else { return ledger.delete([name]).await };
-        if !ledger.write(&name, id, ics, self.policy.write).await? {
-            let _ = self.shared.wake.send(Wake::Edited);
+fn sort(changes: Vec<Change>, now: Timestamp) -> Result<(Vec<Put>, Vec<FileName>)> {
+    let (mut puts, mut gone) = (vec![], vec![]);
+    for change in changes {
+        match change {
+            Change::Removed { id, .. } => gone.push(FileName::of(&id)),
+            Change::Present(event) => match event.ics(now)? {
+                Some(ics) => puts.push(Put { file: FileName::of(&event.id), id: event.id, ics }),
+                None => gone.push(FileName::of(&event.id)),
+            },
         }
-        seen.insert(name);
-        Ok(())
     }
+    Ok((puts, gone))
 }
 
 fn days(n: i64) -> SignedDuration {
