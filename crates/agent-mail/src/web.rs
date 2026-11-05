@@ -81,9 +81,8 @@ impl Page {
     pub async fn read(url: Pinned, response: Response) -> Result<Page> {
         let field = |name| response.headers().get(name).and_then(|v| v.to_str().ok());
         let problem = field(header::CONTENT_TYPE) == Some("application/problem+json");
-        let retry_after = field(header::RETRY_AFTER)
-            .and_then(|s| s.trim().parse().ok())
-            .map(Duration::from_secs);
+        let retry_after =
+            field(header::RETRY_AFTER).and_then(|s| s.trim().parse().ok()).map(Duration::from_secs);
         let status = response.status();
         let text = response.text().await.context("reading the reply")?;
         Ok(Page { url, status, problem, retry_after, text })
