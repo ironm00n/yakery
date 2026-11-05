@@ -278,6 +278,16 @@ in
         payload, status = out.rsplit("\n", 1)
         return int(status), payload
 
+    def http(node, auth, method, path, body=None, ctype="application/json", headers=()):
+        args = [f"-X {method}", "-H " + shlex.quote("Authorization: " + auth)]
+        args += ["-H " + shlex.quote(h) for h in headers]
+        if body is not None:
+            data = body if isinstance(body, str) else json.dumps(body)
+            args += ["-H " + shlex.quote("Content-Type: " + ctype), "--data-binary " + shlex.quote(data)]
+        out = node.succeed(f"curl -s -w '\\n%{{http_code}}' {' '.join(args)} {origin(node)}{path}")
+        payload, status = out.rsplit("\n", 1)
+        return int(status), payload
+
     def session(node, auth):
         status, payload = curl(node, auth, "/jmap/session")
         return status, (json.loads(payload) if status == 200 else None)
@@ -324,5 +334,26 @@ in
         })
         assert "p" in created.get("created", {}), created
         return created["created"]["p"]["secret"]
+
+    def sign_in(names):
+        return {n: basic(f"{n}@${domain}", app_password(n)) for n in names}
+
+    observed = {}
+    failures = []
+
+    def observe(key, value):
+        observed[key] = value
+        print("OBSERVE " + json.dumps({key: value}, sort_keys=True))
+        return value
+
+    def expect(key, ok, value=None):
+        print(("EXPECT ok " if ok else "EXPECT FAIL ") + key + ("" if value is None else " " + json.dumps(value, sort_keys=True)))
+        if not ok:
+            failures.append(key)
+
+    def finish():
+        server.succeed("echo " + shlex.quote(json.dumps(observed, sort_keys=True, indent=1)) + " > /tmp/observed.json")
+        server.copy_from_machine("/tmp/observed.json", "")
+        assert not failures, failures
   '';
 }

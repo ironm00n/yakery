@@ -1,0 +1,24 @@
+diff --git a/crates/common/src/storage/state.rs b/crates/common/src/storage/state.rs
+--- a/crates/common/src/storage/state.rs
++++ b/crates/common/src/storage/state.rs
+@@ -24,7 +24,7 @@
+
+         push_tx
+             .send(PushEvent::Subscribe {
+-                account_ids: access_token.member_ids().collect(),
++                account_ids: access_token.all_ids().collect(),
+                 types,
+                 tx,
+             })
+diff --git a/crates/services/src/state_manager/push.rs b/crates/services/src/state_manager/push.rs
+--- a/crates/services/src/state_manager/push.rs
++++ b/crates/services/src/state_manager/push.rs
+@@ -566,7 +566,7 @@
+         .await
+         .caused_by(trc::location!())?
+         .build()
+-        .member_ids()
++        .all_ids()
+         .collect::<Vec<_>>();
+
+     if let Some(push_subscriptions) = server

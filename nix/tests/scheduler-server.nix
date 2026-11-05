@@ -82,28 +82,6 @@ rec {
     SCHEDULE, FEEDER = "${accounts.core.name}", "${accounts.feed.name}"
     GROUP = "calendars"
     FEEDS = f"/dav/cal/{GROUP}%40${domain}/feeds/"
-    observed = {}
-    failures = []
-
-    def observe(key, value):
-        observed[key] = value
-        print("OBSERVE " + json.dumps({key: value}, sort_keys=True))
-        return value
-
-    def expect(key, ok, value=None):
-        print(("EXPECT ok " if ok else "EXPECT FAIL ") + key + ("" if value is None else " " + json.dumps(value, sort_keys=True)))
-        if not ok:
-            failures.append(key)
-
-    def http(node, auth, method, path, body=None, ctype="application/json", headers=()):
-        args = [f"-X {method}", "-H " + shlex.quote("Authorization: " + auth)]
-        args += ["-H " + shlex.quote(h) for h in headers]
-        if body is not None:
-            data = body if isinstance(body, str) else json.dumps(body)
-            args += ["-H " + shlex.quote("Content-Type: " + ctype), "--data-binary " + shlex.quote(data)]
-        out = node.succeed(f"curl -s -w '\\n%{{http_code}}' {' '.join(args)} {origin(node)}{path}")
-        payload, status = out.rsplit("\n", 1)
-        return int(status), payload
 
     CAL = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars", "urn:ietf:params:jmap:principals"]
     MAIL = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:mail", "urn:ietf:params:jmap:submission"]
@@ -146,9 +124,6 @@ rec {
 
     def sink_message(name):
         return email.message_from_string(server.succeed(f"cat ${sink.dir}/mail/new/{name}"), policy=email.policy.default)
-
-    def sign_in(names):
-        return {n: basic(f"{n}@${domain}", app_password(n)) for n in names}
 
     today = datetime.date.today()
     monday = today + datetime.timedelta(days=7 - today.weekday())
@@ -202,10 +177,5 @@ rec {
 
     FREE_BUSY = {"mayReadFreeBusy": True}
     BOOKINGS = {"mayReadFreeBusy": True, "mayReadItems": True, "mayWriteAll": True}
-
-    def finish():
-        server.succeed("echo " + shlex.quote(json.dumps(observed, sort_keys=True, indent=1)) + " > /tmp/observed.json")
-        server.copy_from_machine("/tmp/observed.json", "")
-        assert not failures, failures
   '';
 }

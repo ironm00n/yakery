@@ -36,6 +36,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   cargoHash = "sha256-imB0ItaQdHCJ5beJ0NOkl/8LdTF1Ocf6YPqSbjsn+Ps=";
 
+  patches = [ ./02-push-shared-accounts.patch ];
+
   depsBuildBuild = [
     pkg-config
     zstd
