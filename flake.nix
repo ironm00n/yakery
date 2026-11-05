@@ -149,19 +149,33 @@
           pkgs = pkgs-map.${system};
         }
       );
-    # the scheduler's tests read time zones
-    crates-test-env = pkgs: { TZDIR = "${pkgs.tzdata}/share/zoneinfo"; };
+    # what the crates' tests need besides the toolchain, in checks.crates and the shells alike: the scheduler's read
+    # time zones; xb's broker tests run jobs under unshare, flock, setsid and taskset, read state with jq, and skip
+    # without them
+    crates-test = pkgs: {
+      env.TZDIR = "${pkgs.tzdata}/share/zoneinfo";
+      inputs = with pkgs; [
+        jq
+        util-linux
+      ];
+    };
     crates-shell =
       pkgs: env:
+      let
+        test = crates-test pkgs;
+      in
       pkgs.mkShell {
-        packages = with pkgs; [
-          cargo
-          rustc
-          rustfmt
-          clippy
-          rust-analyzer
-        ];
-        inherit env;
+        packages =
+          with pkgs;
+          [
+            cargo
+            rustc
+            rustfmt
+            clippy
+            rust-analyzer
+          ]
+          ++ test.inputs;
+        env = test.env // env;
       };
     treefmtEval = eachSystem ({ pkgs, ... }: treefmt-nix.lib.evalModule pkgs ./nix/treefmt.nix);
     mk-pkgs-stable = system:
@@ -335,10 +349,14 @@
           inherit inputs;
         };
         # every member's tests, the shared crates' included, which no package runs; agent-mail's load the system's roots
-        crates = pkgs-map.${system}.callPackage ./crates/rust.nix {
-          nativeCheckInputs = [ pkgs-map.${system}.cacert ];
-          env = crates-test-env pkgs-map.${system};
-        };
+        crates =
+          let
+            test = crates-test pkgs-map.${system};
+          in
+          pkgs-map.${system}.callPackage ./crates/rust.nix {
+            nativeCheckInputs = [ pkgs-map.${system}.cacert ] ++ test.inputs;
+            inherit (test) env;
+          };
         crates-manifest = pkgs-map.${system}.runCommand "crates-manifest" { } (
           let
             workspace = import ./crates/manifest.nix { inherit lib; };
@@ -457,8 +475,7 @@
       # the compiler and tools Nix builds the crates with, checks.crates' test environment, and agent-mail's build-time
       # deployment values
       crates = crates-shell pkgs (
-        crates-test-env pkgs
-        // import ./crates/agent-mail/deployment-env.nix {
+        import ./crates/agent-mail/deployment-env.nix {
           inherit lib;
           deployment = my-lib.ironmoon;
           correspondents = inputs.secrets.data.mail.agentCorrespondents;
@@ -467,7 +484,7 @@
       );
       # the same without agent-mail's values, which read the secrets input: what a build on Explorer gets (xb's base for
       # yakery names it), where that input can't be fetched
-      crates-cluster = crates-shell pkgs (crates-test-env pkgs);
+      crates-cluster = crates-shell pkgs { };
     });
   };
 }
