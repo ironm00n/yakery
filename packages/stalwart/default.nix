@@ -36,7 +36,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   cargoHash = "sha256-imB0ItaQdHCJ5beJ0NOkl/8LdTF1Ocf6YPqSbjsn+Ps=";
 
-  patches = [ ./02-push-shared-accounts.patch ];
+  patches = [
+    ./02-push-shared-accounts.patch
+    ./03-subaddress-scheduling.patch
+  ];
 
   depsBuildBuild = [
     pkg-config

@@ -1,0 +1,347 @@
+diff --git a/crates/common/src/auth/mod.rs b/crates/common/src/auth/mod.rs
+index b19c76b..ed648ed 100644
+--- a/crates/common/src/auth/mod.rs
++++ b/crates/common/src/auth/mod.rs
+@@ -170,7 +170,62 @@ pub(crate) struct AccessTo {
+ pub struct AccountInfo {
+     pub account_id: u32,
+     pub account: Arc<AccountCache>,
+-    pub addresses: Vec<String>,
++    pub addresses: AccountAddresses,
++}
++
++/// An account's addresses, and those of them on domains whose sub-addressing folds
++/// `local+tag@domain` into `local@domain` with the default delimiter, as delivery does.
++#[derive(Debug, Default, Clone)]
++pub struct AccountAddresses {
++    pub all: Vec<String>,
++    pub subaddressed: Vec<String>,
++}
++
++impl AccountAddresses {
++    /// Whether `email` is one of the addresses, or a subaddress that delivery folds into one.
++    pub fn owns(&self, email: &str) -> bool {
++        self.all.iter().any(|address| address == email) || self.folded(email).is_some()
++    }
++
++    /// The address `email` folds into, when it is a subaddress of one of them.
++    pub fn folded(&self, email: &str) -> Option<&str> {
++        let (local, domain) = email.split_once('@')?;
++        let (base, _) = local.split_once('+')?;
++        self.subaddressed
++            .iter()
++            .find(|address| address.split_once('@') == Some((base, domain)))
++            .map(String::as_str)
++    }
++}
++
++impl AccountAddresses {
++    pub(crate) fn push(&mut self, address: String, domain: &DomainCache) {
++        if domain.flags & DOMAIN_FLAG_SUB_ADDRESSING != 0 && domain.sub_addressing_custom.is_none() {
++            self.subaddressed.push(address.clone());
++        }
++        self.all.push(address);
++    }
++
++    pub(crate) fn merge(&mut self, other: AccountAddresses) {
++        for address in other.all {
++            if !self.all.contains(&address) {
++                self.all.push(address);
++            }
++        }
++        for address in other.subaddressed {
++            if !self.subaddressed.contains(&address) {
++                self.subaddressed.push(address);
++            }
++        }
++    }
++}
++
++impl std::ops::Deref for AccountAddresses {
++    type Target = [String];
++
++    fn deref(&self) -> &[String] {
++        &self.all
++    }
+ }
+ 
+ #[derive(Clone, Copy)]
+diff --git a/crates/common/src/cache/principals.rs b/crates/common/src/cache/principals.rs
+index 037539d..acd5ef1 100644
+--- a/crates/common/src/cache/principals.rs
++++ b/crates/common/src/cache/principals.rs
+@@ -11,7 +11,8 @@ use crate::{
+         ACCOUNT_FLAG_ENCRYPT_ALGO_AES256_GCM, ACCOUNT_FLAG_ENCRYPT_ALGO_CHACHA20_POLY1305,
+         ACCOUNT_FLAG_ENCRYPT_APPEND, ACCOUNT_FLAG_ENCRYPT_METHOD_PGP,
+         ACCOUNT_FLAG_ENCRYPT_METHOD_SMIME, ACCOUNT_FLAG_ENCRYPT_TRAIN_SPAM_FILTER, ACCOUNT_IS_USER,
+-        AccountCache, AccountInfo, AccountTenantIds, DOMAIN_FLAG_RELAY, DOMAIN_FLAG_SUB_ADDRESSING,
++        AccountAddresses, AccountCache, AccountInfo, AccountTenantIds, DOMAIN_FLAG_RELAY,
++        DOMAIN_FLAG_SUB_ADDRESSING,
+         DomainCache, EmailAddress, EmailAddressRef, EmailCache, MailingListCache, PermissionsGroup,
+         RECOVERY_ADMIN_ID, RoleCache, TenantCache, permissions::BuildPermissions,
+     },
+@@ -686,19 +687,17 @@ impl Server {
+             let owner_account = self.account(owner_account_id).await?;
+             let owner_account_info = self.build_account_info(owner_account).await?;
+ 
+-            for address in owner_account_info.addresses {
+-                if !account_info.addresses.contains(&address) {
+-                    account_info.addresses.push(address);
+-                }
+-            }
++            account_info.addresses.merge(owner_account_info.addresses);
+         }
+ 
+         Ok(account_info)
+     }
+ 
+     pub async fn build_account_info(&self, account: Arc<AccountCache>) -> trc::Result<AccountInfo> {
+-        let mut addresses =
+-            Vec::with_capacity(account.id_member_of.len() + account.addresses.len());
++        let mut addresses = AccountAddresses {
++            all: Vec::with_capacity(account.id_member_of.len() + account.addresses.len()),
++            subaddressed: Vec::new(),
++        };
+         for address in account.addresses.iter() {
+             if let Some(domain) = self.domain_by_id(address.domain_id).await? {
+                 for name in domain.names.iter() {
+@@ -706,7 +705,7 @@ impl Server {
+                     addr.push_str(address.local_part.as_ref());
+                     addr.push('@');
+                     addr.push_str(name.as_ref());
+-                    addresses.push(addr);
++                    addresses.push(addr, &domain);
+                 }
+             }
+         }
+@@ -721,7 +720,7 @@ impl Server {
+                             addr.push_str(address.local_part.as_ref());
+                             addr.push('@');
+                             addr.push_str(name.as_ref());
+-                            addresses.push(addr);
++                            addresses.push(addr, &domain);
+                         }
+                     }
+                 }
+@@ -967,7 +966,7 @@ impl AccountInfo {
+         }
+     }
+ 
+-    pub fn addresses(&self) -> &[String] {
++    pub fn addresses(&self) -> &AccountAddresses {
+         &self.addresses
+     }
+ 
+diff --git a/crates/groupware/src/calendar/itip.rs b/crates/groupware/src/calendar/itip.rs
+index d08d484..09d4ed3 100644
+--- a/crates/groupware/src/calendar/itip.rs
++++ b/crates/groupware/src/calendar/itip.rs
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
+  */
+ 
++use crate::scheduling::LocalAddresses;
+ use crate::{
+     RFC_3986,
+     cache::GroupwareCache,
+@@ -923,7 +924,7 @@ fn build_rsvp_reply(
+ fn build_rsvp_invitation(
+     ical: &ICalendar,
+     attendee: &str,
+-    account_emails: &[String],
++    account_emails: &(impl LocalAddresses + ?Sized),
+     hide_attendees: bool,
+     language: &str,
+ ) -> RsvpResponse {
+diff --git a/crates/groupware/src/scheduling/event_cancel.rs b/crates/groupware/src/scheduling/event_cancel.rs
+index 27eac0a..c39932e 100644
+--- a/crates/groupware/src/scheduling/event_cancel.rs
++++ b/crates/groupware/src/scheduling/event_cancel.rs
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
+  */
+ 
++use crate::scheduling::LocalAddresses;
+ use crate::scheduling::{
+     InstanceId, ItipError, ItipMessage, ItipSummary,
+     attendee::attendee_decline,
+@@ -21,7 +22,7 @@ use calcard::{
+ 
+ pub fn itip_cancel(
+     ical: &ICalendar,
+-    account_emails: &[String],
++    account_emails: &(impl LocalAddresses + ?Sized),
+     is_deletion: bool,
+ ) -> Result<ItipMessage<ICalendar>, ItipError> {
+     // Prepare iTIP message
+diff --git a/crates/groupware/src/scheduling/event_create.rs b/crates/groupware/src/scheduling/event_create.rs
+index 8fe59b4..611955c 100644
+--- a/crates/groupware/src/scheduling/event_create.rs
++++ b/crates/groupware/src/scheduling/event_create.rs
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
+  */
+ 
++use crate::scheduling::LocalAddresses;
+ use crate::scheduling::{
+     ItipError, ItipMessage, itip::itip_finalize, organizer::organizer_request_full,
+     snapshot::itip_snapshot,
+@@ -12,7 +13,7 @@ use calcard::icalendar::ICalendar;
+ 
+ pub fn itip_create(
+     ical: &mut ICalendar,
+-    account_emails: &[String],
++    account_emails: &(impl LocalAddresses + ?Sized),
+ ) -> Result<Vec<ItipMessage<ICalendar>>, ItipError> {
+     let itip = itip_snapshot(ical, account_emails, false)?;
+     if !itip.organizer.is_server_scheduling {
+diff --git a/crates/groupware/src/scheduling/event_update.rs b/crates/groupware/src/scheduling/event_update.rs
+index 5e97950..394b0ce 100644
+--- a/crates/groupware/src/scheduling/event_update.rs
++++ b/crates/groupware/src/scheduling/event_update.rs
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
+  */
+ 
++use crate::scheduling::LocalAddresses;
+ use crate::scheduling::{
+     ItipError, ItipMessage, attendee::attendee_handle_update, event_cancel::itip_cancel,
+     itip::itip_finalize, organizer::organizer_handle_update, snapshot::itip_snapshot,
+@@ -13,7 +14,7 @@ use calcard::icalendar::ICalendar;
+ pub fn itip_update(
+     ical: &mut ICalendar,
+     old_ical: &ICalendar,
+-    account_emails: &[String],
++    account_emails: &(impl LocalAddresses + ?Sized),
+ ) -> Result<Vec<ItipMessage<ICalendar>>, ItipError> {
+     let old_itip = itip_snapshot(old_ical, account_emails, false)?;
+     match itip_snapshot(ical, account_emails, false) {
+diff --git a/crates/groupware/src/scheduling/itip.rs b/crates/groupware/src/scheduling/itip.rs
+index 8191e3f..8394ce8 100644
+--- a/crates/groupware/src/scheduling/itip.rs
++++ b/crates/groupware/src/scheduling/itip.rs
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
+  */
+ 
++use crate::scheduling::LocalAddresses;
+ use crate::scheduling::{Email, ItipMessage, ItipMessages, ItipSummary};
+ use calcard::{
+     common::{IanaString, PartialDateTime},
+@@ -94,7 +95,7 @@ fn itip_is_server_scheduling(entry: &ICalendarEntry) -> bool {
+ 
+ fn itip_unreachable_entries(
+     ical: &ICalendar,
+-    account_emails: &[String],
++    account_emails: &(impl LocalAddresses + ?Sized),
+ ) -> Option<Vec<(usize, usize)>> {
+     let (comp_id, entry_id, entry) = ical
+         .components
+@@ -158,7 +159,7 @@ fn itip_unreachable_entries(
+ 
+ pub fn itip_unreachable_recipient<'x>(
+     ical: &'x ICalendar,
+-    account_emails: &[String],
++    account_emails: &(impl LocalAddresses + ?Sized),
+ ) -> Option<&'x str> {
+     itip_unreachable_entries(ical, account_emails)?
+         .first()
+@@ -170,7 +171,7 @@ pub fn itip_unreachable_recipient<'x>(
+         })
+ }
+ 
+-pub fn itip_set_unreachable_status(ical: &mut ICalendar, account_emails: &[String]) {
++pub fn itip_set_unreachable_status(ical: &mut ICalendar, account_emails: &(impl LocalAddresses + ?Sized)) {
+     let Some(unreachable) = itip_unreachable_entries(ical, account_emails) else {
+         return;
+     };
+diff --git a/crates/groupware/src/scheduling/mod.rs b/crates/groupware/src/scheduling/mod.rs
+index cdc7cb8..4813436 100644
+--- a/crates/groupware/src/scheduling/mod.rs
++++ b/crates/groupware/src/scheduling/mod.rs
+@@ -241,16 +241,33 @@ impl Attendee<'_> {
+     }
+ }
+ 
++/// The addresses a scheduling account counts as its own.
++pub trait LocalAddresses {
++    fn is_local(&self, email: &str) -> bool;
++}
++
++impl LocalAddresses for [String] {
++    fn is_local(&self, email: &str) -> bool {
++        self.iter().any(|address| address == email)
++    }
++}
++
++impl LocalAddresses for common::auth::AccountAddresses {
++    fn is_local(&self, email: &str) -> bool {
++        self.owns(email)
++    }
++}
++
+ impl Email {
+-    pub fn new(email: &str, local_addresses: &[String]) -> Option<Self> {
++    pub fn new(email: &str, local_addresses: &(impl LocalAddresses + ?Sized)) -> Option<Self> {
+         let decoded = decode_mailto_address(email.trim());
+         let email = sanitize_email(decoded.as_ref())
+             .or_else(|| extract_addr_spec(decoded.as_ref()).and_then(sanitize_email))?;
+-        let is_local = local_addresses.contains(&email);
++        let is_local = local_addresses.is_local(&email);
+         Some(Email { email, is_local })
+     }
+ 
+-    pub fn from_uri(uri: &Uri, local_addresses: &[String]) -> Option<Self> {
++    pub fn from_uri(uri: &Uri, local_addresses: &(impl LocalAddresses + ?Sized)) -> Option<Self> {
+         if let Uri::Location(uri) = uri {
+             Email::new(uri.as_str(), local_addresses)
+         } else {
+diff --git a/crates/groupware/src/scheduling/snapshot.rs b/crates/groupware/src/scheduling/snapshot.rs
+index c262431..7f5fac0 100644
+--- a/crates/groupware/src/scheduling/snapshot.rs
++++ b/crates/groupware/src/scheduling/snapshot.rs
+@@ -4,6 +4,7 @@
+  * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SEL
+  */
+ 
++use crate::scheduling::LocalAddresses;
+ use crate::scheduling::{
+     Attendee, Email, InstanceId, ItipDateTime, ItipEntry, ItipEntryValue, ItipError, ItipField,
+     ItipParticipant, ItipSnapshot, ItipSnapshots, ItipTime, ItipValue, Organizer, RecurrenceId,
+@@ -14,9 +15,9 @@ use calcard::icalendar::{
+     ICalendarScheduleAgentValue, ICalendarValue, Uri,
+ };
+ 
+-pub fn itip_snapshot<'x, 'y>(
++pub fn itip_snapshot<'x>(
+     ical: &'x ICalendar,
+-    account_emails: &'y [String],
++    account_emails: &(impl LocalAddresses + ?Sized),
+     force_add_client_scheduling: bool,
+ ) -> Result<ItipSnapshots<'x>, ItipError> {
+     if !ical.components.iter().any(|comp| {
+diff --git a/crates/services/src/task_manager/imip.rs b/crates/services/src/task_manager/imip.rs
+index 0b00f0e..d67b457 100644
+--- a/crates/services/src/task_manager/imip.rs
++++ b/crates/services/src/task_manager/imip.rs
+@@ -223,6 +223,7 @@ async fn send_imip(
+             let server_instance = server_instance.clone();
+             let sender_info = sender_info.clone();
+             let from = itip_message.from.to_string();
++            let envelope = sender_info.addresses().folded(&from).unwrap_or(&from).to_string();
+             let to = recipient.to_string();
+             tokio::spawn(async move {
+                 let mut session = Session::<NullIo>::local(
+@@ -231,10 +232,10 @@ async fn send_imip(
+                     SessionData::local(sender_info, None, vec![], vec![], 0),
+                 );
+ 
+-                // MAIL FROM
++                // MAIL FROM, as the account's own address when the organizer is a subaddress of it
+                 let _ = session
+                     .handle_mail_from(MailFrom {
+-                        address: from.as_str().into(),
++                        address: envelope.as_str().into(),
+                         ..Default::default()
+                     })
+                     .await;
