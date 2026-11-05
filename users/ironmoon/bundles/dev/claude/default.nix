@@ -59,6 +59,7 @@ in
       login = "${ironmoon.mail.agents.sharedLocalPart}@${ironmoon.domain}";
       password-file = "~/.claude/secrets/agent-ironmoon-dev-password";
     };
+    xdg.configFile."jj/conf.d/claude.toml".source = symlink ./jj.toml;
 
     home.file = {
       # no XDG: https://github.com/anthropics/claude-code/issues/1455

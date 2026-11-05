@@ -1,0 +1,7 @@
+#:schema https://docs.jj-vcs.dev/latest/config-schema.json
+
+# jj's next snapshot folds stray edits into a pushed working copy, so a push from a session would send it stale (friction 133)
+[[--scope]]
+--when.environments = ["CLAUDECODE"]
+[--scope.git]
+private-commits = "working_copies()"

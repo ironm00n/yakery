@@ -26,10 +26,16 @@ hook=$(pre_push_hook "$root")
 plan=$(jj "$@" --dry-run 2>&1) || fail "the dry run failed: $plan" $?
 zero=0000000000000000000000000000000000000000
 full() { jjr log --no-graph -r "$1" -T commit_id; }
-remote= refs=()
+remote= refs=() warning=0
 bookmark='^  bookmark: ([^ ]+) \[(add to ([0-9a-f]+)|move (forward|backward|sideways) from ([0-9a-f]+) to ([0-9a-f]+)|delete from ([0-9a-f]+))\]$'
 while IFS= read -r line; do
-  if [[ $line =~ ^Changes\ to\ push\ to\ (.+):$ ]]; then
+  # a warning (`Won't push bookmark b: commit c is private`) and the lines indented under it are jj's, not the plan's
+  [[ $line == '  '* ]] || warning=0
+  if [[ $line == Warning:* ]]; then
+    warning=1
+  elif ((warning)); then
+    :
+  elif [[ $line =~ ^Changes\ to\ push\ to\ (.+):$ ]]; then
     remote=${BASH_REMATCH[1]}
   elif [[ $line =~ $bookmark ]]; then
     m=("${BASH_REMATCH[@]}")

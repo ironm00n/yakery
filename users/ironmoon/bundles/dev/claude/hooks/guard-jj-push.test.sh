@@ -127,6 +127,15 @@ push hooked 0 git push -b main
 push hooked 0 git push -b main
 same "nothing to push runs no hook" "$(cat "$dir/stdin")" ""
 
+q jj -R "$k" new
+echo wc >"$k/wc"
+q jj -R "$k" describe -m wc
+q jj -R "$k" bookmark create sealed -r @-
+q jj -R "$k" bookmark create wc -r @
+push hooked 0 --config 'git.private-commits="working_copies()"' git push --all
+same "a push of every bookmark sends all but the private one, which jj skips with a warning" "$(at hooked sealed) $(at hooked wc)" "$(id hooked sealed) none"
+same "and the hook is fed only what is sent" "$(cut -d' ' -f1 "$dir/stdin")" refs/heads/sealed
+
 change plain b
 push plain 0 git push -b main
 same "a repo with no hook pushes as jj does" "$(at plain main)" "$(id plain main)"
