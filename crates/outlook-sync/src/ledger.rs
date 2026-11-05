@@ -10,7 +10,7 @@ use private::Dir;
 use serde::{Deserialize, Serialize};
 
 use crate::file::FileName;
-use crate::{local, state};
+use crate::{event, local, state};
 
 #[path = "caldav.rs"]
 mod caldav;
@@ -30,6 +30,17 @@ pub struct Mirrored {
     pub etag: Option<String>,
     #[serde(default)]
     pub fields: local::Fields,
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+/// Whether the file is still the sync's settled write of this same content, so writing it again
+/// would change nothing. A file holding his edit, unrecorded or in flight is written: the listing
+/// is its put-back too.
+pub fn untouched(mirrored: Option<&Mirrored>, etag: Option<&String>, content: &str) -> bool {
+    mirrored.is_some_and(|m| {
+        m.etag.is_some() && m.etag.as_ref() == etag && m.content.as_deref() == Some(content)
+    })
 }
 
 pub struct Put {
@@ -62,11 +73,12 @@ pub struct Ledger<'a> {
     mirror: &'a Mirror,
     state: &'a Dir,
     record: Record,
+    etags: Option<BTreeMap<FileName, Option<String>>>,
 }
 
 impl<'a> Ledger<'a> {
     pub fn open(mirror: &'a Mirror, state: &'a Dir) -> Result<Ledger<'a>> {
-        Ok(Ledger { mirror, state, record: state.load(state::WRITTEN)? })
+        Ok(Ledger { mirror, state, record: state.load(state::WRITTEN)?, etags: None })
     }
 
     fn save(&self) -> Result<()> {
@@ -107,22 +119,48 @@ impl<'a> Ledger<'a> {
         if puts.is_empty() {
             return Ok(vec![]);
         }
+        let etags = match self.etags.take() {
+            Some(etags) => etags,
+            None => self.mirror.files().await?,
+        };
+        let puts: Vec<(Put, String)> = (puts.into_iter())
+            .map(|p| {
+                let content = event::content(&p.ics);
+                (p, content)
+            })
+            .filter(|(p, content)| {
+                let etag = etags.get(&p.file).and_then(Option::as_ref);
+                !untouched(self.record.files.get(&p.file), etag, content)
+            })
+            .collect();
+        self.etags = Some(etags);
+        if puts.is_empty() {
+            return Ok(vec![]);
+        }
         let written: Vec<local::Fields> = (puts.iter())
-            .map(|p| local::graph(&p.ics).map(|e| local::fields(&e)))
+            .map(|(p, _)| local::graph(&p.ics).map(|e| local::fields(&e)))
             .collect::<Result<_>>()?;
         let mut held = vec![];
-        for p in &puts {
-            let writing =
-                Mirrored { id: p.id.clone(), etag: None, fields: local::Fields::default() };
+        for (p, _) in &puts {
+            let writing = Mirrored {
+                id: p.id.clone(),
+                etag: None,
+                fields: local::Fields::default(),
+                content: None,
+            };
             held.push(self.record.files.insert(p.file.clone(), writing));
         }
         self.save()?;
         let mut kept = vec![];
-        for ((Put { file, id, ics }, held), fields) in puts.into_iter().zip(held).zip(written) {
+        for (((Put { file, id, ics }, content), held), fields) in
+            puts.into_iter().zip(held).zip(written)
+        {
             let over = held.as_ref().filter(|_| guarded).and_then(|m| m.etag.clone());
             match (self.mirror.put(&file, ics, over.as_deref()).await?, held) {
                 (Some(etag), _) => {
-                    self.record.files.insert(file, Mirrored { id, etag: Some(etag), fields });
+                    let mirrored =
+                        Mirrored { id, etag: Some(etag), fields, content: Some(content) };
+                    self.record.files.insert(file, mirrored);
                 }
                 (None, held) => {
                     if let Some(held) = held {
@@ -154,13 +192,13 @@ impl<'a> Ledger<'a> {
     /// The files a listing didn't see; with `owners_kept`, only those of the sync's.
     pub async fn sweep(&mut self, seen: &BTreeSet<FileName>, owners_kept: bool) -> Result<()> {
         let mut gone = vec![];
-        for file in self.mirror.files().await?.difference(seen) {
+        for file in self.mirror.files().await?.into_keys().filter(|f| !seen.contains(f)) {
             let ours = !owners_kept
-                || self.record.files.contains_key(file)
-                || (self.mirror.get(file).await?)
-                    .is_some_and(|(ics, _)| local::stamped(file, &ics));
+                || self.record.files.contains_key(&file)
+                || (self.mirror.get(&file).await?)
+                    .is_some_and(|(ics, _)| local::stamped(&file, &ics));
             if ours {
-                gone.push(file.clone());
+                gone.push(file);
             }
         }
         self.delete(gone).await

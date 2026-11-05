@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use jiff::Timestamp;
 use jiff::civil::DateTime;
+use ring::digest::{SHA256, digest};
 use serde::Deserialize;
 
 use crate::file::FileName;
@@ -74,6 +75,14 @@ impl When {
             ),
         })
     }
+}
+
+/// A digest of the file apart from its DTSTAMP, the one line a rewrite of an unchanged event changes.
+pub fn content(ics: &str) -> String {
+    let lines = ics.split("\r\n").filter(|l| !l.starts_with("DTSTAMP:"));
+    private::hex::encode(
+        digest(&SHA256, lines.collect::<Vec<_>>().join("\r\n").as_bytes()).as_ref(),
+    )
 }
 
 impl Event {

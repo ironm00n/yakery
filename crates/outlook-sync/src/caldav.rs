@@ -1,6 +1,6 @@
 //! The mirror calendar in Stalwart, over CalDAV on loopback as the account it is shared with.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt::Display;
 
 use anyhow::{Context, Result};
@@ -96,11 +96,12 @@ impl Mirror {
         }
     }
 
-    pub async fn files(&self) -> Result<BTreeSet<FileName>> {
+    /// Each file the calendar holds, with its ETag.
+    pub async fn files(&self) -> Result<BTreeMap<FileName, Option<String>>> {
         let body = "<propfind xmlns='DAV:'><prop><getetag/></prop></propfind>".to_string();
         let xml =
             self.multistatus(b"PROPFIND", body).await?.context("stalwart refused PROPFIND")?;
-        Ok(responses(&xml).0.into_iter().filter(|e| !e.gone).map(|e| e.file).collect())
+        Ok(responses(&xml).0.into_iter().filter(|e| !e.gone).map(|e| (e.file, e.etag)).collect())
     }
 
     /// Everything counts as changed when `token` is None or the server no longer knows it.

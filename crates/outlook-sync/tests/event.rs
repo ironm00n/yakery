@@ -106,3 +106,16 @@ fn a_time_outside_utc_is_refused() {
     };
     assert!(event.ics(now()).is_err());
 }
+
+#[test]
+fn a_rewrite_of_an_unchanged_occurrence_differs_in_dtstamp_alone() {
+    let Change::Present(event) = change(timed(json!({}))) else { panic!("not an occurrence") };
+    let later: Timestamp = "2026-11-05T08:00:00Z".parse().unwrap();
+    let (first, again) = (event.ics(now()).unwrap().unwrap(), event.ics(later).unwrap().unwrap());
+    assert_ne!(first, again);
+    assert_eq!(content(&first), content(&again));
+    let Change::Present(moved) = change(timed(json!({"subject": "Lab meeting, moved"}))) else {
+        panic!("not an occurrence")
+    };
+    assert_ne!(content(&moved.ics(now()).unwrap().unwrap()), content(&first));
+}

@@ -4,8 +4,12 @@ fn entry(etag: Option<&str>, gone: bool) -> Entry {
     Entry { file: "f.ics".parse().unwrap(), etag: etag.map(Into::into), gone }
 }
 
+fn writing() -> Mirrored {
+    Mirrored { id: "AAMk1".into(), etag: None, fields: Default::default(), content: None }
+}
+
 fn mirrored(etag: &str) -> Mirrored {
-    Mirrored { id: "AAMk1".into(), etag: Some(etag.into()), fields: Default::default() }
+    Mirrored { etag: Some(etag.into()), content: Some("c1".into()), ..writing() }
 }
 
 #[test]
@@ -37,7 +41,19 @@ fn a_file_with_no_record_is_new_and_one_gone_with_none_is_nothing() {
 
 #[test]
 fn a_file_whose_write_was_cut_off_is_unsettled_whatever_its_etag() {
-    let writing = Mirrored { id: "AAMk1".into(), etag: None, fields: Default::default() };
+    let writing = writing();
     assert_eq!(plan(&entry(Some("\"8\""), false), Some(&writing)), Edit::Unsettled);
     assert_eq!(plan(&entry(None, true), Some(&writing)), Edit::Unsettled);
+}
+
+#[test]
+fn only_the_syncs_settled_write_of_the_same_content_is_left_unwritten() {
+    let etag = "\"7\"".to_string();
+    assert!(untouched(Some(&mirrored("\"7\"")), Some(&etag), "c1"));
+    assert!(!untouched(Some(&mirrored("\"7\"")), Some(&etag), "c2"), "Graph changed it");
+    assert!(!untouched(Some(&mirrored("\"7\"")), Some(&"\"8\"".to_string()), "c1"), "his edit");
+    assert!(!untouched(Some(&writing()), None, "c1"), "in flight");
+    assert!(!untouched(None, Some(&etag), "c1"), "unrecorded");
+    let his = Mirrored { content: None, ..mirrored("\"7\"") };
+    assert!(!untouched(Some(&his), Some(&etag), "c1"), "his version, recorded by edits()");
 }

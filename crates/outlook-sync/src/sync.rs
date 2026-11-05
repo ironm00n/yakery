@@ -177,7 +177,8 @@ impl Sync {
                         self.put_back(&file, refused);
                     }
                     let fields = edited.map_or(mirrored.fields.clone(), |e| local::fields(&e));
-                    ledger.record(file, Mirrored { etag: Some(etag), fields, ..mirrored })?;
+                    let mirrored = Mirrored { etag: Some(etag), fields, content: None, ..mirrored };
+                    ledger.record(file, mirrored)?;
                 }
                 Edit::New => {
                     let Some((ics, _)) = self.mirror.get(&file).await? else { continue };
