@@ -32,6 +32,8 @@ dependencies = [
  "comrak",
  "http",
  "http-body",
+ "invitation",
+ "jiff",
  "libc",
  "lol_html",
  "mail-parser",
@@ -1084,6 +1086,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "invitation"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "jiff",
+ "serde_json",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1865,6 +1876,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "invitation",
  "jiff",
  "maud",
  "private",

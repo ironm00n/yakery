@@ -3,6 +3,7 @@ mod authority;
 mod claims;
 mod cli;
 mod files;
+mod invite;
 mod text;
 mod undefined;
 mod urgent;

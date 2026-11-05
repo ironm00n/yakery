@@ -1,0 +1,208 @@
+use clap::Parser;
+
+use super::{HIM, Scratch, wire::Stalwart, wire::mail};
+use crate::{
+    Cli, Command,
+    cmd::invite::{self, invitations, invite},
+    prelude::*,
+};
+
+fn command(args: &[&str]) -> Result<Command, String> {
+    let words = ["agent-mail"].iter().chain(args);
+    Cli::try_parse_from(words).map(|c| c.command).map_err(|e| e.render().to_string())
+}
+
+fn asked(args: &[&str]) -> invite::Args {
+    match command(&[&["invite"], args].concat()) {
+        Ok(Command::Invite(args)) => args,
+        other => panic!("not an invite: {:?}", other.err()),
+    }
+}
+
+/// Stalwart whose session names a calendars account, `cal`, apart from the mail account, `a`.
+fn with_calendars(calendars: Vec<Value>) -> Stalwart {
+    let mut stalwart = Stalwart::new(vec![]);
+    stalwart.session["primaryAccounts"]["urn:ietf:params:jmap:calendars"] = json!("cal");
+    stalwart.calendars = calendars;
+    stalwart
+}
+
+/// The one request to the JMAP API that calls `method`: what it declares, and the method's arguments.
+fn request(stalwart: &Stalwart, method: &str) -> (Value, Value) {
+    let found: Vec<&Value> =
+        stalwart.requests.iter().filter(|r| r["methodCalls"][0][0] == method).collect();
+    assert_eq!(found.len(), 1, "{method} asked {} times", found.len());
+    (found[0]["using"].clone(), found[0]["methodCalls"][0][1].clone())
+}
+
+const NEW: &[&str] = &[
+    "new",
+    "--topic",
+    "pool",
+    "--to",
+    HIM,
+    "--title",
+    "Review the NEU sync page",
+    "--start",
+    "2026-11-06T20:00:00Z",
+    "--duration",
+    "30m",
+];
+
+#[tokio::test]
+async fn a_new_invitation_is_an_event_in_the_default_calendar_that_stalwart_sends_from() {
+    let dir = Scratch::new("invite-new");
+    let calendars =
+        vec![json!({ "id": "c8", "isDefault": false }), json!({ "id": "c9", "isDefault": true })];
+    let (_wire, server, mail) = mail(&dir, with_calendars(calendars)).await;
+    assert_eq!(invite(&mail.unwrap(), asked(NEW)).await.unwrap(), "e1");
+    let (using, args) = request(&server.borrow(), "CalendarEvent/set");
+    assert_eq!(using, json!(["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"]));
+    assert_eq!(
+        (&args["accountId"], &args["sendSchedulingMessages"]),
+        (&json!("cal"), &json!(true))
+    );
+    let event = &args["create"]["i"];
+    assert_eq!(event["calendarIds"], json!({ "c9": true }));
+    assert_eq!(
+        (&event["start"], &event["timeZone"]),
+        (&json!("2026-11-06T15:00:00"), &json!("America/New_York"))
+    );
+    assert_eq!(event["duration"], "PT30M");
+    assert_eq!(event["organizerCalendarAddress"], "mailto:agent+pool@example.org");
+    assert_eq!(event["participants"]["organizer"]["roles"], json!({ "owner": true }));
+    assert_eq!(event["participants"]["invited0"]["calendarAddress"], format!("mailto:{HIM}"));
+}
+
+#[tokio::test]
+async fn a_login_with_no_default_calendar_makes_one_first() {
+    let dir = Scratch::new("invite-calendar");
+    let (_wire, server, mail) = mail(&dir, with_calendars(vec![])).await;
+    invite(&mail.unwrap(), asked(NEW)).await.unwrap();
+    let server = server.borrow();
+    let (_, made) = request(&server, "Calendar/set");
+    assert_eq!(made["onSuccessSetIsDefault"], "#c");
+    assert_eq!(
+        request(&server, "CalendarEvent/set").1["create"]["i"]["calendarIds"],
+        json!({ "c1": true })
+    );
+}
+
+#[tokio::test]
+async fn an_update_sends_only_what_changes_and_a_cancel_destroys_the_event() {
+    let dir = Scratch::new("invite-change");
+    let mut stalwart = with_calendars(vec![]);
+    stalwart.events = vec![json!({ "id": "e1", "title": "t", "start": "2026-11-06T15:00:00" })];
+    let (_wire, server, mail) = mail(&dir, stalwart).await;
+    let mail = mail.unwrap();
+    let moved =
+        asked(&["update", "e1", "--start", "2026-11-06T21:30:00Z", "--location", "WVH 366"]);
+    assert_eq!(invite(&mail, moved).await.unwrap(), "e1");
+    let (_, args) = request(&server.borrow(), "CalendarEvent/set");
+    assert_eq!(args["sendSchedulingMessages"], true);
+    assert_eq!(
+        args["update"],
+        json!({ "e1": { "start": "2026-11-06T16:30:00", "timeZone": "America/New_York", "locations": { "place": { "name": "WVH 366" } } } })
+    );
+    let nothing = invite(&mail, asked(&["update", "e1"])).await;
+    assert_eq!(nothing.map_err(|e| e.to_string()).unwrap_err(), "nothing to change");
+    server.borrow_mut().requests.clear();
+    invite(&mail, asked(&["cancel", "e1"])).await.unwrap();
+    let (_, args) = request(&server.borrow(), "CalendarEvent/set");
+    assert_eq!((&args["destroy"], &args["sendSchedulingMessages"]), (&json!(["e1"]), &json!(true)));
+    assert!(server.borrow().events.is_empty());
+}
+
+#[tokio::test]
+async fn invites_lists_the_logins_invitations_with_each_answer() {
+    let dir = Scratch::new("invites");
+    let mut stalwart = with_calendars(vec![]);
+    let event = |id: &str, organizer: &str, answer: Value| {
+        json!({
+            "id": id, "title": format!("about {id}"), "start": "2026-11-06T15:00:00", "timeZone": "America/New_York",
+            "organizerCalendarAddress": format!("mailto:{organizer}"),
+            "participants": {
+                "organizer": { "calendarAddress": format!("mailto:{organizer}"), "roles": { "owner": true } },
+                "invited0": { "calendarAddress": format!("mailto:{HIM}"), "roles": { "attendee": true }, "participationStatus": answer },
+            },
+        })
+    };
+    stalwart.events = vec![
+        event("e1", "agent+pool@example.org", json!("accepted")),
+        event("e2", "agent+other@example.org", Value::Null),
+        event("e3", "someone@example.com", json!("declined")),
+    ];
+    let (_wire, _server, mail) = mail(&dir, stalwart).await;
+    let mail = mail.unwrap();
+    let list = |args: &[&str]| match command(&[&["invites"], args].concat()) {
+        Ok(Command::Invites(list)) => list,
+        _ => panic!("not invites"),
+    };
+    let line = |id: &str, answer: &str| {
+        format!("{id}  2026-11-06T15:00:00 America/New_York  about {id}  {HIM} {answer}")
+    };
+    assert_eq!(
+        invitations(&mail, &list(&["--topic", "pool"])).await.unwrap(),
+        [line("e1", "accepted")]
+    );
+    assert_eq!(
+        invitations(&mail, &list(&[])).await.unwrap(),
+        [line("e1", "accepted"), line("e2", "needs-action")]
+    );
+}
+
+#[tokio::test]
+async fn a_session_with_no_calendars_account_refuses_an_invitation_and_mail_asks_as_before() {
+    let dir = Scratch::new("invite-no-calendars");
+    let (_wire, server, mail) = mail(&dir, Stalwart::new(vec![])).await;
+    let refused = invite(&mail.unwrap(), asked(NEW)).await.map_err(|e| format!("{e:#}"));
+    assert_eq!(refused.unwrap_err(), "the JMAP session names no calendars account");
+    let (using, args) = request(&server.borrow(), "Mailbox/get");
+    assert_eq!(
+        using,
+        json!([
+            "urn:ietf:params:jmap:core",
+            "urn:ietf:params:jmap:mail",
+            "urn:ietf:params:jmap:submission"
+        ])
+    );
+    assert_eq!(args["accountId"], "a");
+}
+
+#[test]
+fn the_cli_refuses_what_a_change_cannot_mean() {
+    let refused = |args: &[&str]| command(&[&["invite"], args].concat()).is_err();
+    assert!(refused(&["cancel", "e1", "--title", "t"]));
+    assert!(refused(&["update", "e1", "--zone", "Europe/Paris"]));
+    assert!(refused(&["update", "e1", "--start", "2026-11-06T15:00:00", "--zone", "Europe/Paris"]));
+    assert!(refused(&[
+        "new",
+        "--title",
+        "t",
+        "--start",
+        "2026-11-06T20:00:00Z",
+        "--duration",
+        "30m"
+    ]));
+    assert!(refused(&[
+        "new",
+        "--to",
+        HIM,
+        "--title",
+        "t",
+        "--start",
+        "2026-11-06T20:00:00Z",
+        "--duration",
+        "30m",
+        "--zone",
+        "Nowhere/Else"
+    ]));
+    assert!(!refused(&[
+        "update",
+        "e1",
+        "--start",
+        "2026-11-06T20:00:00Z",
+        "--zone",
+        "Europe/Paris"
+    ]));
+}

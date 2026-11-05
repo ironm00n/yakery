@@ -13,6 +13,7 @@ use hyper::{Method, Request, StatusCode};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
+use invitation::{Invitation, Person};
 use jiff::Timestamp;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -34,28 +35,22 @@ pub fn event(
     digest: Digest,
     limits: &Limits,
     booking: &Booking,
-) -> Value {
-    let owner = format!("mailto:{owner}");
+) -> Result<Value> {
     let booker = &booking.booker;
     let note = if booker.note.is_empty() { String::new() } else { format!("{}\n\n", booker.note) };
-    let mut event = json!({
-        "@type": "Event",
-        "uid": format!("{digest}@{}", policy.host),
-        "title": format!("{} with {}", limits.title.as_deref().unwrap_or("Meeting"), booker.name),
-        "description": format!("{note}Booked with link {}", digest.id()),
-        "start": booking.start.to_zoned(policy.zone.clone()).datetime().strftime("%Y-%m-%dT%H:%M:%S").to_string(),
-        "timeZone": policy.zone_name(),
-        "duration": limits.duration.to_string(),
-        "organizerCalendarAddress": owner,
-        "participants": {
-            "owner": {"calendarAddress": owner, "roles": {"owner": true, "attendee": true}, "participationStatus": "accepted"},
-            "booker": {"name": booker.name, "calendarAddress": format!("mailto:{}", booker.address), "roles": {"attendee": true}, "expectReply": true},
-        },
-    });
-    if let Some(place) = &limits.location {
-        event["locations"] = json!({"place": {"name": place}});
+    let mut event = Invitation {
+        title: &format!("{} with {}", limits.title.as_deref().unwrap_or("Meeting"), booker.name),
+        description: Some(&format!("{note}Booked with link {}", digest.id())),
+        start: &booking.start.to_zoned(policy.zone.clone()),
+        duration: limits.duration,
+        location: limits.location.as_deref(),
+        organizer: owner,
+        organizer_attends: true,
+        invited: &[Person { address: &booker.address, name: Some(&booker.name) }],
     }
-    event
+    .event()?;
+    event["uid"] = json!(format!("{digest}@{}", policy.host));
+    Ok(event)
 }
 
 /// An account signed in to, whose permissions and session the core has checked.

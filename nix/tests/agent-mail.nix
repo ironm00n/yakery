@@ -282,7 +282,6 @@ let
 
   prelude = stalwart.python + ''
     import re
-    import time
 
     ids = json.load(open("${seed}/ids.json"))
     agent, owner = "runuser -u agent -- agent-mail", "runuser -u owner -- agent-mail"
@@ -331,6 +330,7 @@ let
   # the commands and the mail they move, an inbox of production's size, and two hosts on one login
   flows = ''
     import collections
+    import time
 
     with subtest("wait prints owner's mail to the topic and sends a read receipt"):
         sent = host1.succeed(f"echo '**smoke** test' | {owner} send --to {topic} --subject smoke")
@@ -528,6 +528,8 @@ let
 
   # a wait's periods running out
   timing = ''
+    import time
+
     with subtest("a wait signs in again when its token expires, and Stalwart's pings wake nothing meanwhile"):
         def access_tokens_last(lifetime):
             lifetimes = {"idTokenLifetime": "43200s", "refreshTokenIdleExpiration": "2592000s", "refreshTokenExpiration": "7776000s"}
@@ -595,6 +597,88 @@ let
         failed = err.index(f"no scan finished in {periods['stale']}s")
         assert "signing in again in" in err[:failed] and took < periods["stale"] + 30, (took, err)
   '';
+
+  # invitations from agent@'s calendar to owner@, which Stalwart writes and sends (scheduler/agent-invites.md's run)
+  invites = ''
+
+    def as_user(user, method, args, cap="calendars"):
+        host1.succeed(f"runuser -u {user} -- agent-mail login")
+        token = json.loads(host1.succeed(f"cat /home/{user}/.local/state/agent-mail/tokens.json"))["access"]["token"]
+        session = json.loads(host1.succeed(f"curl -fsSL -H 'Authorization: Bearer {token}' https://${mail.host}/.well-known/jmap"))
+        urn = f"urn:ietf:params:jmap:{cap}"
+        args = dict(args, accountId=session["primaryAccounts"][urn])
+        body = shlex.quote(json.dumps({"using": ["urn:ietf:params:jmap:core", urn], "methodCalls": [[method, args, "c"]]}))
+        out = host1.succeed(f"curl -fsS -H 'Authorization: Bearer {token}' {json_type} --data {body} https://${mail.host}/jmap/")
+        return json.loads(out)["methodResponses"][0][1]
+
+    def owners_copy(title):
+        properties = ["uid", "title", "start", "timeZone", "sequence", "status", "calendarIds", "organizerCalendarAddress", "participants"]
+        found = [e for e in as_user("owner", "CalendarEvent/get", {"ids": None, "properties": properties})["list"] if e["title"] == title]
+        return found[0] if found else None
+
+    # unsorted: Stalwart answers a sorted query from its full-text index, which lags delivery
+    def delivered(subject):
+        inbox = next(m["id"] for m in as_user("owner", "Mailbox/get", {"ids": None}, "mail")["list"] if m["role"] == "inbox")
+        ids = as_user("owner", "Email/query", {"filter": {"inMailbox": inbox}}, "mail")["ids"]
+        return any(e["subject"] == subject for e in as_user("owner", "Email/get", {"ids": ids, "properties": ["subject"]}, "mail")["list"])
+
+    def his(event):
+        return next(k for k, p in event["participants"].items() if p.get("calendarAddress") == "mailto:${logins.owner}")
+
+    with subtest("agent@'s session names a calendars account"):
+        host1.succeed(f"{agent} login")
+        session = json.loads(host1.succeed(f"curl -fsSL -H 'Authorization: Bearer {bearer(host1)}' https://${mail.host}/.well-known/jmap"))
+        assert "urn:ietf:params:jmap:calendars" in session["primaryAccounts"], session["primaryAccounts"]
+
+    with subtest("an invitation from a topic lands in owner@'s default calendar, awaiting his answer"):
+        made = host1.succeed(f"{agent} invite new --topic invite --to ${logins.owner} --title 'Invite test' --start 2027-01-06T15:00:00Z --duration 30m").strip()
+        retry(lambda _: owners_copy("Invite test") is not None, timeout_seconds=60)
+        copy = owners_copy("Invite test")
+        default = [c["id"] for c in as_user("owner", "Calendar/get", {"ids": None, "properties": ["isDefault"]})["list"] if c.get("isDefault")]
+        assert list(copy["calendarIds"]) == default, (copy, default)
+        assert copy["organizerCalendarAddress"] == "mailto:agent+invite@${domain}", copy
+        assert (copy["start"], copy["timeZone"]) == ("2027-01-06T10:00:00", "America/New_York"), copy
+        assert copy["participants"][his(copy)].get("participationStatus", "needs-action") == "needs-action", copy
+        listed = host1.succeed(f"{agent} invites --topic invite")
+        assert listed.startswith(made) and "${logins.owner} needs-action" in listed, listed
+
+    with subtest("his answer comes back: agent@'s copy shows it, and the reply reaches the topic"):
+        answered = as_user("owner", "CalendarEvent/set", {"update": {copy["id"]: {f"participants/{his(copy)}/participationStatus": "accepted"}}, "sendSchedulingMessages": True})
+        assert copy["id"] in (answered.get("updated") or {}), answered
+        host1.wait_until_succeeds(f"{agent} invites --topic invite | grep -qF '${logins.owner} accepted'", timeout=60)
+        host1.wait_until_succeeds(f"{agent} inbox --topic invite | grep -qF '${logins.owner} -> agent+invite@${domain}'", timeout=60)
+
+    with subtest("an update moves his copy, the same event with a higher sequence"):
+        before = owners_copy("Invite test")
+        host1.succeed(f"{agent} invite update {made} --start 2027-01-06T16:00:00Z")
+        retry(lambda _: owners_copy("Invite test")["start"] == "2027-01-06T11:00:00", timeout_seconds=60)
+        after = owners_copy("Invite test")
+        assert after["uid"] == before["uid"] and after.get("sequence", 0) > before.get("sequence", 0), (before, after)
+
+    with subtest("a cancel takes it off his calendar, and agent@ lists no invitation"):
+        host1.succeed(f"{agent} invite cancel {made}")
+        retry(lambda _: (owners_copy("Invite test") or {"status": "gone"})["status"] in ("gone", "cancelled"), timeout_seconds=60)
+        print("owner@'s copy after the cancel, gone or marked cancelled:", owners_copy("Invite test"))
+        assert host1.succeed(f"{agent} invites --topic invite").strip() == "no invitations"
+
+    with subtest("a REQUEST mailed from the topic lands too, and one naming another organizer than its From doesn't"):
+        def mail_request(uid, organizer, title):
+            ics = "\r\n".join([
+                "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//test//EN", "METHOD:REQUEST", "BEGIN:VEVENT", f"UID:{uid}",
+                "DTSTAMP:20261105T000000Z", "DTSTART:20270107T150000Z", "DURATION:PT30M", f"SUMMARY:{title}",
+                f"ORGANIZER:mailto:{organizer}", "ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${logins.owner}",
+                "END:VEVENT", "END:VCALENDAR", "",
+            ])
+            entity = "Content-Type: text/calendar; charset=utf-8; method=REQUEST\r\n\r\n" + ics
+            host1.succeed(f"printf %s {shlex.quote(entity)} > /tmp/{uid}.eml")
+            host1.succeed(f"{agent} send --topic invite --to ${logins.owner} --subject {shlex.quote(title)} --mime /tmp/{uid}.eml")
+        mail_request("mailed", "agent+invite@${domain}", "Mailed invite")
+        mail_request("forged", "someone@${domain}", "Forged invite")
+        retry(lambda _: owners_copy("Mailed invite") is not None, timeout_seconds=60)
+        # Stalwart reads a mail's invitation as it delivers the mail, so once the mail is in, so is any event
+        retry(lambda _: delivered("Forged invite"), timeout_seconds=60)
+        assert owners_copy("Forged invite") is None
+  '';
 in
 # each group boots its own nodes, so Nix runs them side by side
 pkgs.linkFarm "agent-mail" (
@@ -606,5 +690,5 @@ pkgs.linkFarm "agent-mail" (
       inherit nodes;
       testScript = prelude + script;
     }
-  ) { inherit flows timing; }
+  ) { inherit flows timing invites; }
 )

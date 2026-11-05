@@ -17,7 +17,7 @@ mod web;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use cmd::{read, send, wait};
+use cmd::{invite, read, send, wait};
 
 macro_rules! deployment {
     ($($name:ident = $var:literal | $fixture:literal $(| $empty:literal)?;)*) => {$(
@@ -36,6 +36,7 @@ deployment! {
     DOMAIN = "AGENT_MAIL_DOMAIN" | "example.org";
     AGENT_DOMAIN = "AGENT_MAIL_AGENT_DOMAIN" | "agent.example.org";
     SHARED_LOCAL_PART = "AGENT_MAIL_SHARED_LOCAL_PART" | "agent";
+    TIME_ZONE = "AGENT_MAIL_TIME_ZONE" | "America/New_York";
     CORRESPONDENTS = "AGENT_MAIL_CORRESPONDENTS" | "" | true;
     SUBMISSION_KEY = "AGENT_MAIL_SUBMISSION_KEY" | "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw" | true;
     CORRESPONDENTS_FOR = "AGENT_MAIL_CORRESPONDENTS_FOR"
@@ -160,6 +161,11 @@ commands! {
     /// Print the references in the Markdown on stdin that `send` warns of, those a reader who wasn't in the session
     /// can't resolve; read-only.
     Lint(read::Nothing) => send::lint,
+    /// Invite people to events from this login's calendar; Stalwart sends the invitations, updates and cancels.
+    #[command(subcommand)]
+    Invite(invite::Args) => invite::run,
+    /// List the invitations this login sent, one line each: id, start, title and each answer; read-only.
+    Invites(invite::List) => invite::list,
 }
 
 fn main() -> ExitCode {

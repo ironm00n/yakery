@@ -185,6 +185,11 @@ pub struct Stalwart {
     refresh_refused: bool,
     pub session: Value,
     pub log: Vec<String>,
+    /// Each request's body to the JMAP API, as sent.
+    pub requests: Vec<Value>,
+    /// The account's calendars and events, for the calendar methods.
+    pub calendars: Vec<Value>,
+    pub events: Vec<Value>,
     /// Ids an Email/get asked attachments of, which Stalwart parses the message for.
     parsed: BTreeSet<String>,
     opened: Vec<Duration>,
@@ -259,6 +264,7 @@ impl Stalwart {
             (_, "/jmap/") => {
                 let body: Value =
                     serde_json::from_slice(r.body().unwrap().as_bytes().unwrap()).unwrap();
+                self.requests.push(body.clone());
                 let (mut replies, mut lost) = (vec![], false);
                 for call in body["methodCalls"].as_array().unwrap() {
                     let (method, args, id) = (call[0].as_str().unwrap(), &call[1], &call[2]);
@@ -422,9 +428,46 @@ impl Stalwart {
                     "destroyed": destroy,
                 })
             }
+            "Calendar/get" => json!({ "list": self.calendars }),
+            "CalendarEvent/get" => json!({ "list": self.events }),
+            "Calendar/set" => {
+                let created = made(&mut self.calendars, "c", &args["create"]);
+                let default =
+                    args["onSuccessSetIsDefault"].as_str().and_then(|k| k.strip_prefix('#'));
+                if let Some(id) = default.map(|key| created[key]["id"].clone()) {
+                    self.calendars.iter_mut().for_each(|c| c["isDefault"] = json!(c["id"] == id));
+                }
+                json!({ "created": created })
+            }
+            "CalendarEvent/set" => {
+                let created = made(&mut self.events, "e", &args["create"]);
+                let mut updated = Map::new();
+                for (id, patch) in args["update"].as_object().into_iter().flatten() {
+                    let event =
+                        self.events.iter_mut().find(|e| e["id"] == **id).ok_or("notFound")?;
+                    event.as_object_mut().unwrap().extend(patch.as_object().unwrap().clone());
+                    updated.insert(id.clone(), Value::Null);
+                }
+                let destroyed = args["destroy"].as_array().cloned().unwrap_or_default();
+                self.events.retain(|e| !destroyed.contains(&e["id"]));
+                json!({ "created": created, "updated": updated, "destroyed": destroyed })
+            }
             _ => return Err("unknownMethod"),
         })
     }
+}
+
+/// Each object of a `create` added to `list` under a new id `<prefix><n>`, answered as `created`.
+fn made(list: &mut Vec<Value>, prefix: &str, create: &Value) -> Value {
+    let mut created = Map::new();
+    for (key, object) in create.as_object().into_iter().flatten() {
+        let id = format!("{prefix}{}", list.len() + 1);
+        let mut object = object.clone();
+        object["id"] = json!(id);
+        list.push(object);
+        created.insert(key.clone(), json!({ "id": id }));
+    }
+    Value::Object(created)
 }
 
 /// Whether `m` passes the To and Cc conditions of `filter`, which Stalwart matches word by word, so agent+pool finds

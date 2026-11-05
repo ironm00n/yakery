@@ -10,12 +10,42 @@ pub fn nullable<'de, D: serde::Deserializer<'de>, T: Default + Deserialize<'de>>
 /// reply that lacks one fails; null, JMAP's empty, reads as the default.
 pub trait View: DeserializeOwned {
     const GET: &str;
+    const CAP: Cap = Cap::Mail;
     const PROPERTIES: &[&str];
     const VALUES: Option<(&str, usize)> = None;
 }
 
+/// What a method belongs to beyond JMAP's core: mail, with submission, or calendars. Each names the capabilities a
+/// request declares, and the capability whose primary account the method acts on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cap {
+    Mail,
+    Calendars,
+}
+
+const MAIL: &str = "urn:ietf:params:jmap:mail";
+const SUBMISSION: &str = "urn:ietf:params:jmap:submission";
+const CALENDARS: &str = "urn:ietf:params:jmap:calendars";
+
+impl Cap {
+    pub const fn using(self) -> &'static [&'static str] {
+        match self {
+            Cap::Mail => &[MAIL, SUBMISSION],
+            Cap::Calendars => &[CALENDARS],
+        }
+    }
+
+    /// The capability the session names the method's account under, among its primary accounts.
+    pub const fn account(self) -> &'static str {
+        match self {
+            Cap::Mail => MAIL,
+            Cap::Calendars => CALENDARS,
+        }
+    }
+}
+
 macro_rules! wire {
-    (views { $($view:ident in $get:literal $(with ($bodies:literal, $bytes:expr))? {
+    (views { $($view:ident in $get:literal $(under $cap:ident)? $(with ($bodies:literal, $bytes:expr))? {
         $($vf:ident: $vt:ty = $vp:literal),* $(,)?
     })* }
      objects { $($object:ident { $($of:ident: $ot:ty = $op:literal),* $(,)? })* }) => {
@@ -23,6 +53,7 @@ macro_rules! wire {
             wire!(@struct [] $view { $($vf: $vt = $vp),* });
             impl $crate::jmap::View for $view {
                 const GET: &str = $get;
+                $(const CAP: $crate::jmap::Cap = $crate::jmap::Cap::$cap;)?
                 const PROPERTIES: &[&str] = &[$($vp),*];
                 $(const VALUES: Option<(&str, usize)> = Some(($bodies, $bytes));)?
             }
@@ -42,7 +73,18 @@ macro_rules! wire {
 }
 pub(crate) use wire;
 
-pub struct Call(pub &'static str, pub Option<&'static str>);
+/// A method, the error type that answers it without failing (as None), and what it belongs to.
+pub struct Call(pub &'static str, pub Option<&'static str>, pub Cap);
+
+impl Call {
+    pub const fn mail(name: &'static str, tolerated: Option<&'static str>) -> Call {
+        Call(name, tolerated, Cap::Mail)
+    }
+
+    pub const fn calendars(name: &'static str, tolerated: Option<&'static str>) -> Call {
+        Call(name, tolerated, Cap::Calendars)
+    }
+}
 
 macro_rules! keywords {
     ($($keyword:ident = $name:literal),* $(,)?) => {

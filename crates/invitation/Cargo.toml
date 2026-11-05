@@ -1,0 +1,21 @@
+[package]
+name = "invitation"
+version = "0.1.0"
+description = "An event that invites people, as the JSCalendar Stalwart writes and sends the invitations from"
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[test]]
+name = "event"
+path = "tests/event.rs"
+
+[dependencies]
+anyhow.workspace = true
+jiff.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

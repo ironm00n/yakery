@@ -81,7 +81,7 @@ impl<C: Calendar> Core<C> {
             return Ok(());
         };
         store.apply(|_| Ok(next))?;
-        let event = event(self.policy, self.calendar.owner(), digest, &limits, &claim.booking);
+        let event = event(self.policy, self.calendar.owner(), digest, &limits, &claim.booking)?;
         let created = self.calendar.create(event).await?;
         crash_point("created");
         store.apply(|links| Ok(links.settle(digest, created)))

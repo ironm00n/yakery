@@ -11,6 +11,7 @@ members = [
     "agent-slack",
     "submission-signature",
     "submission-signer",
+    "invitation",
     "lib/text",
     "lib/private",
     "lib/log",
@@ -67,6 +68,7 @@ toml = "0.8"
 
 agent-proto = { path = "agent-proto" }
 text = { path = "lib/text" }
+invitation = { path = "invitation" }
 private = { path = "lib/private" }
 submission-signature = { path = "submission-signature" }
 yakery-log = { path = "lib/log" }

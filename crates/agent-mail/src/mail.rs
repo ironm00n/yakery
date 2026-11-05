@@ -6,7 +6,7 @@ use text::Address;
 
 use crate::{
     auth::Auth,
-    jmap::{Call, View, jmap_id, keywords, wire},
+    jmap::{Call, Cap, View, jmap_id, keywords, wire},
     policy::Login,
     prelude::*,
     store::Config,
@@ -64,12 +64,12 @@ wire! {
     }
 }
 
-pub const QUERY: Call = Call("Email/query", Some("anchorNotFound"));
-pub const CHANGES: Call = Call("Email/changes", Some("cannotCalculateChanges"));
-pub const SET: Call = Call("Email/set", Some("stateMismatch"));
-pub const IMPORT: Call = Call("Email/import", None);
-pub const SUBMIT: Call = Call("EmailSubmission/set", None);
-pub const SUBMISSIONS: Call = Call("EmailSubmission/query", None);
+pub const QUERY: Call = Call::mail("Email/query", Some("anchorNotFound"));
+pub const CHANGES: Call = Call::mail("Email/changes", Some("cannotCalculateChanges"));
+pub const SET: Call = Call::mail("Email/set", Some("stateMismatch"));
+pub const IMPORT: Call = Call::mail("Email/import", None);
+pub const SUBMIT: Call = Call::mail("EmailSubmission/set", None);
+pub const SUBMISSIONS: Call = Call::mail("EmailSubmission/query", None);
 
 // `$agentmail` marks the Sent copy of what agent-mail sends, so answering from Sent, meant for other tools, skips it.
 keywords! {
@@ -196,6 +196,8 @@ pub struct Mail {
     session: Session,
     api: Pinned,
     account: String,
+    /// The account calendar methods act on, when the session names one.
+    calendars: Option<String>,
     limits: [usize; 3],
     mailboxes: HashMap<String, String>,
 }
@@ -220,11 +222,14 @@ impl Mail {
         let account =
             session.accounts.get("urn:ietf:params:jmap:mail").context("no mail account")?;
         let account = jmap_id(account)?.into();
+        let calendars = session.accounts.get(Cap::Calendars.account());
+        let calendars = calendars.map(|a| jmap_id(a).map(String::from)).transpose()?;
         let core =
             session.capabilities.get("urn:ietf:params:jmap:core").cloned().unwrap_or_default();
         let limits = ["maxObjectsInGet", "maxObjectsInSet", "maxCallsInRequest"]
             .map(|n| core[n].as_u64().map_or(100, |n| n as usize).max(1));
-        let mut mail = Mail { conn, session, api, account, limits, mailboxes: HashMap::new() };
+        let mut mail =
+            Mail { conn, session, api, account, calendars, limits, mailboxes: HashMap::new() };
         mail.mailboxes = mail.all::<Mailbox>().await?.into_iter().map(|m| (m.role, m.id)).collect();
         Ok(mail)
     }
@@ -257,13 +262,25 @@ impl Mail {
         locked: bool,
         calls: &[(Call, Value)],
     ) -> Result<Vec<Result<Option<Answer>>>> {
-        let using = ["core", "mail", "submission"].map(|c| format!("urn:ietf:params:jmap:{c}"));
-        let method = |(n, (call, args)): (usize, &(Call, Value))| {
+        let caps = [Cap::Mail, Cap::Calendars]
+            .into_iter()
+            .filter(|c| calls.iter().any(|(call, _)| call.2 == *c));
+        let using: Vec<&str> = ["urn:ietf:params:jmap:core"]
+            .into_iter()
+            .chain(caps.flat_map(Cap::using).copied())
+            .collect();
+        let method = |(n, (call, args)): (usize, &(Call, Value))| -> Result<Value> {
             let mut args = args.clone();
-            args["accountId"] = json!(self.account);
-            json!([call.0, args, n.to_string()])
+            args["accountId"] = json!(match call.2 {
+                Cap::Mail => &self.account,
+                Cap::Calendars => self
+                    .calendars
+                    .as_ref()
+                    .context("the JMAP session names no calendars account")?,
+            });
+            Ok(json!([call.0, args, n.to_string()]))
         };
-        let methods: Vec<Value> = calls.iter().enumerate().map(method).collect();
+        let methods: Vec<Value> = calls.iter().enumerate().map(method).collect::<Result<_>>()?;
         let body = json!({ "using": using, "methodCalls": methods });
         let response: Value = self
             .conn
@@ -273,7 +290,7 @@ impl Mail {
             })
             .await?;
         let replies = response["methodResponses"].as_array().cloned().unwrap_or_default();
-        let read = |(n, (Call(name, tolerated), _)): (usize, &(Call, Value))| {
+        let read = |(n, (Call(name, tolerated, _), _)): (usize, &(Call, Value))| {
             let reply =
                 replies.get(n).filter(|r| r[2].as_str().and_then(|i| i.parse().ok()) == Some(n));
             match reply.map(|r| (r[0].as_str(), r[1]["type"].as_str(), &r[1])) {
@@ -306,7 +323,8 @@ impl Mail {
         if let Some((bodies, bytes)) = V::VALUES {
             (args[bodies], args["maxBodyValueBytes"]) = (json!(true), json!(bytes));
         }
-        let answer = self.answer(locked, Call(V::GET, None), args).await?.context(V::GET)?;
+        let answer =
+            self.answer(locked, Call(V::GET, None, V::CAP), args).await?.context(V::GET)?;
         let list = serde_json::from_value(Value::Array(answer.list));
         Ok((answer.state, list.with_context(|| format!("stalwart's {}", V::GET))?))
     }
@@ -358,7 +376,7 @@ impl Mail {
     /// The id each of `ids` has now, one query each, as many to a request as Stalwart takes, since its limit counts
     /// requests. Stalwart refuses an id outside its alphabet in Email/query; Email/get just finds no such email.
     pub async fn currents(&self, ids: &[String]) -> Result<Vec<Option<Current>>> {
-        const FIND: Call = Call("Email/query", Some("invalidArguments"));
+        const FIND: Call = Call::mail("Email/query", Some("invalidArguments"));
         let valid: Vec<&String> = ids.iter().filter(|id| jmap_id(id).is_ok()).collect();
         let mut now = HashMap::new();
         for chunk in valid.chunks(self.limits[2]) {
