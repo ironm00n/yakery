@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use jiff::{SignedDuration, Timestamp};
 use private::{Dir, Secret};
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::event::Change;
@@ -164,14 +165,19 @@ impl Sync {
                 }
                 Edit::Edited(mirrored) => {
                     let Some((ics, etag)) = self.mirror.get(&file).await? else { continue };
-                    let sent = match local::graph(&ics) {
+                    let edited = local::graph(&ics);
+                    let sent = match &edited {
                         Err(e) => Err(Refused(format!("{e:#}"))),
-                        Ok(event) => self.graph.update(&mirrored.id, event).await?,
+                        Ok(event) => match local::moved(event, &mirrored.fields) {
+                            moved if moved.is_empty() => Ok(()),
+                            moved => self.graph.update(&mirrored.id, Value::Object(moved)).await?,
+                        },
                     };
                     if let Err(refused) = sent {
                         self.put_back(&file, refused);
                     }
-                    ledger.record(file, Mirrored { etag: Some(etag), ..mirrored })?;
+                    let fields = edited.map_or(mirrored.fields.clone(), |e| local::fields(&e));
+                    ledger.record(file, Mirrored { etag: Some(etag), fields, ..mirrored })?;
                 }
                 Edit::New => {
                     let Some((ics, _)) = self.mirror.get(&file).await? else { continue };

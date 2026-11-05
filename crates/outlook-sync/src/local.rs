@@ -4,7 +4,11 @@
 use anyhow::{Context, Result, bail};
 use jiff::civil::{Date, DateTime};
 use jiff::tz::TimeZone;
-use serde_json::{Value, json};
+use std::collections::BTreeMap;
+
+use ring::digest::{SHA256, digest};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 
 use crate::file::FileName;
 
@@ -121,6 +125,30 @@ pub fn owned(file: &FileName, ics: &str) -> Result<Option<Owned>> {
     Ok(Some(Owned(body)))
 }
 
+/// A digest of each Graph property as the sync last wrote the file. The mirror holds less than
+/// Outlook (the body as its text preview, showAs as TRANSP), so an edit sends only the properties
+/// that moved from it, and leaves the rest as Outlook has them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Fields(BTreeMap<String, String>);
+
+fn digested(value: &Value) -> String {
+    private::hex::encode(&digest(&SHA256, value.to_string().as_bytes()).as_ref()[..8])
+}
+
+pub fn fields(event: &Value) -> Fields {
+    let props = event.as_object().into_iter().flatten();
+    Fields(props.map(|(k, v)| (k.clone(), digested(v))).collect())
+}
+
+pub fn moved(event: &Value, from: &Fields) -> Map<String, Value> {
+    let props = event.as_object().into_iter().flatten();
+    props
+        .filter(|(k, v)| from.0.get(*k) != Some(&digested(v)))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
 pub fn graph(ics: &str) -> Result<Value> {
     let lines = vevent(ics)?;
     let get = |name: &str| lines.iter().find(|l| l.name == name);
@@ -144,10 +172,8 @@ pub fn graph(ics: &str) -> Result<Value> {
         "isAllDay": matches!(start, At::Date(_)),
         "location": {"displayName": get("LOCATION").map(|l| unescape(&l.value)).unwrap_or_default()},
         "showAs": if get("TRANSP").is_some_and(|l| l.value == "TRANSPARENT") { "free" } else { "busy" },
+        "body": {"contentType": "text", "content": get("DESCRIPTION").map(|l| unescape(&l.value)).unwrap_or_default()},
     });
-    if let Some(note) = get("DESCRIPTION") {
-        event["body"] = json!({"contentType": "text", "content": unescape(&note.value)});
-    }
     if let Some(rule) = get("RRULE") {
         event["recurrence"] = recurrence(&rule.value, &start)?;
     }

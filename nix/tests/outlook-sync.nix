@@ -202,6 +202,7 @@ pkgs.testers.runNixOSTest {
             retry(lambda _: any(u["id"] == "e1" for u in fake_log("update")), timeout_seconds=60)
             update = observe("write.update", [u for u in fake_log("update") if u["id"] == "e1"][-1])
             expect("write.update.start", (update["start"], update["timeZone"]) == (start[:-1], "UTC"), update)
+            expect("write.update.only-moved", update["keys"] == ["end", "start"], update)
             retry(lambda _: list(at(f"{day(0)} 17:00", 60)) in busy(), timeout_seconds=60)
 
         with subtest("an event he makes goes as a create, and comes back as Outlook's copy"):

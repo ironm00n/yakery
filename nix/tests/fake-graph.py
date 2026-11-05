@@ -163,7 +163,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 state["events"][id] = dict(event, start=in_utc(event["start"]), end=in_utc(event["end"]))
                 state["versions"][id] = state["version"]
-        log(kind, id=id, **({} if sent is None else {"subject": sent.get("subject"), "start": sent["start"]["dateTime"], "timeZone": sent["start"]["timeZone"], "transactionId": sent.get("transactionId")}))
+        start = (sent or {}).get("start", {})
+        log(kind, id=id, **({} if sent is None else {"keys": sorted(sent), "subject": sent.get("subject"), "start": start.get("dateTime"), "timeZone": start.get("timeZone"), "transactionId": sent.get("transactionId")}))
         # Graph notifies of a write as of any change, and not before answering it
         threading.Timer(0.5, lambda: self.notify("notificationUrl", {"changeType": "updated", "resource": f"me/events/{id}"}, None, quiet=True)).start()
 

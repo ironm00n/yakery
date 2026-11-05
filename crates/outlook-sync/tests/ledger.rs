@@ -5,7 +5,7 @@ fn entry(etag: Option<&str>, gone: bool) -> Entry {
 }
 
 fn mirrored(etag: &str) -> Mirrored {
-    Mirrored { id: "AAMk1".into(), etag: Some(etag.into()) }
+    Mirrored { id: "AAMk1".into(), etag: Some(etag.into()), fields: Default::default() }
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn a_file_with_no_record_is_new_and_one_gone_with_none_is_nothing() {
 
 #[test]
 fn a_file_whose_write_was_cut_off_is_unsettled_whatever_its_etag() {
-    let writing = Mirrored { id: "AAMk1".into(), etag: None };
+    let writing = Mirrored { id: "AAMk1".into(), etag: None, fields: Default::default() };
     assert_eq!(plan(&entry(Some("\"8\""), false), Some(&writing)), Edit::Unsettled);
     assert_eq!(plan(&entry(None, true), Some(&writing)), Edit::Unsettled);
 }

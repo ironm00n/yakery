@@ -145,3 +145,21 @@ fn an_apps_uid_of_its_file_stem_at_its_own_domain_is_the_owners() {
     let app = ios("").replace("UID:ABC", "UID:4A1B-77@icloud.com");
     assert!(owned(&file, &app).unwrap().is_some());
 }
+
+#[test]
+fn an_edit_sends_only_what_moved_from_the_version_the_sync_wrote() {
+    let base = fields(&graph(&ios("")).unwrap());
+    assert!(moved(&graph(&ios("")).unwrap(), &base).is_empty());
+    let retitled = graph(&ios("").replace("SUMMARY:Coffee\\, then lab", "SUMMARY:Tea")).unwrap();
+    assert_eq!(Value::Object(moved(&retitled, &base)), json!({"subject": "Tea"}));
+}
+
+#[test]
+fn a_description_he_removes_goes_out_as_an_empty_body() {
+    let base = fields(&graph(&ios("")).unwrap());
+    let bare = graph(&ios("").replace("DESCRIPTION:line one\\nline\r\n  two\r\n", "")).unwrap();
+    assert_eq!(
+        Value::Object(moved(&bare, &base)),
+        json!({"body": {"contentType": "text", "content": ""}})
+    );
+}

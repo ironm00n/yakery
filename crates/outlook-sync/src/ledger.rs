@@ -28,6 +28,8 @@ struct Record {
 pub struct Mirrored {
     pub id: String,
     pub etag: Option<String>,
+    #[serde(default)]
+    pub fields: local::Fields,
 }
 
 pub struct Put {
@@ -105,22 +107,30 @@ impl<'a> Ledger<'a> {
         if puts.is_empty() {
             return Ok(vec![]);
         }
-        let overs: Vec<Option<String>> = (puts.iter())
-            .map(|p| {
-                self.record.files.get(&p.file).filter(|_| guarded).and_then(|m| m.etag.clone())
-            })
-            .collect();
+        let written: Vec<local::Fields> = (puts.iter())
+            .map(|p| local::graph(&p.ics).map(|e| local::fields(&e)))
+            .collect::<Result<_>>()?;
+        let mut held = vec![];
         for p in &puts {
-            self.record.files.insert(p.file.clone(), Mirrored { id: p.id.clone(), etag: None });
+            let writing =
+                Mirrored { id: p.id.clone(), etag: None, fields: local::Fields::default() };
+            held.push(self.record.files.insert(p.file.clone(), writing));
         }
         self.save()?;
         let mut kept = vec![];
-        for (Put { file, id, ics }, over) in puts.into_iter().zip(overs) {
-            let etag = self.mirror.put(&file, ics, over.as_deref()).await?;
-            if etag.is_none() {
-                kept.push(file.clone());
+        for ((Put { file, id, ics }, held), fields) in puts.into_iter().zip(held).zip(written) {
+            let over = held.as_ref().filter(|_| guarded).and_then(|m| m.etag.clone());
+            match (self.mirror.put(&file, ics, over.as_deref()).await?, held) {
+                (Some(etag), _) => {
+                    self.record.files.insert(file, Mirrored { id, etag: Some(etag), fields });
+                }
+                (None, held) => {
+                    if let Some(held) = held {
+                        self.record.files.insert(file.clone(), held);
+                    }
+                    kept.push(file);
+                }
             }
-            self.record.files.insert(file, Mirrored { id, etag: etag.or(over) });
         }
         self.save()?;
         Ok(kept)
