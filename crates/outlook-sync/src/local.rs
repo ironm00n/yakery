@@ -97,6 +97,29 @@ fn graph_time(at: &At) -> Result<Value> {
     Ok(json!({"dateTime": civil.strftime("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": zone}))
 }
 
+pub fn stamped(file: &str, ics: &str, host: &str) -> bool {
+    let uid = crate::event::uid(file, host);
+    vevent(ics).is_ok_and(|lines| lines.iter().any(|l| l.name == "UID" && l.value == uid))
+}
+
+/// An event the owner made, as Graph's create takes it; no file the sync wrote makes one.
+pub struct Owned(Value);
+
+impl Owned {
+    pub fn body(self) -> Value {
+        self.0
+    }
+}
+
+pub fn owned(file: &str, ics: &str, host: &str) -> Result<Option<Owned>> {
+    if stamped(file, ics, host) {
+        return Ok(None);
+    }
+    let mut body = graph(ics)?;
+    body["transactionId"] = json!(file.trim_end_matches(".ics"));
+    Ok(Some(Owned(body)))
+}
+
 pub fn graph(ics: &str) -> Result<Value> {
     let lines = vevent(ics)?;
     let get = |name: &str| lines.iter().find(|l| l.name == name);

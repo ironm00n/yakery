@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use crate::assertion::Credential;
 use crate::event::Change;
+use crate::local::Owned;
 use crate::policy::{Feed, Policy, Route};
 use crate::state::{self, Subscription, Tokens};
 
@@ -206,10 +207,8 @@ impl Graph {
         }
     }
 
-    /// `transaction` makes a retried create the same event.
-    pub async fn create(&self, mut event: Value, transaction: &str) -> Result<Sent> {
-        event["transactionId"] = json!(transaction);
-        self.write(Method::POST, &format!("{GRAPH}/me/events"), Some(event)).await
+    pub async fn create(&self, event: Owned) -> Result<Sent> {
+        self.write(Method::POST, &format!("{GRAPH}/me/events"), Some(event.body())).await
     }
 
     pub async fn update(&self, id: &str, mut event: Value) -> Result<Sent> {

@@ -48,6 +48,15 @@ fn a_timed_occurrence_is_one_vevent_in_utc_named_by_its_graph_id() {
 }
 
 #[test]
+fn the_file_the_sync_writes_reads_back_as_the_syncs_folded_as_written() {
+    let Change::Present(event) = change(timed(json!({}))) else { panic!("not an occurrence") };
+    let ics = event.ics("schedule.example.test", now()).unwrap().expect("not cancelled");
+    assert!(ics.contains("\r\n "), "the UID line no longer folds:\n{ics}");
+    let name = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff.ics";
+    assert!(crate::local::stamped(name, &ics, "schedule.example.test"));
+}
+
+#[test]
 fn all_day_free_tentative_and_private_carry_over() {
     let ics = rendered(timed(json!({
         "isAllDay": true,

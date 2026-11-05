@@ -120,3 +120,21 @@ fn a_floating_time_names_no_instant_and_is_refused() {
     let floating = ios("").replace("DTSTART;TZID=America/New_York:", "DTSTART:");
     assert!(graph(&floating).is_err());
 }
+
+#[test]
+fn a_file_carrying_the_syncs_uid_for_its_name_never_goes_out_as_new() {
+    let stem = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff";
+    let file = format!("{stem}.ics");
+    let ours = ios("").replace("UID:ABC", &format!("UID:{stem}@schedule.example.test"));
+    assert!(owned(&file, &ours, "schedule.example.test").unwrap().is_none());
+    let mine = owned(&file, &ios(""), "schedule.example.test").unwrap().expect("the owner's");
+    assert_eq!(mine.body()["transactionId"], stem);
+}
+
+#[test]
+fn a_copy_of_the_syncs_file_under_another_name_is_the_owners() {
+    let stem = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff";
+    let ours = ios("").replace("UID:ABC", &format!("UID:{stem}@schedule.example.test"));
+    let copied = owned("copy.ics", &ours, "schedule.example.test").unwrap().expect("the owner's");
+    assert_eq!(copied.body()["transactionId"], "copy");
+}

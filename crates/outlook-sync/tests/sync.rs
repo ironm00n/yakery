@@ -18,7 +18,7 @@ fn each_wake_asks_for_its_own_part_of_a_run() {
     assert_eq!(needs(&[Wake::Changed, Wake::Edited]), graph);
     assert_eq!(needs(&[Wake::Reauthorize]), Needs { reauthorize: true, ..graph });
     assert_eq!(needs(&[Wake::Removed]), Needs { fresh_subscription: true, ..listing });
-    for wake in [Wake::Daily, Wake::Missed, Wake::Refused, Wake::SignedIn] {
+    for wake in [Wake::Daily, Wake::Missed, Wake::PutBack, Wake::SignedIn] {
         assert_eq!(needs(&[Wake::Changed, wake]), listing, "{wake:?}");
     }
 }

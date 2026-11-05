@@ -7,9 +7,11 @@ use jiff::{SignedDuration, Timestamp};
 use private::{Dir, Secret};
 use tokio::sync::mpsc;
 
-use crate::caldav::Mirror;
+use crate::caldav::{Entry, Mirror};
 use crate::event::{Change, file};
 use crate::graph::{Delta, Graph, Refused};
+use crate::ledger::{Edit, Ledger, Mirrored};
+use crate::local;
 use crate::policy::Policy;
 use crate::state::{self, Subscription, Tokens};
 
@@ -20,7 +22,7 @@ pub enum Wake {
     Daily,
     Missed,
     Reauthorize,
-    Refused,
+    PutBack,
     Removed,
     SignedIn,
 }
@@ -42,7 +44,7 @@ impl Wake {
             Wake::Changed => graph,
             Wake::Reauthorize => Needs { reauthorize: true, ..graph },
             Wake::Removed => Needs { fresh_subscription: true, listing: true, ..graph },
-            Wake::Daily | Wake::Missed | Wake::Refused | Wake::SignedIn => {
+            Wake::Daily | Wake::Missed | Wake::PutBack | Wake::SignedIn => {
                 Needs { listing: true, ..graph }
             }
         }
@@ -128,74 +130,67 @@ impl Sync {
             yakery_log::warn!("not signed in; run `outlook-sync login`");
             return Ok(());
         }
-        // with no record of the sync's writes, every mirror file would read as a new event of his
-        let listed =
-            self.policy.write && self.state.load::<state::Written>(state::WRITTEN)?.token.is_none();
+        let mut ledger = Ledger::open(&self.mirror, &self.state, self.policy.host())?;
+        // a listing first records Outlook's files, so his edits of them are told from the sync's
+        let listed = self.policy.write && !ledger.looked();
         if listed {
-            self.mirror(true).await?;
+            self.mirror(&mut ledger, true).await?;
         }
         if self.policy.write {
-            self.edits().await?;
+            self.edits(&mut ledger).await?;
         }
         if !needs.graph {
             return Ok(());
         }
         let fresh = needs.fresh_subscription || self.shared.subscription.borrow().is_none();
         self.subscription(fresh, needs.reauthorize).await?;
-        self.mirror(needs.listing && !listed).await
+        self.mirror(&mut ledger, needs.listing && !listed).await
     }
 
     /// A created event's local file goes once sent, so the delta brings it back under its Graph id.
-    async fn edits(&self) -> Result<()> {
-        let mut written: state::Written = self.state.load(state::WRITTEN)?;
-        let (entries, token) = self.mirror.changes(written.token.as_deref()).await?;
-        for entry in entries {
-            let copy = written.files.get(&entry.file).cloned();
-            match (copy, entry.gone) {
-                (Some(copy), true) => {
-                    if let Err(refused) = self.graph.remove(&copy.id).await? {
-                        self.put_back(&entry.file, refused);
+    async fn edits(&self, ledger: &mut Ledger<'_>) -> Result<()> {
+        let (planned, token) = ledger.changes().await?;
+        for (Entry { file, .. }, edit) in planned {
+            match edit {
+                Edit::Unchanged => {}
+                Edit::Deleted(mirrored) => {
+                    if let Err(refused) = self.graph.remove(&mirrored.id).await? {
+                        self.put_back(&file, refused);
                     }
-                    written.files.remove(&entry.file);
+                    ledger.forget(&file)?;
                 }
-                (None, true) => {}
-                (Some(copy), false) if entry.etag.as_deref() == Some(copy.etag.as_str()) => {}
-                (copy, false) => {
-                    let Some((ics, etag)) = self.mirror.get(&entry.file).await? else { continue };
-                    let sent = match crate::local::graph(&ics) {
+                Edit::Edited(mirrored) => {
+                    let Some((ics, etag)) = ledger.get(&file).await? else { continue };
+                    let sent = match local::graph(&ics) {
                         Err(e) => Err(Refused(format!("{e:#}"))),
-                        Ok(event) => match &copy {
-                            Some(copy) => self.graph.update(&copy.id, event).await?,
-                            None => {
-                                self.graph
-                                    .create(event, entry.file.trim_end_matches(".ics"))
-                                    .await?
-                            }
-                        },
+                        Ok(event) => self.graph.update(&mirrored.id, event).await?,
                     };
-                    match (copy, sent) {
-                        (Some(copy), sent) => {
-                            if let Err(refused) = sent {
-                                self.put_back(&entry.file, refused);
-                            }
-                            written.files.insert(entry.file, state::Copy { etag, ..copy });
+                    if let Err(refused) = sent {
+                        self.put_back(&file, refused);
+                    }
+                    ledger.record(file, Mirrored { etag, ..mirrored })?;
+                }
+                Edit::New => {
+                    let Some((ics, _)) = ledger.get(&file).await? else { continue };
+                    match local::owned(&file, &ics, self.policy.host()) {
+                        Ok(None) => {
+                            self.put_back(&file, Refused("the sync's file, unrecorded".into()))
                         }
-                        (None, Ok(())) => self.mirror.delete(&entry.file).await?,
-                        (None, Err(Refused(why))) => {
-                            yakery_log::warn!("{} stays unsent: {why}", entry.file)
-                        }
+                        Ok(Some(event)) => match self.graph.create(event).await? {
+                            Ok(()) => ledger.delete([file]).await?,
+                            Err(Refused(why)) => yakery_log::warn!("{file} stays unsent: {why}"),
+                        },
+                        Err(e) => yakery_log::warn!("{file} stays unsent: {e:#}"),
                     }
                 }
             }
-            self.state.save(state::WRITTEN, &written)?;
         }
-        written.token = Some(token);
-        self.state.save(state::WRITTEN, &written)
+        ledger.looked_up_to(token)
     }
 
     fn put_back(&self, file: &str, Refused(why): Refused) {
         yakery_log::warn!("{file}: {why}; Outlook's version comes back");
-        let _ = self.shared.wake.send(Wake::Refused);
+        let _ = self.shared.wake.send(Wake::PutBack);
     }
 
     async fn subscription(&self, fresh: bool, reauthorize: bool) -> Result<()> {
@@ -225,7 +220,7 @@ impl Sync {
         Ok(())
     }
 
-    async fn mirror(&self, full: bool) -> Result<()> {
+    async fn mirror(&self, ledger: &mut Ledger<'_>, full: bool) -> Result<()> {
         let held: state::Delta = self.state.load(state::DELTA)?;
         let now = Timestamp::now();
         let start = match (&held.link, full) {
@@ -236,18 +231,17 @@ impl Sync {
             }
         };
         let mut seen = BTreeSet::new();
-        let mut written: state::Written = self.state.load(state::WRITTEN)?;
         let mut url = start;
         let link = loop {
             let page = match self.graph.page(&url).await? {
                 Delta::Page(page) => page,
-                Delta::Expired if !full => return Box::pin(self.mirror(true)).await,
+                Delta::Expired if !full => return Box::pin(self.mirror(ledger, true)).await,
                 Delta::Expired => anyhow::bail!("graph refused a fresh listing as expired"),
             };
             for change in page.changes {
-                self.apply(change, &mut seen, &mut written, now).await?;
+                self.apply(change, &mut seen, ledger, now).await?;
             }
-            self.state.save(state::WRITTEN, &written)?;
+            ledger.save()?;
             match (page.next, page.delta) {
                 (Some(next), _) => url = next,
                 (None, Some(delta)) => break delta,
@@ -255,20 +249,7 @@ impl Sync {
             }
         };
         if full {
-            // what the owner made and the sync hasn't sent yet isn't Graph's to drop
-            let gone: Vec<String> = self
-                .mirror
-                .files()
-                .await?
-                .difference(&seen)
-                .filter(|f| !self.policy.write || written.files.contains_key(*f))
-                .cloned()
-                .collect();
-            for file in gone {
-                self.mirror.delete(&file).await?;
-                written.files.remove(&file);
-            }
-            self.state.save(state::WRITTEN, &written)?;
+            ledger.sweep(&seen, self.policy.write).await?;
         }
         self.state.save(state::DELTA, &state::Delta { link: Some(link) })
     }
@@ -277,7 +258,7 @@ impl Sync {
         &self,
         change: Change,
         seen: &mut BTreeSet<String>,
-        written: &mut state::Written,
+        ledger: &mut Ledger<'_>,
         now: Timestamp,
     ) -> Result<()> {
         let (id, ics) = match change {
@@ -288,20 +269,9 @@ impl Sync {
             }
         };
         let name = file(&id);
-        let Some(ics) = ics else {
-            self.mirror.delete(&name).await?;
-            written.files.remove(&name);
-            return Ok(());
-        };
-        // a version newer than the sync's is an owner edit not yet sent
-        let over = written.files.get(&name).filter(|_| self.policy.write).map(|c| c.etag.clone());
-        match self.mirror.put(&name, ics, over.as_deref()).await? {
-            Some(etag) => {
-                written.files.insert(name.clone(), state::Copy { id, etag });
-            }
-            None => {
-                let _ = self.shared.wake.send(Wake::Edited);
-            }
+        let Some(ics) = ics else { return ledger.delete([name]).await };
+        if !ledger.write(&name, id, ics, self.policy.write).await? {
+            let _ = self.shared.wake.send(Wake::Edited);
         }
         seen.insert(name);
         Ok(())

@@ -26,19 +26,6 @@ pub struct Delta {
     pub link: Option<String>,
 }
 
-/// The ETag of the sync's own last write to each file tells the owner's edits apart.
-#[derive(Default, Serialize, Deserialize)]
-pub struct Written {
-    pub files: std::collections::BTreeMap<String, Copy>,
-    pub token: Option<String>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Copy {
-    pub id: String,
-    pub etag: String,
-}
-
 pub const WRITTEN: &str = "written.json";
 pub const LOGIN: &str = "login.json";
 pub const TOKENS: &str = "tokens.json";

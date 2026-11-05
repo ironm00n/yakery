@@ -5,6 +5,7 @@ mod assertion;
 mod caldav;
 mod event;
 mod graph;
+mod ledger;
 mod local;
 mod policy;
 mod push;

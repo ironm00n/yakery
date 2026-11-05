@@ -246,6 +246,22 @@ pkgs.testers.runNixOSTest {
             expect("write.lost-record.no-creates", len(fake_log("create")) == creates, fake_log("create")[creates:])
             expect("write.lost-record.odd-kept", NEU + "odd.ics" in mirrored(), mirrored())
 
+        with subtest("an edit of Outlook's event the record lost goes nowhere, and Outlook's version comes back"):
+            creates, name = len(fake_log("create")), mirror_file("e5")
+            server.succeed("systemctl stop outlook-sync")
+            written = json.loads(server.succeed("cat /var/lib/outlook-sync/written.json"))
+            expect("write.unrecorded.looked", written["token"] is not None, written)
+            del written["files"][name]
+            server.succeed(f"echo {shlex.quote(json.dumps(written))} > /var/lib/outlook-sync/written.json")
+            _, body = http(server, owen, "GET", NEU + name)
+            status, _ = http(server, owen, "PUT", NEU + name, body.replace("SUMMARY:NEU e5", "SUMMARY:Mine now"), "text/calendar")
+            expect("write.unrecorded.put", status in (201, 204), status)
+            server.succeed("systemctl start outlook-sync")
+            recorded = lambda _: name in json.loads(server.succeed("cat /var/lib/outlook-sync/written.json"))["files"]
+            retry(lambda _: recorded(_) and "SUMMARY:NEU e5" in http(server, owen, "GET", NEU + name)[1], timeout_seconds=60)
+            expect("write.unrecorded.no-create", len(fake_log("create")) == creates, fake_log("create")[creates:])
+            expect("write.unrecorded.no-update", not any(u["id"] == "e5" for u in fake_log("update")), fake_log("update"))
+
     with subtest("a restart keeps the subscription and the sign-in"):
         server.succeed("systemctl restart outlook-sync")
         server.wait_for_unit("outlook-sync.service")
