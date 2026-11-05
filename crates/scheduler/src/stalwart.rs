@@ -80,6 +80,9 @@ pub struct Stalwart {
     groups: Vec<String>,
 }
 
+/// sysexits.h's: systemd starts the core again, with the new app password.
+const EX_TEMPFAIL: i32 = 75;
+
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
 impl Stalwart {
@@ -176,7 +179,7 @@ impl Http {
                 "{} was refused; exiting to read the app password again",
                 login.address
             );
-            std::process::exit(75);
+            std::process::exit(EX_TEMPFAIL);
         }
         ensure!(status.is_success(), "{path} answered {status} for {}", login.address);
         Ok(serde_json::from_slice(&bytes)?)

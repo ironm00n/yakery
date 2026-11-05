@@ -7,6 +7,8 @@ use reqwest::{RequestBuilder, Response, StatusCode};
 use crate::policy::Policy;
 
 const APP_PASSWORD: &str = "app-password";
+/// sysexits.h's: systemd starts the sync again, with the new app password.
+const EX_TEMPFAIL: i32 = 75;
 
 /// The account the sync signs in to Stalwart as, with the app password systemd passes in.
 pub struct Account {
@@ -30,7 +32,7 @@ impl Account {
         let reply = self.auth(request).send().await.with_context(|| format!("stalwart {what}"))?;
         if reply.status() == StatusCode::UNAUTHORIZED {
             yakery_log::warn!("{} was refused; exiting to read the app password again", self.user);
-            std::process::exit(75);
+            std::process::exit(EX_TEMPFAIL);
         }
         Ok(reply)
     }
