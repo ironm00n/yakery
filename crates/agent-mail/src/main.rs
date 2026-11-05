@@ -10,6 +10,7 @@ mod policy;
 mod prelude;
 mod show;
 mod store;
+mod undefined;
 mod web;
 
 use std::process::ExitCode;
@@ -155,6 +156,9 @@ commands! {
     Login(read::Nothing) => read::login,
     /// Rotate the login's password.
     Password(read::Password) => read::rotate,
+    /// Print the references in the Markdown on stdin that `send` warns of, those a reader who wasn't in the session
+    /// can't resolve; read-only.
+    Lint(read::Nothing) => send::lint,
 }
 
 fn main() -> ExitCode {

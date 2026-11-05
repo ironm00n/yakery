@@ -7,7 +7,7 @@ use lol_html::{RewriteStrSettings, element, rewrite_str};
 use private::now;
 use text::Address;
 
-use super::{succeed, wait::Watching};
+use super::{read::Nothing, succeed, wait::Watching};
 use crate::{
     address::{MessageId, Topic},
     mail::{Addr, Current, Email, Keyword, Mail, keywords},
@@ -16,6 +16,7 @@ use crate::{
     prelude::*,
     show::{emails, plain, preview},
     store::Config,
+    undefined::undefined,
 };
 
 #[derive(clap::Args)]
@@ -248,6 +249,22 @@ pub fn head(
     Ok((subject, head.with("Disposition-Notification-To", to.from.to_string())))
 }
 
+fn unresolved(text: &str) -> String {
+    format!(
+        "\"{text}\" isn't defined in this mail, so a reader who wasn't in the session can't resolve it"
+    )
+}
+
+pub async fn lint(_: Nothing) -> Result<ExitCode> {
+    let hits = undefined(&io::read_to_string(io::stdin())?);
+    let lines: Vec<String> =
+        hits.iter().map(|h| format!("line {}: {}", h.line, unresolved(&h.text))).collect();
+    succeed!(
+        "{}",
+        if lines.is_empty() { "no undefined references".into() } else { lines.join("\n") }
+    )
+}
+
 pub async fn run(args: Args) -> Result<ExitCode> {
     let config = Config::load()?;
     let content = match &args.mime {
@@ -263,6 +280,9 @@ pub async fn run(args: Args) -> Result<ExitCode> {
                 !markdown.trim().is_empty(),
                 "send reads the body from stdin, and it was empty"
             );
+            for hit in undefined(&markdown) {
+                warn!("line {}: {}", hit.line, unresolved(&hit.text));
+            }
             let attached = args.attach.iter().map(|path| {
                 let name = path
                     .file_name()

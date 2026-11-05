@@ -4,6 +4,7 @@ mod claims;
 mod cli;
 mod files;
 mod text;
+mod undefined;
 mod wire;
 
 pub use wire::wire;
