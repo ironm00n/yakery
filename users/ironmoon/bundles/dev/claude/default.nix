@@ -36,6 +36,11 @@ let
       ".claude/skills/mail-listener".source =
         config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/.nix-profile/share/claude/trusted-prompt-mod";
     };
+  # an xb deploy moves the gc root ~/.local/state/xb/current, so PATH reaches the deployed client without a switch
+  xb = pkgs.runCommandLocal "xb" { meta.mainProgram = "xb"; } ''
+    mkdir -p $out/bin
+    ln -s ${config.home.homeDirectory}/.local/state/xb/current/bin/xb $out/bin/xb
+  '';
   # Syncthing shares ~/.claude, and each of these links points into this host's own store
   stignore = pkgs.writeText "stignore" (
     "// home-manager rewrites this file at every switch\n"
@@ -52,6 +57,7 @@ in
     home.packages = [
       claude-code
       agent-mail
+      xb
       pkgs.typst
     ];
 
