@@ -1,5 +1,8 @@
 use super::*;
 
+/// SHA-256 of the 32 bytes 0xaa that `token('a')` names, by `sha256sum`.
+pub const A_DIGEST: &str = "e0e77a507412b120f6ede61f62295b1a7b2ff19d3dcc8f7253e51663470c888e";
+
 fn token(byte: char) -> Token {
     Token::parse(&byte.to_string().repeat(64)).unwrap()
 }
@@ -33,7 +36,8 @@ fn tokens_are_64_hex_digits_kept_lowercase() {
         assert!(Token::parse(&bad).is_err(), "{bad}");
     }
     let digest = token('a').digest();
-    assert_eq!(digest.id().to_string(), digest.to_string()[..8]);
+    assert_eq!(digest.to_string(), A_DIGEST);
+    assert_eq!(digest.id().to_string(), "e0e77a50");
     assert!(token('a').digest() != token('b').digest());
 }
 

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::assertion::Credential;
 use crate::event::Change;
-use crate::policy::Policy;
+use crate::policy::{Feed, Policy, Route};
 use crate::state::{self, Subscription, Tokens};
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
@@ -96,7 +96,7 @@ impl Graph {
 
     /// Redeems the callback's code, which is the only way to a first refresh token.
     pub async fn redeem(&self, code: &str, verifier: &Secret) -> Result<()> {
-        let redirect = self.policy.redirect();
+        let redirect = self.policy.url(Route::Callback);
         let form = [
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -148,8 +148,8 @@ impl Graph {
         let body = json!({
             "changeType": "created,updated,deleted",
             "resource": "/me/events",
-            "notificationUrl": format!("{}/notify", self.policy.public),
-            "lifecycleNotificationUrl": format!("{}/lifecycle", self.policy.public),
+            "notificationUrl": self.policy.url(Route::Notices(Feed::Changes)),
+            "lifecycleNotificationUrl": self.policy.url(Route::Notices(Feed::Lifecycle)),
             "expirationDateTime": expires,
             "clientState": client_state.expose(),
         });

@@ -27,7 +27,7 @@ use private::{Dir, Secret};
 use ring::digest::{SHA256, digest};
 
 use crate::assertion::Credential;
-use crate::policy::POLICY;
+use crate::policy::{POLICY, Route};
 use crate::state::Login;
 use crate::sync::{Shared, Sync};
 
@@ -125,7 +125,7 @@ fn login(state: &Dir) -> Result<()> {
     query.extend_pairs([
         ("client_id", POLICY.client_id.as_str()),
         ("response_type", "code"),
-        ("redirect_uri", POLICY.redirect().as_str()),
+        ("redirect_uri", POLICY.url(Route::Callback).as_str()),
         ("response_mode", "query"),
         ("scope", graph::scope(&POLICY)),
         ("state", login_state.expose()),

@@ -4,7 +4,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
+
+const CALENDAR: &str = "text/calendar; charset=utf-8";
 
 use crate::policy::Policy;
 
@@ -24,36 +26,31 @@ impl Mirror {
         Ok(Mirror { client, url, user: policy.account.clone(), password })
     }
 
-    async fn send(&self, method: Method, file: &str, body: Option<String>) -> Result<StatusCode> {
-        let mut request = self
-            .client
-            .request(method.clone(), format!("{}{file}", self.url))
-            .basic_auth(&self.user, Some(&self.password));
-        if let Some(body) = body {
-            request = request.header("content-type", "text/calendar; charset=utf-8").body(body);
-        }
-        let status =
-            request.send().await.with_context(|| format!("stalwart {method} {file}"))?.status();
-        if status == StatusCode::UNAUTHORIZED {
+    fn request(&self, method: Method, file: &str) -> RequestBuilder {
+        self.client
+            .request(method, format!("{}{file}", self.url))
+            .basic_auth(&self.user, Some(&self.password))
+    }
+
+    /// A 401 means the app password changed, so the process exits for systemd to start it with the new one.
+    async fn send(&self, request: RequestBuilder, what: &str) -> Result<Response> {
+        let reply = request.send().await.with_context(|| format!("stalwart {what}"))?;
+        if reply.status() == StatusCode::UNAUTHORIZED {
             yakery_log::warn!("{} was refused; exiting to read the app password again", self.user);
             std::process::exit(75);
         }
-        Ok(status)
+        Ok(reply)
     }
 
     /// Writes `file`, only over the version `over` names when one is given; the new ETag, or
     /// None when someone changed the file since.
     pub async fn put(&self, file: &str, ics: String, over: Option<&str>) -> Result<Option<String>> {
-        let mut request = self
-            .client
-            .put(format!("{}{file}", self.url))
-            .basic_auth(&self.user, Some(&self.password))
-            .header("content-type", "text/calendar; charset=utf-8")
-            .body(ics);
+        let mut request =
+            self.request(Method::PUT, file).header("content-type", CALENDAR).body(ics);
         if let Some(etag) = over {
             request = request.header("if-match", etag);
         }
-        let reply = request.send().await.with_context(|| format!("stalwart PUT {file}"))?;
+        let reply = self.send(request, &format!("PUT {file}")).await?;
         match reply.status() {
             StatusCode::PRECONDITION_FAILED => Ok(None),
             s if s.is_success() => match etag(reply.headers()) {
@@ -65,13 +62,7 @@ impl Mirror {
     }
 
     pub async fn get(&self, file: &str) -> Result<Option<(String, String)>> {
-        let reply = self
-            .client
-            .get(format!("{}{file}", self.url))
-            .basic_auth(&self.user, Some(&self.password))
-            .send()
-            .await
-            .with_context(|| format!("stalwart GET {file}"))?;
+        let reply = self.send(self.request(Method::GET, file), &format!("GET {file}")).await?;
         match reply.status() {
             StatusCode::NOT_FOUND => Ok(None),
             s if s.is_success() => {
@@ -83,7 +74,10 @@ impl Mirror {
     }
 
     pub async fn delete(&self, file: &str) -> Result<()> {
-        let status = self.send(Method::DELETE, file, None).await?;
+        let status = self
+            .send(self.request(Method::DELETE, file), &format!("DELETE {file}"))
+            .await?
+            .status();
         anyhow::ensure!(
             status.is_success() || status == StatusCode::NOT_FOUND,
             "stalwart DELETE {file}: HTTP {status}"
@@ -92,21 +86,18 @@ impl Mirror {
     }
 
     async fn multistatus(&self, method: &[u8], body: String) -> Result<Option<String>> {
-        let reply = self
-            .client
-            .request(Method::from_bytes(method)?, &self.url)
-            .basic_auth(&self.user, Some(&self.password))
+        let name = String::from_utf8_lossy(method).into_owned();
+        let request = self
+            .request(Method::from_bytes(method)?, "")
             .header("depth", "1")
             .header("content-type", "application/xml")
-            .body(body)
-            .send()
-            .await
-            .context("stalwart multistatus")?;
+            .body(body);
+        let reply = self.send(request, &name).await?;
         match reply.status().as_u16() {
             207 => Ok(Some(reply.text().await?)),
             // a sync token the server no longer knows
             403 | 409 => Ok(None),
-            s => anyhow::bail!("stalwart {}: HTTP {s}", String::from_utf8_lossy(method)),
+            s => anyhow::bail!("stalwart {name}: HTTP {s}"),
         }
     }
 

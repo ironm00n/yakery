@@ -12,7 +12,7 @@ use maud::{DOCTYPE, Markup, html};
 use text::Address;
 
 use crate::ask::{LinkView, Shown};
-use crate::link::{Booker, Form, MOST_NAME, MOST_NOTE};
+use crate::link::{Booker, Field, Form, MOST_NAME, MOST_NOTE};
 use crate::policy::POLICY;
 use crate::slots::{Period, days};
 
@@ -98,7 +98,14 @@ pub fn message(viewer: &Viewer, title: &str, text: &str) -> Markup {
     page(viewer, title, &[], html! { p { (text) } })
 }
 
-pub fn week(viewer: &Viewer, n: u8, monday: Date, blocks: &[Period], open: &[Period]) -> Markup {
+pub fn week(
+    viewer: &Viewer,
+    n: u8,
+    monday: Date,
+    blocks: &[Period],
+    open: &[Period],
+    later: bool,
+) -> Markup {
     let half = SignedDuration::from_mins(30);
     let row = TimeRound::new().smallest(Unit::Minute).increment(30).mode(RoundMode::Trunc);
     let starts = |p: Period| {
@@ -122,7 +129,7 @@ pub fn week(viewer: &Viewer, n: u8, monday: Date, blocks: &[Period], open: &[Per
     let body = html! {
         p {
             @if n > 0 { (nav(n - 1, "Earlier week")) }
-            @if n < POLICY.horizon_weeks { (nav(n + 1, "Later week")) }
+            @if later { (nav(n + 1, "Later week")) }
         }
         table {
             thead { tr { th {} @for day in &days { th { (day.strftime("%a %-d %b")) } } } }
@@ -144,13 +151,29 @@ pub fn week(viewer: &Viewer, n: u8, monday: Date, blocks: &[Period], open: &[Per
     page(viewer, "When I'm busy", &[("week", n.to_string())], body)
 }
 
+/// What was wrong with a booking a link's page is shown again for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Problem {
+    Field(Field),
+    Taken,
+}
+
+impl std::fmt::Display for Problem {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Problem::Field(field) => field.fmt(f),
+            Problem::Taken => f.write_str("That time was just taken. Choose another."),
+        }
+    }
+}
+
 /// A link's page; with `chosen`, the booking form for that slot in a `<dialog open>`.
 pub fn link(
     viewer: &Viewer,
     view: &LinkView,
     chosen: Option<Timestamp>,
     form: &Form,
-    problem: &str,
+    problem: Option<Problem>,
 ) -> Markup {
     let title = view.title.as_deref().unwrap_or("Book a meeting");
     let body = match &view.state {
@@ -162,7 +185,7 @@ pub fn link(
             html! { p { "No times are free on this link any more." } }
         }
         Shown::Open(slots) => html! {
-            @if !problem.is_empty() { p { strong { (problem) } } }
+            @if let Some(problem) = problem { p { strong { (problem) } } }
             p { (view.duration.as_mins()) " minutes. Choose a time:" }
             @for (day, starts) in by_day(viewer, slots) {
                 h2 { (day.strftime("%A %-d %B")) }

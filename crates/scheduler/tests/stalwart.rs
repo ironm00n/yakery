@@ -41,7 +41,7 @@ fn the_event_names_the_owner_as_organizer_and_the_booker_as_attendee() {
     assert_eq!(event["title"], "Research chat with Ada Lovelace");
     assert_eq!(event["organizerCalendarAddress"], "mailto:owen@example.test");
     assert_eq!(event["participants"]["booker"]["calendarAddress"], "mailto:ada@example.org");
-    assert_eq!(event["description"], format!("hi\n\nBooked with link {}", token.digest().id()));
+    assert_eq!(event["description"], "hi\n\nBooked with link e0e77a50");
     assert_eq!(event["locations"]["place"]["name"], "WVH 366");
     assert!(event.get("calendarIds").is_none(), "only Stalwart::create names the calendar");
 }

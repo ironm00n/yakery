@@ -18,8 +18,7 @@ use crate::stalwart;
 
 /// The most of a question the core reads: the front's are a few hundred bytes.
 const MOST_ASKED: u64 = 64 * 1024;
-/// The most of an answer the front reads: a link open every quarter hour of 8 weeks offers
-/// 5,472 slots.
+/// The most of an answer the front reads: room for a link open at every slot of its longest window.
 pub const MOST_ANSWERED: u64 = 1024 * 1024;
 /// How long after the front asks the core may still claim a link for its booking: a question
 /// that waited out a down core is refused, not carried out for a booker long gone.
@@ -44,9 +43,20 @@ pub enum FrontAsk {
 
 #[derive(Serialize, Deserialize)]
 pub enum FrontAnswer {
-    Week { monday: jiff::civil::Date, blocks: Vec<Period>, open: Vec<Period> },
+    /// `later` when the week after is inside the horizon too.
+    Week {
+        monday: jiff::civil::Date,
+        blocks: Vec<Period>,
+        open: Vec<Period>,
+        later: bool,
+    },
     Link(LinkView),
-    Booked { start: Timestamp, duration: SignedDuration, booker: Booker, owner: String },
+    Booked {
+        start: Timestamp,
+        duration: SignedDuration,
+        booker: Booker,
+        owner: String,
+    },
     Refused(Refusal),
 }
 

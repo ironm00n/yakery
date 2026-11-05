@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::link::Limits;
 use crate::policy::{Gap, Policy, Window};
 
-const GRID_MINUTES: i64 = 15;
+pub(crate) const GRID_MINUTES: i64 = 15;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Period {

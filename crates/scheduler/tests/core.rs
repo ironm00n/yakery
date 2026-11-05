@@ -126,7 +126,7 @@ fn a_link_books_one_event_and_then_shows_only_its_time() {
         issued(&core, 'a', issue(WEEK.0, WEEK.1)).await;
         answers!(book(&core, 'a', monday("10:00")).await, FrontAnswer::Booked { .. });
         answers!(book(&core, 'a', monday("11:00")).await, FrontAnswer::Refused(Refusal::Used));
-        let uid = format!("{}@schedule.example.test", token('a').digest());
+        let uid = format!("{}@schedule.example.test", crate::link::tests::A_DIGEST);
         assert_eq!(fake.events.borrow().len(), 1);
         assert_eq!(fake.events.borrow()[0]["uid"], uid);
         answers!(shown(&core, 'a').await, Shown::Booked(start) if start == monday("10:00"));
@@ -256,5 +256,16 @@ fn the_week_shows_busy_time_inside_bookable_hours_up_to_the_horizon() {
         };
         assert_eq!(blocks, [Period { start: monday("10:00"), end: monday("11:00") }]);
         answers!(core.front(FrontAsk::Week(5)).await, FrontAnswer::Refused(Refusal::NoSuchWeek));
+        for n in 0..5 {
+            let FrontAnswer::Week { later, .. } = core.front(FrontAsk::Week(n)).await else {
+                continue;
+            };
+            let next = core.front(FrontAsk::Week(n + 1)).await;
+            assert_eq!(
+                later,
+                matches!(next, FrontAnswer::Week { .. }),
+                "week {n} says later: {later}"
+            );
+        }
     })
 }

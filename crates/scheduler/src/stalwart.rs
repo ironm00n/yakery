@@ -124,7 +124,7 @@ impl Stalwart {
 
         let calendars = http.call(&login, "Calendar/get", json!({"accountId": owner_id})).await?;
         let [bookings] = calendars["list"].as_array().map(Vec::as_slice).unwrap_or_default() else {
-            bail!("schedule@ must see exactly one calendar of {owner}'s, Bookings");
+            bail!("{} must see exactly one calendar of {owner}'s, Bookings", login.address);
         };
         let rights = &bookings["myRights"];
         let right = |r: &str| rights[r].as_bool() == Some(true);
@@ -133,7 +133,8 @@ impl Stalwart {
                 && right("mayWriteAll")
                 && !right("mayShare")
                 && !right("mayDelete"),
-            "Bookings must be shared with schedule@ to read and write items, and no more: {rights}"
+            "Bookings must be shared with {} to read and write items, and no more: {rights}",
+            login.address
         );
         let bookings = bookings["id"].as_str().context("Bookings' id")?.into();
 

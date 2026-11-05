@@ -34,9 +34,46 @@ const COMPILED: &str = include_str!("../tests/policy.json");
 pub static POLICY: LazyLock<Policy> =
     LazyLock::new(|| serde_json::from_str(COMPILED).expect("the module's policy parses"));
 
+/// Where Graph sends what it notices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Feed {
+    Changes,
+    Lifecycle,
+}
+
+/// The paths the sync serves under its public prefix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Route {
+    Notices(Feed),
+    Callback,
+}
+
+impl Route {
+    const ALL: [Route; 3] =
+        [Route::Notices(Feed::Changes), Route::Notices(Feed::Lifecycle), Route::Callback];
+
+    pub fn path(self) -> &'static str {
+        match self {
+            Route::Notices(Feed::Changes) => "/notify",
+            Route::Notices(Feed::Lifecycle) => "/lifecycle",
+            Route::Callback => "/callback",
+        }
+    }
+
+    pub fn of(path: &str) -> Option<Route> {
+        Route::ALL.into_iter().find(|r| r.path() == path)
+    }
+}
+
 impl Policy {
-    pub fn redirect(&self) -> String {
-        format!("{}/callback", self.public)
+    pub fn url(&self, route: Route) -> String {
+        format!("{}{}", self.public, route.path())
+    }
+
+    /// The path part of the public prefix, which requests arrive under.
+    pub fn prefix(&self) -> &str {
+        let rest = self.public.split_once("://").map_or(self.public.as_str(), |(_, r)| r);
+        rest.find('/').map_or("", |at| &rest[at..])
     }
 
     pub fn authority(&self, path: &str) -> String {
@@ -49,3 +86,7 @@ impl Policy {
         rest.split('/').next().unwrap_or(rest)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/policy.rs"]
+mod tests;

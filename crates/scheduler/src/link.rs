@@ -4,8 +4,9 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU32;
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
 use jiff::civil::Date;
 use jiff::{SignedDuration, Timestamp, ToSpan};
 use private::{Secret, hex, random};
@@ -85,7 +86,7 @@ pub struct Issue {
     pub until: Date,
     #[arg(long)]
     pub duration: SignedDuration,
-    #[arg(long, default_value = "PT5M")]
+    #[arg(long, default_value_t = Gap::FLOOR)]
     pub gap: Gap,
     /// Bookable hours in place of the policy's, like "sat 13:00-17:00"; repeatable
     #[arg(long)]
@@ -102,20 +103,29 @@ impl Check for Issue {
     type Problem = anyhow::Error;
 
     fn check(self) -> Result<Issue> {
-        let weeks = self.from <= self.until && self.until <= self.from + 8.weeks();
-        ensure!(weeks, "a link's window is one day to 8 weeks");
-        let lengths = SignedDuration::from_mins(15)..=SignedDuration::from_hours(8);
-        ensure!(lengths.contains(&self.duration), "a meeting lasts 15 minutes to 8 hours");
-        let short = |s: &Option<String>| s.as_deref().is_none_or(|s| plain(s, 100));
+        let weeks = self.from <= self.until && self.until <= self.from + MOST_WEEKS.weeks();
+        ensure!(weeks, "a link's window is one day to {MOST_WEEKS} weeks");
+        ensure!(
+            DURATIONS.contains(&self.duration),
+            "a meeting lasts {:#} to {:#}",
+            DURATIONS.start(),
+            DURATIONS.end()
+        );
+        let short = |s: &Option<String>| s.as_deref().is_none_or(|s| plain(s, MOST_TITLE));
         ensure!(
             short(&self.title) && short(&self.location),
-            "titles and places are 1 to 100 plain characters"
+            "titles and places are 1 to {MOST_TITLE} plain characters"
         );
         Ok(self)
     }
 }
 
-/// The longest name and note a booker may give, in characters.
+/// The longest window a link may have.
+pub const MOST_WEEKS: i64 = 8;
+pub const DURATIONS: std::ops::RangeInclusive<SignedDuration> =
+    SignedDuration::from_mins(15)..=SignedDuration::from_hours(8);
+/// The longest title, place, name and note, in characters.
+pub const MOST_TITLE: usize = 100;
 pub const MOST_NAME: usize = 100;
 pub const MOST_NOTE: usize = 2000;
 
@@ -143,11 +153,11 @@ pub enum Field {
 
 impl fmt::Display for Field {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(match self {
-            Field::Name => "Give a name of 1 to 100 characters.",
-            Field::Address => "That email address isn't one an invitation can go to.",
-            Field::Note => "Keep the note under 2,000 characters.",
-        })
+        match self {
+            Field::Name => write!(f, "Give a name of 1 to {MOST_NAME} characters."),
+            Field::Address => f.write_str("That email address isn't one an invitation can go to."),
+            Field::Note => write!(f, "Keep the note to {MOST_NOTE} characters or fewer."),
+        }
     }
 }
 
@@ -180,18 +190,23 @@ pub struct Booking {
 /// with its insert, so a create is sent again only once its last send can't be in flight.
 pub const QUIET: SignedDuration = SignedDuration::from_mins(2);
 
-/// A booking whose create may or may not have reached Stalwart: sent `sends` times, the last at
-/// `sent`, each send written down before it goes.
+/// A booking whose create may or may not have reached Stalwart, each send written down before it
+/// goes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claim {
     pub booking: Booking,
-    pub sends: u32,
-    pub sent: Option<Timestamp>,
+    pub sent: Option<Sent>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Sent {
+    pub count: NonZeroU32,
+    pub last: Timestamp,
 }
 
 impl Claim {
     pub fn due(&self, now: Timestamp) -> bool {
-        self.sent.is_none_or(|sent| now >= sent + QUIET)
+        self.sent.is_none_or(|sent| now >= sent.last + QUIET)
     }
 }
 
@@ -200,6 +215,21 @@ pub enum State {
     Open,
     Claiming(Claim),
     Booked { booking: Booking, event: Option<String> },
+}
+
+impl std::fmt::Display for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            State::Open => write!(f, "open"),
+            State::Claiming(Claim { booking, sent }) => {
+                let times = sent.map_or(0, |s| s.count.get());
+                write!(f, "claiming {}, sent {times} times", booking.start)
+            }
+            State::Booked { booking, .. } => {
+                write!(f, "booked {} by {}", booking.start, booking.booker.address)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -225,6 +255,11 @@ const KEPT_AFTER_WINDOW: i64 = 30;
 impl Links {
     pub fn get(&self, digest: &Digest) -> Option<&Link> {
         self.0.get(digest)
+    }
+
+    /// The link, while its window hasn't ended.
+    pub fn live(&self, digest: &Digest, today: Date) -> Option<&Link> {
+        self.0.get(digest).filter(|l| l.limits.until >= today)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&Digest, &Link)> {
@@ -260,16 +295,20 @@ impl Links {
     pub fn claim(&self, digest: Digest, booking: Booking) -> Result<Links> {
         let link = self.0.get(&digest).filter(|l| matches!(l.state, State::Open));
         let link = link.ok_or_else(|| anyhow!("not open"))?;
-        let claim = Claim { booking, sends: 0, sent: None };
+        let claim = Claim { booking, sent: None };
         Ok(self.with(digest, Some(Link { state: State::Claiming(claim), ..link.clone() })))
     }
 
-    /// The claim's next send, written down before it goes; refused until the claim is due.
-    pub fn sending(&self, digest: Digest, now: Timestamp) -> Result<Links> {
-        let (limits, claim) =
-            self.claimed(digest).filter(|(_, c)| c.due(now)).context("no send due")?;
-        let claim = Claim { sends: claim.sends + 1, sent: Some(now), ..claim };
-        Ok(self.with(digest, Some(Link { limits, state: State::Claiming(claim) })))
+    /// The links with the claim's next send written down, and what to send, when one is due.
+    pub fn sending(&self, digest: Digest, now: Timestamp) -> Option<(Links, Limits, Claim)> {
+        let (limits, claim) = self.claimed(digest).filter(|(_, c)| c.due(now))?;
+        let count = claim.sent.map_or(NonZeroU32::MIN, |s| s.count.saturating_add(1));
+        let claim = Claim { sent: Some(Sent { count, last: now }), ..claim };
+        let next = self.with(
+            digest,
+            Some(Link { limits: limits.clone(), state: State::Claiming(claim.clone()) }),
+        );
+        Some((next, limits, claim))
     }
 
     /// A taken UID means an earlier send landed. A refusal reopens the link only when it answers
@@ -279,7 +318,9 @@ impl Links {
         let state = match created {
             Created::Event(id) => State::Booked { booking: claim.booking, event: Some(id) },
             Created::UidTaken => State::Booked { booking: claim.booking, event: None },
-            Created::Refused(_) if claim.sends <= 1 => State::Open,
+            Created::Refused(_) if claim.sent.is_none_or(|s| s.count == NonZeroU32::MIN) => {
+                State::Open
+            }
             Created::Refused(_) => State::Claiming(claim),
         };
         self.with(digest, Some(Link { limits, state }))

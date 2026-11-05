@@ -26,8 +26,8 @@ fn the_assertion_is_a_ps256_jwt_with_the_certificate_thumbprint_and_a_short_life
     let header = decoded(header);
     assert_eq!(header["alg"], "PS256");
     assert_eq!(header["typ"], "JWT");
-    let der = base64::engine::general_purpose::STANDARD.decode(&credential.certificate).unwrap();
-    assert_eq!(header["x5t#S256"], URL_SAFE_NO_PAD.encode(digest(&SHA256, &der)));
+    // `openssl x509 -outform DER | openssl dgst -sha256 -binary`, base64url, of the fixture certificate
+    assert_eq!(header["x5t#S256"], "2QumOmCuepnMN4-t42uuMwCklmq7BACrFRYLv0aKwdQ");
 
     let claims = decoded(claims);
     assert_eq!(

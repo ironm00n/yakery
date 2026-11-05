@@ -32,10 +32,11 @@ fn rendered(value: serde_json::Value) -> String {
 #[test]
 fn a_timed_occurrence_is_one_vevent_in_utc_named_by_its_graph_id() {
     let ics = rendered(timed(json!({})));
-    let stem = file("AAMkAD=/x+y");
-    assert!(stem.ends_with(".ics") && stem.len() == 64 + 4, "{stem}");
+    // sha256sum of the Graph id
+    let name = "1b58086e633eb81838b55b82576398909f15bedd2bb17209b4eed1d9313e85ff";
+    assert_eq!(file("AAMkAD=/x+y"), format!("{name}.ics"));
     for line in [
-        format!("UID:{}@schedule.example.test", &stem[..64]),
+        format!("UID:{name}@schedule.example.test"),
         "DTSTAMP:20261104T120000Z".into(),
         "DTSTART:20261105T150000Z".into(),
         "DTEND:20261105T163000Z".into(),
@@ -44,7 +45,6 @@ fn a_timed_occurrence_is_one_vevent_in_utc_named_by_its_graph_id() {
     ] {
         assert!(ics.contains(&format!("{line}\r\n")), "{line} missing from\n{ics}");
     }
-    assert_eq!(file("AAMkAD=/x+y"), stem, "the same id always names the same file");
 }
 
 #[test]

@@ -33,6 +33,48 @@ pub enum Wake {
     SignedIn,
 }
 
+/// What the wakes since the last successful run ask of the next one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Needs {
+    /// Past the owner's edits: the subscription kept and the mirror brought up to Graph.
+    pub graph: bool,
+    pub fresh_subscription: bool,
+    pub reauthorize: bool,
+    /// A fresh listing over the window rather than a delta run.
+    pub listing: bool,
+}
+
+impl Wake {
+    pub fn needs(self) -> Needs {
+        let graph = Needs { graph: true, ..Needs::default() };
+        match self {
+            Wake::Local => Needs::default(),
+            Wake::Changed => graph,
+            Wake::Reauthorize => Needs { reauthorize: true, ..graph },
+            Wake::Removed => Needs { fresh_subscription: true, listing: true, ..graph },
+            Wake::Daily | Wake::Missed | Wake::Refused | Wake::SignedIn => {
+                Needs { listing: true, ..graph }
+            }
+        }
+    }
+}
+
+impl std::ops::BitOr for Needs {
+    type Output = Needs;
+    fn bitor(self, other: Needs) -> Needs {
+        Needs {
+            graph: self.graph || other.graph,
+            fresh_subscription: self.fresh_subscription || other.fresh_subscription,
+            reauthorize: self.reauthorize || other.reauthorize,
+            listing: self.listing || other.listing,
+        }
+    }
+}
+
+pub fn needs<'a>(wakes: impl IntoIterator<Item = &'a Wake>) -> Needs {
+    wakes.into_iter().fold(Needs::default(), |n, w| n | w.needs())
+}
+
 const DAILY: Duration = Duration::from_secs(24 * 60 * 60);
 /// How long after a failed run the loop tries again, should no notification come first.
 const RETRY: Duration = Duration::from_secs(5 * 60);
@@ -66,21 +108,25 @@ impl Sync {
     pub async fn run(&self, mut wakes: mpsc::UnboundedReceiver<Wake>) {
         let mut daily = tokio::time::interval(DAILY);
         let mut retry: Option<tokio::time::Instant> = None;
+        // kept until a run succeeds, so a retry still does what the failed run was woken for
+        let mut pending = BTreeSet::new();
         loop {
-            let first = tokio::select! {
-                Some(wake) = wakes.recv() => wake,
-                _ = daily.tick() => Wake::Daily,
-                () = sleep_until(retry) => Wake::Changed,
-            };
-            let mut woken = BTreeSet::from([first]);
-            while let Ok(wake) = wakes.try_recv() {
-                woken.insert(wake);
+            tokio::select! {
+                Some(wake) = wakes.recv() => { pending.insert(wake); }
+                _ = daily.tick() => { pending.insert(Wake::Daily); }
+                () = sleep_until(retry) => {}
             }
-            retry = match self.handle(&woken).await {
-                Ok(()) => None,
+            while let Ok(wake) = wakes.try_recv() {
+                pending.insert(wake);
+            }
+            retry = match self.handle(needs(&pending)).await {
+                Ok(()) => {
+                    pending.clear();
+                    None
+                }
                 Err(e) => {
                     yakery_log::warn!(
-                        "{woken:?}: {e:#}; trying again in {} minutes",
+                        "{pending:?}: {e:#}; trying again in {} minutes",
                         RETRY.as_secs() / 60
                     );
                     Some(tokio::time::Instant::now() + RETRY)
@@ -89,7 +135,7 @@ impl Sync {
         }
     }
 
-    async fn handle(&self, woken: &BTreeSet<Wake>) -> Result<()> {
+    async fn handle(&self, needs: Needs) -> Result<()> {
         let Tokens { refresh } = self.state.load(state::TOKENS)?;
         if refresh.is_none() {
             yakery_log::warn!("not signed in; run `outlook-sync login`");
@@ -99,14 +145,12 @@ impl Sync {
         if self.policy.write {
             self.edits().await?;
         }
-        if woken.iter().all(|w| *w == Wake::Local) {
+        if !needs.graph {
             return Ok(());
         }
-        let fresh = woken.contains(&Wake::Removed) || self.shared.subscription.borrow().is_none();
-        self.subscription(fresh, woken.contains(&Wake::Reauthorize)).await?;
-        let full =
-            woken.iter().any(|w| !matches!(w, Wake::Changed | Wake::Local | Wake::Reauthorize));
-        self.mirror(full).await
+        let fresh = needs.fresh_subscription || self.shared.subscription.borrow().is_none();
+        self.subscription(fresh, needs.reauthorize).await?;
+        self.mirror(needs.listing).await
     }
 
     /// Sends Outlook what the owner changed in the mirror since the last look: an edited

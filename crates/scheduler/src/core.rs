@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use crate::Sockets;
 use crate::ask::{self, AdminAnswer, AdminAsk, FrontAnswer, FrontAsk, LinkView, Refusal, Shown};
 use crate::checked::Checked;
-use crate::link::{Booker, Booking, Digest, Limits, Link, Links, QUIET, State};
+use crate::link::{Booker, Booking, Digest, Limits, Links, QUIET, State};
 use crate::policy::Policy;
 use crate::slots::{Period, days, open, reach, shown, slots};
 use crate::stalwart::{Calendar, Stalwart, event};
@@ -36,7 +36,9 @@ pub struct Core<C> {
 fn crash_point(_at: &str) {
     #[cfg(feature = "crash-points")]
     if std::env::var("SCHEDULER_CRASH").as_deref() == Ok(_at)
-        && std::fs::File::create_new(format!("/var/lib/scheduler/crashed-{_at}")).is_ok()
+        && let Some(state) = std::env::var_os("STATE_DIRECTORY")
+        && std::fs::File::create_new(std::path::Path::new(&state).join(format!("crashed-{_at}")))
+            .is_ok()
     {
         std::process::abort();
     }
@@ -74,16 +76,10 @@ impl<C: Calendar> Core<C> {
 
     /// Sends the link's create if it is claiming and due, and settles it on Stalwart's answer.
     async fn send(&self, store: &mut Store, digest: Digest) -> Result<()> {
-        let now = (self.clock)();
-        let Some(Link { limits, state: State::Claiming(claim) }) =
-            store.links().get(&digest).cloned()
-        else {
+        let Some((next, limits, claim)) = store.links().sending(digest, (self.clock)()) else {
             return Ok(());
         };
-        if !claim.due(now) {
-            return Ok(());
-        }
-        store.apply(|links| links.sending(digest, now))?;
+        store.apply(|_| Ok(next))?;
         let event = event(self.policy, self.calendar.owner(), digest, &limits, &claim.booking);
         let created = self.calendar.create(event).await?;
         crash_point("created");
@@ -108,7 +104,9 @@ impl<C: Calendar> Core<C> {
         let (now, today) = ((self.clock)(), self.today());
         let monday =
             today - (today.weekday().to_monday_zero_offset() as i64).days() + (7 * n as i64).days();
-        if days(self.policy, monday, monday).start > now + self.policy.horizon() {
+        let served =
+            |monday: Date| days(self.policy, monday, monday).start <= now + self.policy.horizon();
+        if !served(monday) {
             return Ok(FrontAnswer::Refused(Refusal::NoSuchWeek));
         }
         let fresh = self
@@ -126,7 +124,12 @@ impl<C: Calendar> Core<C> {
             }
         };
         let open = open(self.policy, monday, now);
-        Ok(FrontAnswer::Week { monday, blocks: shown(&open, &busy), open })
+        Ok(FrontAnswer::Week {
+            monday,
+            blocks: shown(&open, &busy),
+            open,
+            later: served(monday + 7.days()),
+        })
     }
 
     async fn free(&self, limits: &Limits, links: &Links) -> Result<Vec<Timestamp>> {
@@ -136,7 +139,7 @@ impl<C: Calendar> Core<C> {
 
     async fn link(&self, digest: Digest) -> Result<FrontAnswer> {
         let links = self.store.lock().await.links().clone();
-        let Some(link) = links.get(&digest).filter(|l| l.limits.until >= self.today()) else {
+        let Some(link) = links.live(&digest, self.today()) else {
             return Ok(FrontAnswer::Refused(Refusal::NoSuchLink));
         };
         let state = match &link.state {
@@ -160,9 +163,7 @@ impl<C: Calendar> Core<C> {
     ) -> Result<FrontAnswer> {
         let mut store = self.store.lock().await;
         self.send(&mut store, digest).await?;
-        let Some(link) =
-            store.links().get(&digest).filter(|l| l.limits.until >= self.today()).cloned()
-        else {
+        let Some(link) = store.links().live(&digest, self.today()).cloned() else {
             return Ok(FrontAnswer::Refused(Refusal::NoSuchLink));
         };
         match link.state {
@@ -196,23 +197,18 @@ impl<C: Calendar> Core<C> {
 
     pub async fn admin(&self, ask: AdminAsk) -> AdminAnswer {
         let mut store = self.store.lock().await;
-        let changed = store.apply(|links| match ask {
-            AdminAsk::Issue { digest, limits } => links.issue(digest, Checked::new(limits)?),
-            AdminAsk::Revoke(id) => links.revoke(id),
-            AdminAsk::List => Ok(links.clone()),
-        });
-        changed.map_err(|e| format!("{e:#}"))?;
-        let state = |s: &State| match s {
-            State::Open => "open".to_string(),
-            State::Claiming(c) => format!("claiming {}, sent {} times", c.booking.start, c.sends),
-            State::Booked { booking, .. } => {
-                format!("booked {} by {}", booking.start, booking.booker.address)
+        let changed = match ask {
+            AdminAsk::Issue { digest, limits } => {
+                store.apply(|links| links.issue(digest, Checked::new(limits)?))
             }
+            AdminAsk::Revoke(id) => store.apply(|links| links.revoke(id)),
+            AdminAsk::List => Ok(()),
         };
+        changed.map_err(|e| format!("{e:#}"))?;
         Ok(store
             .links()
             .iter()
-            .map(|(d, l)| (d.id(), l.limits.clone().into_inner(), state(&l.state)))
+            .map(|(d, l)| (d.id(), l.limits.clone().into_inner(), l.state.to_string()))
             .collect())
     }
 }

@@ -11,7 +11,7 @@ use jiff::tz::TimeZone;
 use serde::{Deserialize, Deserializer};
 use text::{Address, text};
 
-/// Time kept free between a booking and any other event: 5 minutes at least.
+/// Time kept free between a booking and any other event, at least [`Gap::FLOOR`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Gap(SignedDuration);
 
@@ -51,7 +51,7 @@ fn window(s: &str) -> Option<Window> {
 text! {
     Gap(|s| {
         let gap = Gap(s.parse()?);
-        ensure!(gap >= Gap::FLOOR, "a gap under 5 minutes would allow back-to-back events");
+        ensure!(gap >= Gap::FLOOR, "a gap under {:#} would allow back-to-back events", Gap::FLOOR.0);
         Ok(gap)
     }, |g| g.0);
     Window(|s| {

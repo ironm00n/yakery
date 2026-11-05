@@ -29,7 +29,7 @@ use crate::Sockets;
 use crate::ask::{self, FrontAnswer, FrontAsk, Refusal};
 use crate::checked::Checked;
 use crate::link::{Form, MOST_NAME, MOST_NOTE, Token};
-use crate::pages::{self, Viewer};
+use crate::pages::{self, Problem, Viewer};
 
 const ANSWERING: usize = 8;
 /// The longest form the link page's fields allow: each character as up to 4 UTF-8 bytes, each
@@ -113,8 +113,8 @@ impl Front<'_> {
         let viewer = Viewer::new(query.get("tz").map(String::as_str));
         let n = query.get("week").and_then(|w| w.parse().ok()).unwrap_or(0);
         match self.ask(FrontAsk::Week(n)).await {
-            FrontAnswer::Week { monday, blocks, open } => {
-                reply(StatusCode::OK, pages::week(&viewer, n, monday, &blocks, &open), false)
+            FrontAnswer::Week { monday, blocks, open, later } => {
+                reply(StatusCode::OK, pages::week(&viewer, n, monday, &blocks, &open, later), false)
             }
             FrontAnswer::Refused(r) => self.refused(&viewer, r),
             _ => self.refused(&viewer, Refusal::Unavailable),
@@ -126,16 +126,20 @@ impl Front<'_> {
         &self,
         token: Token,
         query: &BTreeMap<String, String>,
-        retry: Option<(StatusCode, Form, String)>,
+        retry: Option<(Problem, Form)>,
     ) -> Response<Full<Bytes>> {
         let viewer = Viewer::new(query.get("tz").map(String::as_str));
         let chosen = query.get("slot").and_then(|s| s.parse().ok());
         let chosen = chosen.and_then(|s| Timestamp::from_second(s).ok());
-        let (status, form, problem) =
-            retry.unwrap_or((StatusCode::OK, Form::default(), String::new()));
+        let status = retry.as_ref().map_or(StatusCode::OK, |(problem, _)| match problem {
+            Problem::Field(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Problem::Taken => StatusCode::CONFLICT,
+        });
+        let (problem, form) = retry.unzip();
         match self.ask(FrontAsk::Link(token)).await {
             FrontAnswer::Link(view) => {
-                reply(status, pages::link(&viewer, &view, chosen, &form, &problem), true)
+                let form = form.unwrap_or_default();
+                reply(status, pages::link(&viewer, &view, chosen, &form, problem), true)
             }
             FrontAnswer::Refused(r) => self.refused(&viewer, r),
             _ => self.refused(&viewer, Refusal::Unavailable),
@@ -152,9 +156,8 @@ impl Front<'_> {
         };
         let booker = match Checked::new(form.clone()) {
             Ok(booker) => booker,
-            Err(problem) => {
-                let retry = (StatusCode::UNPROCESSABLE_ENTITY, form, problem.to_string());
-                return self.link(token, &fields, Some(retry)).await;
+            Err(field) => {
+                return self.link(token, &fields, Some((Problem::Field(field), form))).await;
             }
         };
         let by = Timestamp::now() + ask::CLAIMED_WITHIN;
@@ -166,8 +169,7 @@ impl Front<'_> {
             FrontAnswer::Refused(Refusal::SlotGone) => {
                 let zone =
                     fields.iter().filter(|(k, _)| *k == "tz").map(|(k, v)| (k.clone(), v.clone()));
-                let taken = "That time was just taken. Choose another.".to_string();
-                self.link(token, &zone.collect(), Some((StatusCode::CONFLICT, form, taken))).await
+                self.link(token, &zone.collect(), Some((Problem::Taken, form))).await
             }
             FrontAnswer::Refused(r) => self.refused(&viewer, r),
             _ => self.refused(&viewer, Refusal::Unavailable),

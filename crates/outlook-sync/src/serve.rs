@@ -16,6 +16,7 @@ use jiff::Timestamp;
 use serde::Deserialize;
 use tokio::net::TcpListener;
 
+use crate::policy::{Feed, Route};
 use crate::state::{self, Login};
 use crate::sync::{Sync, Wake};
 
@@ -49,16 +50,14 @@ struct Notices {
 
 impl Sync {
     async fn answer(&self, request: Request<Incoming>) -> Response<Full<Bytes>> {
-        let prefix = self.policy.public.split_once("://").map_or("", |(_, r)| r);
-        let prefix = prefix.find('/').map_or("", |at| &prefix[at..]);
-        let path = request.uri().path().strip_prefix(prefix).unwrap_or_default().to_string();
+        let route = request.uri().path().strip_prefix(self.policy.prefix()).and_then(Route::of);
         let query: Vec<(String, String)> =
             form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
                 .into_owned()
                 .collect();
         let field = |name: &str| query.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
-        match (request.method().clone(), path.as_str()) {
-            (Method::POST, "/notify" | "/lifecycle") => match field("validationToken") {
+        match (request.method().clone(), route) {
+            (Method::POST, Some(Route::Notices(feed))) => match field("validationToken") {
                 Some(token) if self.shared.validating.get() => {
                     reply(StatusCode::OK, "text/plain", token)
                 }
@@ -66,7 +65,6 @@ impl Sync {
                     reply(StatusCode::FORBIDDEN, "text/plain", "no subscription is being made")
                 }
                 None => {
-                    let lifecycle = path == "/lifecycle";
                     if let Ok(Ok(body)) = tokio::time::timeout(
                         WITHIN,
                         Limited::new(request.into_body(), MOST_BODY).collect(),
@@ -74,28 +72,28 @@ impl Sync {
                     .await
                         && let Ok(notices) = serde_json::from_slice::<Notices>(&body.to_bytes())
                     {
-                        self.noticed(notices, lifecycle);
+                        self.noticed(notices, feed);
                     }
                     reply(StatusCode::ACCEPTED, "text/plain", "")
                 }
             },
-            (Method::GET, "/callback") => {
+            (Method::GET, Some(Route::Callback)) => {
                 self.callback(field("state"), field("code"), field("error")).await
             }
             _ => reply(StatusCode::NOT_FOUND, "text/plain", "not found"),
         }
     }
 
-    fn noticed(&self, notices: Notices, lifecycle: bool) {
+    fn noticed(&self, notices: Notices, feed: Feed) {
         for notice in
             notices.value.iter().filter(|n| self.shared.ours(&n.subscription_id, &n.client_state))
         {
-            let wake = match (lifecycle, notice.lifecycle_event.as_deref()) {
-                (false, _) => Some(Wake::Changed),
-                (true, Some("reauthorizationRequired")) => Some(Wake::Reauthorize),
-                (true, Some("subscriptionRemoved")) => Some(Wake::Removed),
-                (true, Some("missed")) => Some(Wake::Missed),
-                (true, other) => {
+            let wake = match (feed, notice.lifecycle_event.as_deref()) {
+                (Feed::Changes, _) => Some(Wake::Changed),
+                (Feed::Lifecycle, Some("reauthorizationRequired")) => Some(Wake::Reauthorize),
+                (Feed::Lifecycle, Some("subscriptionRemoved")) => Some(Wake::Removed),
+                (Feed::Lifecycle, Some("missed")) => Some(Wake::Missed),
+                (Feed::Lifecycle, other) => {
                     yakery_log::warn!("a lifecycle event this sync doesn't know: {other:?}");
                     None
                 }
