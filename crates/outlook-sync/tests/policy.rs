@@ -29,3 +29,10 @@ fn a_public_prefix_is_https_a_host_and_a_path_with_no_trailing_slash() {
         assert!(public(bad).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn the_deployed_policy_parses() {
+    if let Some(deployed) = option_env!("OUTLOOK_SYNC_POLICY") {
+        serde_json::from_str::<Policy>(deployed).unwrap();
+    }
+}
