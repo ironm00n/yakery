@@ -249,6 +249,22 @@
         "type": "github"
       }
     },
+    "nixpkgs-node": {
+      "locked": {
+        "lastModified": 1793562840,
+        "narHash": "sha256-nklSgZtTzQ6IUouVSkcInjm3QcL4kJO79UYpAk3Oig4=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "98f569ca50f8c517ec9926f42fca43130ed22f46",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "staging-next",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "nixpkgs-stable": {
       "locked": {
         "lastModified": 1791662279,
@@ -448,6 +464,7 @@
         "nixos-hardware": "nixos-hardware",
         "nixpkgs": "nixpkgs_2",
         "nixpkgs-master": "nixpkgs-master",
+        "nixpkgs-node": "nixpkgs-node",
         "nixpkgs-stable": "nixpkgs-stable",
         "nixvim": "nixvim",
         "plasma-manager": "plasma-manager",
@@ -456,8 +473,7 @@
         "secrets": "secrets",
         "sops-nix": "sops-nix",
         "systems": "systems_2",
-        "treefmt-nix": "treefmt-nix",
-        "nixpkgs-node": "nixpkgs-node"
+        "treefmt-nix": "treefmt-nix"
       }
     },
     "secrets": {
@@ -466,11 +482,11 @@
         "systems": []
       },
       "locked": {
-        "lastModified": 1793236408,
-        "narHash": "sha256-N77UuOawMfCClCNwTxEmXfg4hCD4E44tfT3z/QXqxow=",
+        "lastModified": 1793898170,
+        "narHash": "sha256-CmieAIJPxhPqELZjx64xYfx9/VA8UFaJF7t3is9fGCk=",
         "ref": "refs/heads/master",
-        "rev": "823b14a04f89b4acb2be13a6ef4a5d91b0f8b014",
-        "revCount": 30,
+        "rev": "437545f18a059db8b3d41ca413c9e623ba7ec7a5",
+        "revCount": 32,
         "type": "git",
         "url": "ssh://git@github.com/ironm00n/secrets.git"
       },
@@ -605,22 +621,6 @@
       "original": {
         "owner": "pyproject-nix",
         "repo": "uv2nix",
-        "type": "github"
-      }
-    },
-    "nixpkgs-node": {
-      "locked": {
-        "lastModified": 1793562840,
-        "narHash": "sha256-nklSgZtTzQ6IUouVSkcInjm3QcL4kJO79UYpAk3Oig4=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "98f569ca50f8c517ec9926f42fca43130ed22f46",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "staging-next",
-        "repo": "nixpkgs",
         "type": "github"
       }
     }
