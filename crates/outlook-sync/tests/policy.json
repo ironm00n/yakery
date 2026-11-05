@@ -5,6 +5,8 @@
   "stalwart": "127.0.0.1:8080",
   "account": "calendar-feeds@example.test",
   "calendar": "/dav/cal/owen%40example.test/neu/",
+  "owner": "owen@example.test",
   "daysBack": 7,
-  "daysAhead": 63
+  "daysAhead": 63,
+  "write": true
 }

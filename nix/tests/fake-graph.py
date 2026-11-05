@@ -7,12 +7,14 @@ drives it on /test/: the calendar's events, and notifications and lifecycle even
 """
 
 import base64
+import datetime
 import hashlib
 import json
 import sys
 import threading
 import urllib.parse
 import urllib.request
+import zoneinfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from cryptography import x509
@@ -41,6 +43,12 @@ state = {
 def log(kind, **fields):
     with open(LOG, "a") as f:
         f.write(json.dumps({"kind": kind, **fields}) + "\n")
+
+
+def in_utc(when):
+    """A dateTimeTimeZone as Graph answers with no Prefer header, whatever zone it was written in."""
+    local = datetime.datetime.fromisoformat(when["dateTime"]).replace(tzinfo=zoneinfo.ZoneInfo(when["timeZone"]))
+    return {"dateTime": local.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": "UTC"}
 
 
 def b64url(data):
@@ -140,8 +148,43 @@ class Handler(BaseHTTPRequestHandler):
                 body["@odata.deltaLink"] = f"{GRAPH}/me/calendarView/delta?" + urllib.parse.urlencode({"$deltatoken": state["version"]})
         self.reply(200, body)
 
+    def writable(self):
+        ok = self.authorized() and "Calendars.ReadWrite" in state.get("scope", "")
+        if not ok and self.headers.get("Authorization") == f"Bearer {state['access']}":
+            self.reply(403, {"error": {"code": "ErrorAccessDenied", "message": "Calendars.ReadWrite"}})
+        return ok
+
+    def written(self, kind, id, event=None, sent=None):
+        with lock:
+            state["version"] += 1
+            if event is None:
+                state["events"].pop(id, None)
+                state["removed"][id] = state["version"]
+            else:
+                state["events"][id] = dict(event, start=in_utc(event["start"]), end=in_utc(event["end"]))
+                state["versions"][id] = state["version"]
+        log(kind, id=id, **({} if sent is None else {"subject": sent.get("subject"), "start": sent["start"]["dateTime"], "timeZone": sent["start"]["timeZone"], "transactionId": sent.get("transactionId")}))
+        # Graph notifies of a write as of any change, and not before answering it
+        threading.Timer(0.5, lambda: self.notify("notificationUrl", {"changeType": "updated", "resource": f"me/events/{id}"}, None, quiet=True)).start()
+
+    def do_DELETE(self):
+        url = urllib.parse.urlparse(self.path)
+        if url.path.startswith("/v1.0/me/events/") and self.writable():
+            id = urllib.parse.unquote(url.path.rsplit("/", 1)[1])
+            self.reply(204)
+            return self.written("delete", id)
+        self.reply(404, {"error": {"code": "NotFound", "message": url.path}})
+
     def do_PATCH(self):
         url = urllib.parse.urlparse(self.path)
+        if url.path.startswith("/v1.0/me/events/") and self.writable():
+            id = urllib.parse.unquote(url.path.rsplit("/", 1)[1])
+            if id not in state["events"]:
+                return self.reply(404, {"error": {"code": "ErrorItemNotFound", "message": id}})
+            sent = json.loads(self.body())
+            event = dict(state["events"][id], **sent)
+            self.reply(200, event)
+            return self.written("update", id, event, sent)
         sub = state["subscription"]
         if url.path.startswith("/v1.0/subscriptions/") and self.authorized():
             if not sub or url.path.rsplit("/", 1)[1] != sub["id"]:
@@ -159,6 +202,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.token(dict(urllib.parse.parse_qsl(raw.decode())))
         if url.path == "/v1.0/subscriptions" and self.authorized():
             return self.subscribe(json.loads(raw))
+        if url.path == "/v1.0/me/events" and self.writable():
+            body = json.loads(raw)
+            with lock:
+                made = [i for i, e in state["events"].items() if e.get("transactionId") == body.get("transactionId")]
+            if made:
+                return self.reply(201, state["events"][made[0]])
+            id = f"made-{state['version'] + 1}"
+            event = dict(body, id=id, isCancelled=False)
+            self.reply(201, event)
+            return self.written("create", id, event, body)
         if url.path.endswith("/reauthorize") and self.authorized():
             log("reauthorize")
             return self.reply(204)
@@ -189,6 +242,7 @@ class Handler(BaseHTTPRequestHandler):
                 log("token-refused", why="refresh")
                 return self.reply(400, {"error": "invalid_grant", "error_description": "refresh"})
             state["grants"] = state.get("grants", 0) + 1
+            state["scope"] = form.get("scope", "")
             n = state["grants"]
             state["access"], state["refresh"] = f"access-{n}", f"refresh-{n}"
             log("token", grant=grant, scope=form.get("scope"))
@@ -221,12 +275,13 @@ class Handler(BaseHTTPRequestHandler):
                 state["subscription"] = None
         self.reply(200, {"version": state["version"]})
 
-    def notify(self, url_key, item, client_state):
+    def notify(self, url_key, item, client_state, quiet=False):
         sub = state["subscription"]
         notice = dict(item, subscriptionId=sub["id"], clientState=client_state or sub["clientState"])
         status, _ = post(sub[url_key], {"value": [notice]})
         log("sent", url=url_key, status=status, item=item)
-        self.reply(200, {"status": status})
+        if not quiet:
+            self.reply(200, {"status": status})
 
     def log_message(self, *args):
         pass

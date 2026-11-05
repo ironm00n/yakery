@@ -18,8 +18,12 @@ pub struct Policy {
     /// The account the sync writes as, and the path of the calendar it mirrors into.
     pub account: String,
     pub calendar: String,
+    /// The address of the account holding the calendar, whose changes Stalwart pushes.
+    pub owner: String,
     pub days_back: i64,
     pub days_ahead: i64,
+    /// Whether edits made in the mirror go back to Outlook, which needs Calendars.ReadWrite.
+    pub write: bool,
 }
 
 #[cfg(not(test))]

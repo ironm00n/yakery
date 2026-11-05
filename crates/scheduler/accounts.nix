@@ -22,6 +22,8 @@
       "davCalQuery"
       "davCalPut"
       "davCalDelete"
+      # outlook-sync reads the owner's edits in its mirror as what changed since its last look
+      "davSyncCollection"
     ];
   };
 }

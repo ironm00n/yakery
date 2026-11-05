@@ -20,6 +20,7 @@ in
       type = lib.types.str;
       description = "The Stalwart address whose account holds the mirror, and whose NEU account signs in.";
     };
+    write = lib.mkEnableOption "the owner's edits in `${calendar}` sent back to NEU's Outlook, once NEU grants the app Calendars.ReadWrite";
   };
 
   config = lib.mkIf cfg.enable {
@@ -39,6 +40,7 @@ in
       account = address accounts.feed;
       appPassword = config.services.stalwart.appPasswords.${address accounts.feed}.file;
       calendar = my-lib.stalwart.calendarHref cfg.owner calendar;
+      inherit (cfg) owner write;
     };
 
     services.stalwart.calendars.${cfg.owner}.${calendar}.shares = {

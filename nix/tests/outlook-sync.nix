@@ -1,8 +1,12 @@
 # NEU's calendar mirrored into the owner's Stalwart account, on cx33-1's bundles, against a stand-in
 # for Entra and Graph at their real names: a sign-in through the callback, the subscription and
 # its validation, a full listing, a notified change, a forged notification ignored, a missed
-# notification made good by a fresh listing, and what the scheduler then counts as busy.
-{ pkgs }:
+# notification made good by a fresh listing, and what the scheduler then counts as busy. With
+# `write`, also the owner's edits in the mirror sent back: an update, a create and a delete.
+{
+  pkgs,
+  write ? false,
+}:
 let
   inherit (pkgs) lib;
   server = import ./scheduler-server.nix { inherit pkgs; };
@@ -17,7 +21,7 @@ let
   };
 in
 pkgs.testers.runNixOSTest {
-  name = "outlook-sync";
+  name = if write then "outlook-sync-write" else "outlook-sync";
 
   defaults.virtualisation.graphics = false;
 
@@ -31,6 +35,7 @@ pkgs.testers.runNixOSTest {
       bundles.outlook-sync = {
         enable = true;
         owner = "owen@${domain}";
+        inherit write;
       };
       services.nginx.virtualHosts = lib.genAttrs microsoft (_: {
         onlySSL = true;
@@ -44,14 +49,24 @@ pkgs.testers.runNixOSTest {
         environment.SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
         serviceConfig.StateDirectory = "fake-graph";
         script = ''
-          exec ${lib.getExe (pkgs.python3.withPackages (p: [ p.cryptography ]))} ${./fake-graph.py} \
+          exec ${
+            lib.getExe (
+              pkgs.python3.withPackages (p: [
+                p.cryptography
+                p.tzdata
+              ])
+            )
+          } ${./fake-graph.py} \
             /var/lib/outlook-sync/certificate.pem ${fake.log}
         '';
       };
     };
 
   testScript = server.python + ''
+    import hashlib
     import urllib.parse
+
+    WRITE = ${if write then "True" else "False"}
 
     start_all()
     wait_for_stalwart()
@@ -161,6 +176,65 @@ pkgs.testers.runNixOSTest {
         expect("validation.refused", status == "403", status)
         status = server.succeed("curl -s -o /dev/null -w '%{http_code}' 'https://${host}/neu/callback?state=x&code=y'")
         expect("callback.refused", status in ("403", "404"), status)
+
+    def mirror_file(id):
+        return hashlib.sha256(id.encode()).hexdigest() + ".ics"
+
+    def stamp(t):
+        return t.replace("-", "").replace(":", "")
+
+    def made_here(uid, local, *lines):
+        return "".join(l + "\r\n" for l in ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//test//EN", "BEGIN:VEVENT",
+            f"UID:{uid}", "DTSTAMP:20261101T000000Z", f"DTSTART;TZID={NY}:{stamp(local)}00", "DURATION:PT30M",
+            *lines, "END:VEVENT", "END:VCALENDAR"])
+
+    if WRITE:
+        with subtest("writing back: the sign-in asked for write, and an edited occurrence goes as an update"):
+            scope = fake_log("token")[0]["scope"]
+            expect("write.scope", "Calendars.ReadWrite" in scope, scope)
+            name = mirror_file("e1")
+            status, body = http(server, owen, "GET", NEU + name)
+            start = utc(f"{day(0)} 17:00")
+            edited = re.sub(r"DTSTART:\S+", f"DTSTART:{stamp(start)}", body)
+            edited = re.sub(r"DTEND:\S+", f"DTEND:{stamp(later(start, 60))}", edited)
+            status, _ = http(server, owen, "PUT", NEU + name, edited, "text/calendar")
+            expect("write.edit.put", status in (201, 204), status)
+            retry(lambda _: any(u["id"] == "e1" for u in fake_log("update")), timeout_seconds=60)
+            update = observe("write.update", [u for u in fake_log("update") if u["id"] == "e1"][-1])
+            expect("write.update.start", (update["start"], update["timeZone"]) == (start[:-1], "UTC"), update)
+            retry(lambda _: list(at(f"{day(0)} 17:00", 60)) in busy(), timeout_seconds=60)
+
+        with subtest("an event he makes goes as a create, and comes back as Outlook's copy"):
+            ics = made_here("mine-1", f"{day(5)}T09:00", "SUMMARY:Office hours")
+            status, _ = http(server, owen, "PUT", NEU + "mine.ics", ics, "text/calendar")
+            expect("write.create.put", status in (201, 204), status)
+            retry(lambda _: fake_log("create"), timeout_seconds=60)
+            made = observe("write.create", fake_log("create")[0])
+            expect("write.create.fields", (made["transactionId"], made["start"], made["timeZone"]) == ("mine", f"{day(5)}T09:00:00", NY), made)
+            retry(lambda _: NEU + "mine.ics" not in mirrored() and NEU + mirror_file(made["id"]) in mirrored(), timeout_seconds=60)
+
+        with subtest("deleting an occurrence deletes it in Outlook, and nothing echoes"):
+            status, _ = http(server, owen, "DELETE", NEU + mirror_file("e4"))
+            expect("write.delete.status", status in (200, 204), status)
+            retry(lambda _: any(d["id"] == "e4" for d in fake_log("delete")), timeout_seconds=60)
+            expect("write.no-echo", len([u for u in fake_log("update") if u["id"] == "e1"]) == 1, fake_log("update"))
+
+        with subtest("an edit of Outlook's event that can't go is overwritten by Outlook's version"):
+            name = mirror_file("e2")
+            _, body = http(server, owen, "GET", NEU + name)
+            floating = re.sub(r"DTSTART:(\d{8}T\d{6})Z", r"DTSTART:\1", body)
+            status, _ = http(server, owen, "PUT", NEU + name, floating, "text/calendar")
+            expect("write.floating.put", status in (201, 204), status)
+            retry(lambda _: re.search(r"DTSTART:\d{8}T\d{6}Z", http(server, owen, "GET", NEU + name)[1]), timeout_seconds=60)
+            expect("write.floating.unsent", not any(u["id"] == "e2" for u in fake_log("update")), fake_log("update"))
+
+        with subtest("a recurrence Graph has no pattern for stays in the mirror, unsent"):
+            odd = made_here("odd-1", f"{day(6)}T09:00", "SUMMARY:Odd", "RRULE:FREQ=HOURLY")
+            http(server, owen, "PUT", NEU + "odd.ics", odd, "text/calendar")
+            http(server, owen, "PUT", NEU + "later.ics", made_here("later-1", f"{day(6)}T11:00", "SUMMARY:Later"), "text/calendar")
+            retry(lambda _: any(c["transactionId"] == "later" for c in fake_log("create")), timeout_seconds=60)
+            expect("write.odd.unsent", not any(c["transactionId"] == "odd" for c in fake_log("create")), fake_log("create"))
+            expect("write.odd.kept", NEU + "odd.ics" in mirrored(), mirrored())
 
     with subtest("a restart keeps the subscription and the sign-in"):
         server.succeed("systemctl restart outlook-sync")

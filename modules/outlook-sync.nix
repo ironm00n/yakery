@@ -20,8 +20,10 @@ let
       stalwart
       account
       calendar
+      owner
       daysBack
       daysAhead
+      write
       ;
   };
   # every command runs as the service, on its state
@@ -61,6 +63,15 @@ in
       type = types.str;
       description = "The mirror calendar's CalDAV path on Stalwart.";
     };
+    owner = mkOption {
+      type = types.str;
+      description = "The address of the Stalwart account that holds the mirror.";
+    };
+    write = lib.mkEnableOption ''
+      sending the owner's edits in the mirror back to Outlook. The sign-in then asks for
+      Calendars.ReadWrite, which the tenant's admin may have to grant, and the sync listens to
+      Stalwart's push for changes in the owner's account
+    '';
     daysBack = mkOption {
       type = types.ints.positive;
       default = 7;
@@ -155,6 +166,8 @@ in
           "AF_INET6"
         ];
         UMask = "0077";
+        # the time zones the owner's calendar app names
+        Environment = "TZDIR=${pkgs.tzdata}/share/zoneinfo";
       };
     };
   };

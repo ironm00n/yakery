@@ -16,7 +16,14 @@ use crate::policy::Policy;
 use crate::state::{self, Subscription, Tokens};
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
-pub const SCOPE: &str = "openid offline_access https://graph.microsoft.com/Calendars.Read";
+/// What the sign-in asks for: writing back needs Calendars.ReadWrite, which an admin of the
+/// tenant may have to grant.
+pub fn scope(policy: &Policy) -> &'static str {
+    match policy.write {
+        true => "openid offline_access https://graph.microsoft.com/Calendars.ReadWrite",
+        false => "openid offline_access https://graph.microsoft.com/Calendars.Read",
+    }
+}
 /// Graph's longest lifetime for an Outlook event subscription is 10,080 minutes; this stays under it.
 const LIFETIME: i64 = 10_000;
 
@@ -48,6 +55,11 @@ pub enum Delta {
     Expired,
 }
 
+/// Why Graph won't take an edit of the owner's as it is.
+pub struct Refused(pub String);
+
+pub type Sent = std::result::Result<(), Refused>;
+
 impl Graph {
     pub fn new(policy: &'static Policy, credential: Credential, state: Dir) -> Result<Graph> {
         let client = Client::builder()
@@ -65,7 +77,7 @@ impl Graph {
             ("client_id", self.policy.client_id.as_str()),
             ("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
             ("client_assertion", assertion.as_str()),
-            ("scope", SCOPE),
+            ("scope", scope(self.policy)),
         ];
         fields.extend_from_slice(form);
         let reply = self.client.post(&audience).form(&fields).send().await.context("entra")?;
@@ -189,6 +201,34 @@ impl Graph {
         }
     }
 
+    /// A write of one event: an error when trying again may work, Refused when Graph won't take
+    /// this event as it is.
+    async fn write(&self, method: Method, url: &str, body: Option<Value>) -> Result<Sent> {
+        let (status, text) = self.call(method.clone(), url, body).await?;
+        match status.as_u16() {
+            200..300 => Ok(Ok(())),
+            400 | 404 | 409 | 422 => Ok(Err(Refused(format!("HTTP {status}: {}", refusal(&text))))),
+            _ => bail!("graph {method}: HTTP {status}: {}", refusal(&text)),
+        }
+    }
+
+    /// Creates the owner's new event; `transaction` makes a retried create the same event.
+    pub async fn create(&self, mut event: Value, transaction: &str) -> Result<Sent> {
+        event["transactionId"] = json!(transaction);
+        self.write(Method::POST, &format!("{GRAPH}/me/events"), Some(event)).await
+    }
+
+    pub async fn update(&self, id: &str, mut event: Value) -> Result<Sent> {
+        // an occurrence's series is Outlook's to change
+        event.as_object_mut().map(|e| e.remove("recurrence"));
+        self.write(Method::PATCH, &format!("{GRAPH}/me/events/{}", urlencode(id)), Some(event))
+            .await
+    }
+
+    pub async fn remove(&self, id: &str) -> Result<Sent> {
+        self.write(Method::DELETE, &format!("{GRAPH}/me/events/{}", urlencode(id)), None).await
+    }
+
     /// The first page of a fresh listing over `[from, to)`.
     pub fn listing(from: Timestamp, to: Timestamp) -> String {
         let mut query = form_urlencoded::Serializer::new(String::new());
@@ -215,6 +255,11 @@ impl Graph {
         let reply: Reply = serde_json::from_str(&text).context("graph delta: unreadable page")?;
         Ok(Delta::Page(Page { changes: reply.value, next: reply.next, delta: reply.delta }))
     }
+}
+
+/// A Graph id as one path segment: ids hold `/`, `+` and `=`.
+fn urlencode(id: &str) -> String {
+    form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>().replace('+', "%20")
 }
 
 /// An error reply's code and description, never a token-bearing body.

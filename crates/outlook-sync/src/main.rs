@@ -5,7 +5,9 @@ mod assertion;
 mod caldav;
 mod event;
 mod graph;
+mod local;
 mod policy;
+mod push;
 mod serve;
 mod state;
 mod sync;
@@ -84,9 +86,17 @@ async fn daemon(state: Dir, tokens: Dir, http: std::os::fd::OwnedFd) -> Result<(
     let credentials = PathBuf::from(
         std::env::var_os("CREDENTIALS_DIRECTORY").context("the app password, by LoadCredential")?,
     );
-    let mirror = caldav::Mirror::new(&POLICY, &credentials.join("app-password"))?;
+    let password = credentials.join("app-password");
+    let mirror = caldav::Mirror::new(&POLICY, &password)?;
     let graph = graph::Graph::new(&POLICY, credential(&state)?, tokens)?;
     let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
+    if POLICY.write {
+        tokio::task::spawn_local(push::listen(
+            &POLICY,
+            Box::leak(password.into_boxed_path()),
+            wake.clone(),
+        ));
+    }
     let subscription = state.load(state::SUBSCRIPTION)?;
     let shared = Rc::new(Shared {
         subscription: RefCell::new(subscription),
@@ -117,7 +127,7 @@ fn login(state: &Dir) -> Result<()> {
         ("response_type", "code"),
         ("redirect_uri", POLICY.redirect().as_str()),
         ("response_mode", "query"),
-        ("scope", graph::SCOPE),
+        ("scope", graph::scope(&POLICY)),
         ("state", login_state.expose()),
         ("code_challenge", challenge.as_str()),
         ("code_challenge_method", "S256"),

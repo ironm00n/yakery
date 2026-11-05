@@ -32,6 +32,22 @@ pub struct Delta {
     pub link: Option<String>,
 }
 
+/// What the sync last wrote to each mirror file: the occurrence's Graph id and the ETag Stalwart
+/// gave the write, so the owner's edits tell themselves apart from the sync's own; and the
+/// sync-collection token the last look at the mirror ended on.
+#[derive(Default, Serialize, Deserialize)]
+pub struct Written {
+    pub files: std::collections::BTreeMap<String, Copy>,
+    pub token: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Copy {
+    pub id: String,
+    pub etag: String,
+}
+
+pub const WRITTEN: &str = "written.json";
 pub const LOGIN: &str = "login.json";
 pub const TOKENS: &str = "tokens.json";
 pub const SUBSCRIPTION: &str = "subscription.json";

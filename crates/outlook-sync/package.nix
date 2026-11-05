@@ -1,6 +1,7 @@
 {
   lib,
   rustPlatform,
+  tzdata,
   policy,
 }:
 rustPlatform.buildRustPackage {
@@ -19,7 +20,11 @@ rustPlatform.buildRustPackage {
     "-p"
     "outlook-sync"
   ];
-  env.OUTLOOK_SYNC_POLICY = builtins.toJSON policy;
+  env = {
+    OUTLOOK_SYNC_POLICY = builtins.toJSON policy;
+    # the tests read the time zones calendar apps name
+    TZDIR = "${tzdata}/share/zoneinfo";
+  };
   meta = {
     description = "One Microsoft 365 calendar mirrored into one Stalwart calendar";
     mainProgram = "outlook-sync";
