@@ -1,7 +1,6 @@
 //! Stalwart's JMAP push, as the sync's account: the mirror's share makes the owner's account's
 //! state changes reachable.
 
-use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -9,28 +8,26 @@ use reqwest::Client;
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::caldav::Account;
 use crate::policy::Policy;
 use crate::sync::Wake;
 
 const AGAIN: Duration = Duration::from_secs(5);
 
-pub async fn listen(policy: &'static Policy, password: &Path, wake: UnboundedSender<Wake>) {
+pub async fn listen(policy: &'static Policy, account: &Account, wake: UnboundedSender<Wake>) {
     loop {
-        if let Err(e) = stream(policy, password, &wake).await {
+        if let Err(e) = stream(policy, account, &wake).await {
             yakery_log::warn!("stalwart push: {e:#}; listening again in {} s", AGAIN.as_secs());
         }
         tokio::time::sleep(AGAIN).await;
     }
 }
 
-async fn stream(policy: &Policy, password: &Path, wake: &UnboundedSender<Wake>) -> Result<()> {
-    let password = std::fs::read_to_string(password)?.trim().to_string();
+async fn stream(policy: &Policy, account: &Account, wake: &UnboundedSender<Wake>) -> Result<()> {
     let client = Client::new();
     let origin = format!("http://{}", policy.stalwart);
-    let session: Value = client
-        .get(format!("{origin}/jmap/session"))
-        .basic_auth(&policy.account, Some(&password))
-        .send()
+    let session: Value = account
+        .send(client.get(format!("{origin}/jmap/session")), "JMAP session")
         .await?
         .error_for_status()?
         .json()
@@ -40,12 +37,8 @@ async fn stream(policy: &Policy, password: &Path, wake: &UnboundedSender<Wake>) 
         .and_then(|accounts| accounts.iter().find(|(_, a)| a["name"] == policy.owner.as_str()))
         .map(|(id, _)| id.clone())
         .with_context(|| format!("{} isn't shared anything of {}", policy.account, policy.owner))?;
-    let mut reply = client
-        .get(format!("{origin}/jmap/eventsource/?types=CalendarEvent&closeafter=no&ping=60"))
-        .basic_auth(&policy.account, Some(&password))
-        .send()
-        .await?
-        .error_for_status()?;
+    let events = format!("{origin}/jmap/eventsource/?types=CalendarEvent&closeafter=no&ping=60");
+    let mut reply = account.send(client.get(events), "JMAP push").await?.error_for_status()?;
     // the mirror may have changed while no stream was open
     let _ = wake.send(Wake::Edited);
     let mut pending = String::new();

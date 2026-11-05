@@ -2,9 +2,9 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Display;
-use std::path::Path;
 
 use anyhow::{Context, Result};
+use private::{Dir, Secret};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode};
 
 const CALENDAR: &str = "text/calendar; charset=utf-8";
@@ -12,36 +12,55 @@ const CALENDAR: &str = "text/calendar; charset=utf-8";
 use crate::file::FileName;
 use crate::policy::Policy;
 
-pub struct Mirror {
-    client: Client,
-    url: String,
+const APP_PASSWORD: &str = "app-password";
+
+/// The account the sync signs in to Stalwart as, with the app password systemd passes in.
+pub struct Account {
     user: String,
-    password: String,
+    password: Secret,
 }
 
-impl Mirror {
-    pub fn new(policy: &Policy, password: &Path) -> Result<Mirror> {
-        let password =
-            std::fs::read_to_string(password).context("the app password")?.trim().to_string();
-        let client = Client::builder().timeout(std::time::Duration::from_secs(30)).build()?;
-        let url = format!("http://{}{}", policy.stalwart, policy.calendar);
-        Ok(Mirror { client, url, user: policy.account.clone(), password })
+impl Account {
+    pub fn read(policy: &Policy, credentials: &Dir) -> Result<Account> {
+        let bytes = credentials.read(APP_PASSWORD)?.context("no app-password credential")?;
+        let password = Secret::new(String::from_utf8(bytes).context("the app password")?.trim());
+        Ok(Account { user: policy.account.clone(), password })
     }
 
-    fn request(&self, method: Method, file: impl Display) -> RequestBuilder {
-        self.client
-            .request(method, format!("{}{file}", self.url))
-            .basic_auth(&self.user, Some(&self.password))
+    pub fn auth(&self, request: RequestBuilder) -> RequestBuilder {
+        request.basic_auth(&self.user, Some(self.password.expose()))
     }
 
     /// A 401 means the app password changed, so the process exits for systemd to start it with the new one.
-    async fn send(&self, request: RequestBuilder, what: &str) -> Result<Response> {
-        let reply = request.send().await.with_context(|| format!("stalwart {what}"))?;
+    pub async fn send(&self, request: RequestBuilder, what: &str) -> Result<Response> {
+        let reply = self.auth(request).send().await.with_context(|| format!("stalwart {what}"))?;
         if reply.status() == StatusCode::UNAUTHORIZED {
             yakery_log::warn!("{} was refused; exiting to read the app password again", self.user);
             std::process::exit(75);
         }
         Ok(reply)
+    }
+}
+
+pub struct Mirror {
+    client: Client,
+    url: String,
+    account: &'static Account,
+}
+
+impl Mirror {
+    pub fn new(policy: &Policy, account: &'static Account) -> Result<Mirror> {
+        let client = Client::builder().timeout(std::time::Duration::from_secs(30)).build()?;
+        let url = format!("http://{}{}", policy.stalwart, policy.calendar);
+        Ok(Mirror { client, url, account })
+    }
+
+    fn request(&self, method: Method, file: impl Display) -> RequestBuilder {
+        self.client.request(method, format!("{}{file}", self.url))
+    }
+
+    async fn send(&self, request: RequestBuilder, what: &str) -> Result<Response> {
+        self.account.send(request, what).await
     }
 
     /// The new ETag, or None when the file is no longer the version `over` names.

@@ -5,8 +5,8 @@ use serde_json::Value;
 use super::*;
 
 fn fixture() -> Credential {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    Credential::read(&dir.join("key.pem"), &dir.join("certificate.pem")).unwrap()
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    Credential::read(&Dir::open(&dir, &[]).unwrap()).unwrap()
 }
 
 fn decoded(part: &str) -> Value {

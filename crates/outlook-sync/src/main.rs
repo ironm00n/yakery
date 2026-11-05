@@ -51,10 +51,6 @@ fn state_dir() -> Result<Dir> {
     Dir::open(&path, &[])
 }
 
-fn credential(state: &Dir) -> Result<Credential> {
-    Credential::read(&state.path(state::KEY), &state.path(state::CERTIFICATE))
-}
-
 fn main() -> ExitCode {
     yakery_log::exit_code(run().map(|()| ExitCode::SUCCESS))
 }
@@ -65,7 +61,7 @@ fn run() -> Result<()> {
     let state = state_dir()?;
     match command {
         Command::Certificate => {
-            println!("{}", credential(&state)?.certificate);
+            println!("{}", Credential::read(&state)?.certificate);
             Ok(())
         }
         Command::Login => login(&state),
@@ -86,16 +82,13 @@ async fn daemon(state: Rc<Dir>, http: std::os::fd::OwnedFd) -> Result<()> {
     let credentials = PathBuf::from(
         std::env::var_os("CREDENTIALS_DIRECTORY").context("the app password, by LoadCredential")?,
     );
-    let password = credentials.join("app-password");
-    let mirror = caldav::Mirror::new(&POLICY, &password)?;
-    let graph = graph::Graph::new(&POLICY, credential(&state)?, state.clone())?;
+    let account: &'static caldav::Account =
+        Box::leak(Box::new(caldav::Account::read(&POLICY, &Dir::open(&credentials, &[])?)?));
+    let mirror = caldav::Mirror::new(&POLICY, account)?;
+    let graph = graph::Graph::new(&POLICY, Credential::read(&state)?, state.clone())?;
     let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
     if POLICY.write {
-        tokio::task::spawn_local(push::listen(
-            &POLICY,
-            Box::leak(password.into_boxed_path()),
-            wake.clone(),
-        ));
+        tokio::task::spawn_local(push::listen(&POLICY, account, wake.clone()));
     }
     let subscription = state.load(state::SUBSCRIPTION)?;
     let shared = Rc::new(Shared {

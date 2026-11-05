@@ -1,15 +1,16 @@
 //! The client assertion as Microsoft's certificate-credentials page gives it.
 
-use std::path::Path;
-
 use anyhow::{Context, Result};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jiff::Timestamp;
+use private::Dir;
 use ring::digest::{SHA256, digest};
 use ring::rand::SystemRandom;
 use ring::signature::{RSA_PSS_SHA256, RsaKeyPair};
 use serde_json::json;
+
+use crate::state;
 
 pub struct Credential {
     key: RsaKeyPair,
@@ -17,22 +18,23 @@ pub struct Credential {
     pub certificate: String,
 }
 
-fn pem(path: &Path, label: &str) -> Result<Vec<u8>> {
-    let text = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+fn pem(dir: &Dir, name: &str, label: &str) -> Result<Vec<u8>> {
+    let shown = || dir.path(name).display().to_string();
+    let text = dir.read(name)?.with_context(|| format!("{} is missing", shown()))?;
     let item = rustls_pemfile::read_one(&mut text.as_slice())?
-        .with_context(|| format!("no PEM in {}", path.display()))?;
+        .with_context(|| format!("no PEM in {}", shown()))?;
     Ok(match item {
         rustls_pemfile::Item::Pkcs8Key(key) => key.secret_pkcs8_der().to_vec(),
         rustls_pemfile::Item::X509Certificate(cert) => cert.to_vec(),
-        _ => anyhow::bail!("{} holds no {label}", path.display()),
+        _ => anyhow::bail!("{} holds no {label}", shown()),
     })
 }
 
 impl Credential {
-    pub fn read(key: &Path, certificate: &Path) -> Result<Credential> {
-        let key = RsaKeyPair::from_pkcs8(&pem(key, "PKCS#8 key")?)
+    pub fn read(state: &Dir) -> Result<Credential> {
+        let key = RsaKeyPair::from_pkcs8(&pem(state, state::KEY, "PKCS#8 key")?)
             .map_err(|e| anyhow::anyhow!("the key is not an RSA PKCS#8 key: {e}"))?;
-        let der = pem(certificate, "certificate")?;
+        let der = pem(state, state::CERTIFICATE, "certificate")?;
         let thumbprint = URL_SAFE_NO_PAD.encode(digest(&SHA256, &der));
         let certificate = base64::engine::general_purpose::STANDARD.encode(&der);
         Ok(Credential { key, thumbprint, certificate })
