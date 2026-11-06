@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use anyhow::Result;
 use jiff::Timestamp;
 use oidc::{Pkce, Returned};
@@ -35,6 +37,35 @@ pub fn take(dir: &Dir, returned: &Returned, now: Timestamp) -> Result<Result<Pkc
     dir.save(LOGIN, &Some(Login::Redeeming))?;
     Ok(Ok(pkce))
 }
+
+/// Ends the sign-in `take` recorded as redeeming with how `redeem` ends. The redeem runs as a task
+/// of its own, so a dropped connection doesn't cancel it: Entra may have taken the code already,
+/// and a code is redeemed only once (RFC 6749 §4.1.2).
+pub async fn finish(
+    dir: Rc<Dir>,
+    redeem: impl Future<Output = Result<(), String>> + 'static,
+) -> Result<(), String> {
+    let redeeming = tokio::task::spawn_local(async move {
+        let outcome = redeem.await;
+        if let Err(e) = dir.save(LOGIN, &Some(Login::Done(outcome.clone()))) {
+            yakery_log::warn!("recording the sign-in: {e:#}");
+        }
+        outcome
+    });
+    redeeming.await.unwrap_or_else(|e| Err(format!("the redeem stopped: {e}")))
+}
+
+/// Records as failed a sign-in a stopped daemon left redeeming: redeems run only in the daemon, so
+/// none is in flight as it starts.
+pub fn abandon(dir: &Dir) -> Result<()> {
+    if let Some(Login::Redeeming) = dir.load(LOGIN)? {
+        dir.save(LOGIN, &Some(Login::Done(Err(ABANDONED.into()))))?;
+    }
+    Ok(())
+}
+
+pub const ABANDONED: &str =
+    "the sync stopped while redeeming the sign-in; run `outlook-sync login`";
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Tokens {

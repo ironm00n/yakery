@@ -14,7 +14,7 @@ use serde::Deserialize;
 use tokio::net::TcpListener;
 
 use crate::policy::{Feed, Route};
-use crate::state::{self, Login, Untaken};
+use crate::state::{self, Untaken};
 use crate::sync::{Sync, Wake};
 
 /// Graph's notifications carry ids and metadata only; this is well past a batch of them.
@@ -46,7 +46,7 @@ struct Notices {
 }
 
 impl Sync {
-    async fn answer(&self, request: Request<Incoming>) -> Response<Full<Bytes>> {
+    async fn answer(&'static self, request: Request<Incoming>) -> Response<Full<Bytes>> {
         let route =
             request.uri().path().strip_prefix(self.policy.public.prefix()).and_then(Route::of);
         let query: Vec<(String, String)> =
@@ -102,7 +102,7 @@ impl Sync {
         }
     }
 
-    async fn callback(&self, returned: Returned) -> Response<Full<Bytes>> {
+    async fn callback(&'static self, returned: Returned) -> Response<Full<Bytes>> {
         let page = |status, text: &str| {
             let html = format!(
                 "<!doctype html><meta charset=utf-8><title>outlook-sync</title><p>{text}</p>"
@@ -135,28 +135,24 @@ impl Sync {
                 );
             }
         };
-        let outcome = match returned.code(&pkce) {
-            Ok(code) => self.graph.redeem(&code).await.map_err(|e| format!("{e:#}")),
-            Err(denied) => {
+        let outcome = state::finish(self.state.clone(), async move {
+            let code = returned.code(&pkce).map_err(|denied| {
                 let error = match denied {
                     Denied::Error { error, .. } => error,
                     Denied::Mismatched | Denied::Codeless => String::new(),
                 };
-                Err(format!("Microsoft answered without a code: {error}"))
-            }
-        };
-        let done = Login::Done(outcome.clone());
-        if let Err(e) = self.state.save(state::LOGIN, &Some(done)) {
-            yakery_log::warn!("recording the sign-in: {e:#}");
-        }
+                format!("Microsoft answered without a code: {error}")
+            })?;
+            self.graph.redeem(&code).await.map_err(|e| format!("{e:#}"))?;
+            let _ = self.shared.wake.send(Wake::SignedIn);
+            Ok(())
+        })
+        .await;
         match outcome {
-            Ok(()) => {
-                let _ = self.shared.wake.send(Wake::SignedIn);
-                page(
-                    StatusCode::OK,
-                    "Signed in. The calendar sync starts now, and this page can be closed.",
-                )
-            }
+            Ok(()) => page(
+                StatusCode::OK,
+                "Signed in. The calendar sync starts now, and this page can be closed.",
+            ),
             Err(e) => {
                 yakery_log::warn!("sign-in: {e}");
                 page(StatusCode::BAD_GATEWAY, "Signing in failed. The server's log says why.")

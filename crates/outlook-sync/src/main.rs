@@ -79,6 +79,7 @@ fn run() -> Result<()> {
 }
 
 async fn daemon(state: Rc<Dir>, http: std::os::fd::OwnedFd) -> Result<()> {
+    state::abandon(&state)?;
     let credentials = PathBuf::from(
         std::env::var_os("CREDENTIALS_DIRECTORY").context("the app password, by LoadCredential")?,
     );
