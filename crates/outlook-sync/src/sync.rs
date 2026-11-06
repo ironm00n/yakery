@@ -293,7 +293,7 @@ fn sort(changes: Vec<Change>, now: Timestamp) -> Result<(Vec<Put>, Vec<FileName>
     let (mut puts, mut gone) = (vec![], vec![]);
     for change in changes {
         match change {
-            Change::Removed { id, .. } => gone.push(FileName::of(&id)),
+            Change::Removed { id } => gone.push(FileName::of(&id)),
             Change::Present(event) => match event.ics(now)? {
                 Some(ics) => puts.push(Put { file: FileName::of(&event.id), id: event.id, ics }),
                 None => gone.push(FileName::of(&event.id)),

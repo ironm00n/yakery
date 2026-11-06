@@ -2,20 +2,31 @@ use anyhow::Result;
 use jiff::Timestamp;
 use jiff::civil::DateTime;
 use ring::digest::{SHA256, digest};
-use serde::Deserialize;
+use serde::de::Error;
+use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 
 use crate::file::FileName;
 use crate::ical::{self, escape, fold};
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug)]
 pub enum Change {
-    Removed {
-        id: String,
-        #[serde(rename = "@removed")]
-        _removed: serde_json::Value,
-    },
+    Removed { id: String },
     Present(Box<Event>),
+}
+
+/// Not `untagged`, whose error says only that no variant matched.
+impl<'de> Deserialize<'de> for Change {
+    fn deserialize<D: Deserializer<'de>>(item: D) -> Result<Change, D::Error> {
+        let item = Value::deserialize(item)?;
+        let id = item["id"].as_str().ok_or_else(|| D::Error::missing_field("id"))?.to_owned();
+        if item.get("@removed").is_some() {
+            return Ok(Change::Removed { id });
+        }
+        let event =
+            serde_json::from_value(item).map_err(|e| D::Error::custom(format!("{id}: {e}")))?;
+        Ok(Change::Present(event))
+    }
 }
 
 #[derive(Debug, Deserialize)]

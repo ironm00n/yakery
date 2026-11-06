@@ -79,7 +79,7 @@ fn cancelled_occurrences_and_removals_leave_the_mirror() {
     let Change::Present(cancelled) = change(timed(json!({"isCancelled": true}))) else { panic!() };
     assert!(cancelled.ics(now()).unwrap().is_none());
     let removed = change(json!({"id": "gone", "@removed": {"reason": "deleted"}}));
-    assert!(matches!(removed, Change::Removed { id, .. } if id == "gone"));
+    assert!(matches!(removed, Change::Removed { id } if id == "gone"));
 }
 
 #[test]
@@ -98,10 +98,12 @@ fn text_is_escaped_and_long_lines_fold_between_characters() {
 }
 
 #[test]
-fn a_time_outside_utc_is_refused_as_graph_sends_it() {
+fn a_time_outside_utc_is_refused_naming_the_occurrence_and_why() {
     let eastern =
         json!({"dateTime": "2026-11-05T15:00:00.0000000", "timeZone": "Eastern Standard Time"});
-    assert!(serde_json::from_value::<Change>(timed(json!({"start": eastern}))).is_err());
+    let refused = serde_json::from_value::<Change>(timed(json!({"start": eastern}))).unwrap_err();
+    let why = refused.to_string();
+    assert!(why.contains("AAMkAD=/x+y") && why.contains("Eastern Standard Time"), "{why}");
 }
 
 #[test]
