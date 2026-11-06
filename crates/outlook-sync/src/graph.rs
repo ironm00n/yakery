@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -8,6 +7,7 @@ use private::{Dir, Secret};
 use reqwest::{Client, Method, StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::sync::{Mutex, MutexGuard};
 
 use crate::event::Change;
 use crate::local::Owned;
@@ -32,7 +32,7 @@ pub struct Graph {
     endpoints: Endpoints,
     policy: &'static Policy,
     state: std::rc::Rc<Dir>,
-    access: RefCell<Option<Access>>,
+    access: Mutex<Option<Access>>,
 }
 
 pub struct Page {
@@ -70,11 +70,17 @@ impl Graph {
             id: policy.client_id.clone(),
             auth: Auth::Assertion(Box::new(assertion)),
         };
-        let (endpoints, access) = (policy.endpoints()?, RefCell::default());
+        let (endpoints, access) = (policy.endpoints()?, Mutex::default());
         Ok(Graph { client, entra, endpoints, policy, state, access })
     }
 
-    async fn grant(&self, grant: Grant<'_>) -> Result<Tokens> {
+    /// Takes the cache's guard so that grants run one at a time, and the refresh token saved last
+    /// comes from the grant made last.
+    async fn grant(
+        &self,
+        cache: &mut MutexGuard<'_, Option<Access>>,
+        grant: Grant<'_>,
+    ) -> Result<Tokens> {
         let scope = Some(scope(self.policy));
         let (at, sent) = (&self.endpoints.token, Timestamp::now().as_second());
         let form = grant.form(&self.entra, scope, at, sent)?;
@@ -82,7 +88,7 @@ impl Graph {
         let status = reply.status();
         let tokens = Tokens::read(status, &reply.bytes().await?, sent)
             .map_err(|failed| anyhow!("entra token: HTTP {status}: {}", said(&failed)))?;
-        *self.access.borrow_mut() = Some(tokens.access.clone());
+        **cache = Some(tokens.access.clone());
         if let Some(refresh) = &tokens.refresh {
             self.state.save(state::TOKENS, &state::Tokens { refresh: Some(refresh.clone()) })?;
         }
@@ -91,20 +97,20 @@ impl Graph {
 
     pub async fn redeem(&self, code: &Code<'_>) -> Result<()> {
         let redirect = self.policy.public.url(Route::Callback);
-        let tokens = self.grant(Grant::Code { code, redirect: &redirect }).await?;
+        let mut cache = self.access.lock().await;
+        let tokens = self.grant(&mut cache, Grant::Code { code, redirect: &redirect }).await?;
         anyhow::ensure!(tokens.refresh.is_some(), "entra granted no refresh token");
         Ok(())
     }
 
     async fn token(&self) -> Result<Secret> {
-        if let Some(access) = self.access.borrow().clone()
-            && access.fresh(Timestamp::now().as_second(), WITHIN)
-        {
-            return Ok(access.token);
+        let (mut cache, now) = (self.access.lock().await, Timestamp::now().as_second());
+        if let Some(access) = cache.as_ref().filter(|a| a.fresh(now, WITHIN)) {
+            return Ok(access.token.clone());
         }
         let state::Tokens { refresh } = self.state.load(state::TOKENS)?;
         let refresh = refresh.context("not signed in: run `outlook-sync login`")?;
-        Ok(self.grant(Grant::Refresh(&refresh)).await?.access.token)
+        Ok(self.grant(&mut cache, Grant::Refresh(&refresh)).await?.access.token)
     }
 
     async fn call(
@@ -122,7 +128,10 @@ impl Graph {
             let reply = request.send().await.with_context(|| format!("graph {method}"))?;
             let status = reply.status();
             if status == StatusCode::UNAUTHORIZED && attempt == 0 {
-                *self.access.borrow_mut() = None;
+                let mut cache = self.access.lock().await;
+                if cache.as_ref().is_some_and(|a| a.token == token) {
+                    *cache = None;
+                }
                 continue;
             }
             return Ok((status, reply.text().await?));
