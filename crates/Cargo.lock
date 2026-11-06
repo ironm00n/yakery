@@ -1157,6 +1157,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jmap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jni"
 version = "0.22.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,18 @@
+[package]
+name = "jmap"
+version = "0.1.0"
+description = "JMAP's wire format (RFC 8620, and the mail of RFC 8621): what to send a server, and what its answers say"
+edition.workspace = true
+rust-version.workspace = true
+autotests = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
