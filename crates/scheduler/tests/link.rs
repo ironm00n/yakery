@@ -135,3 +135,11 @@ fn revoking_and_expiring() {
     assert_eq!(links.expire("2026-11-29".parse().unwrap()).iter().count(), 2);
     assert_eq!(links.expire("2026-11-30".parse().unwrap()).iter().count(), 0);
 }
+
+#[test]
+fn a_notes_line_breaks_count_once_as_the_forms_maxlength_counts_them() {
+    let note = format!("{}\r\n{}", "n".repeat(1000), "n".repeat(999));
+    let form = Form { name: "Ada".into(), address: "ada@example.org".into(), note };
+    let booker = Checked::new(form).unwrap();
+    assert_eq!(booker.note, format!("{}\n{}", "n".repeat(1000), "n".repeat(999)));
+}

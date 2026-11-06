@@ -157,8 +157,8 @@ impl Check for Form {
     type Problem = Field;
 
     fn check(self) -> Result<Form, Field> {
-        let [name, address, note] =
-            [self.name, self.address, self.note].map(|s| s.trim().to_string());
+        let [name, address, note] = [self.name, self.address, self.note.replace("\r\n", "\n")]
+            .map(|s| s.trim().to_string());
         let lines = !note.chars().any(|c| c.is_control() && !"\r\n".contains(c));
         let fields = [
             (plain(&name, MOST_NAME), Field::Name),
