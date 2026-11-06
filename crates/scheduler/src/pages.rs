@@ -27,6 +27,8 @@ const STYLE: &str = "body{font:16px/1.4 system-ui,sans-serif;max-width:60rem;mar
 table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:.1rem .3rem;font-size:.8rem}\
 .busy{background:#c66;color:#fff}.closed{background:#eee}.slots a{display:inline-block;margin:.2rem}";
 
+pub const BEING_BOOKED: &str = "This link is being booked. Check back in a few minutes.";
+
 pub struct Viewer {
     pub zone: TimeZone,
     pub tz: Option<String>,
@@ -179,7 +181,7 @@ pub fn link(
         Shown::Booked(start) => {
             html! { p { "Booked for " (viewer.when(*start, view.duration)) "." } }
         }
-        Shown::Pending => html! { p { "This link is being booked. Try again in a minute." } },
+        Shown::Pending => html! { p { (BEING_BOOKED) } },
         Shown::Open(slots) if slots.is_empty() => {
             html! { p { "No times are free on this link any more." } }
         }

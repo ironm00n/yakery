@@ -174,11 +174,7 @@ impl Front<'_> {
                 "Too far ahead",
                 "That week is further out than this page shows.",
             ),
-            Refusal::Pending => (
-                StatusCode::ACCEPTED,
-                "Being booked",
-                "This link is being booked. Check back in a few minutes.",
-            ),
+            Refusal::Pending => (StatusCode::ACCEPTED, "Being booked", pages::BEING_BOOKED),
             Refusal::Used => (StatusCode::CONFLICT, "Already booked", "This link has been used."),
             Refusal::SlotGone => {
                 (StatusCode::CONFLICT, "Time taken", "That time is no longer free.")
