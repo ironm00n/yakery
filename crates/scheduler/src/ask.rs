@@ -12,7 +12,7 @@ use crate::link::{Booker, Digest, Issue, LinkId, Token};
 use crate::slots::Period;
 use crate::stalwart;
 
-/// The front's questions are a few hundred bytes.
+/// Well past the largest question, a booking with its note.
 const MOST_ASKED: u64 = 64 * 1024;
 pub const MOST_ANSWERED: u64 = 1024 * 1024;
 /// How long after the front asks the core may still claim a link for its booking: a question
