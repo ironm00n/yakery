@@ -45,6 +45,15 @@ fn a_form_posts_only_to_its_own_origin_and_never_guesses_an_answer() {
     );
 }
 
+#[test]
+fn a_form_ends_at_its_closing_tag() {
+    let outside = r#"<form action="/x"><input name="loginName"></form><input type="hidden" name="next" value="1">
+        <button formaction="/ui/login/device/allowed"></button><form action="/y"><input name="password"></form>"#;
+    rows!(|html| post("/ui/login/loginname", html);
+        outside => "/x loginName=agent@example.org";
+    );
+}
+
 /// Pages recorded from ZITADEL 4.19.4's Login V1 in the VM test, at the paths they were served from.
 #[test]
 fn the_walk_answers_zitadels_own_login_pages() {

@@ -294,7 +294,7 @@ impl Form {
     pub fn read(html: &str) -> Result<Form> {
         let mut error = None;
         let (mut elements, mut forms) = (vec![], 0);
-        let collect = element!("form, input, button", |el| {
+        let collect = element!("form, form input, form button", |el| {
             let attr = |name: &str| el.get_attribute(name).unwrap_or_default();
             let tag = el.tag_name();
             forms += usize::from(tag == "form");
