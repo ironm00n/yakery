@@ -34,6 +34,7 @@ yakery-log.workspace = true
 yakery-serve.workspace = true
 
 [dev-dependencies]
+http-body-util = { workspace = true, features = ["channel"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

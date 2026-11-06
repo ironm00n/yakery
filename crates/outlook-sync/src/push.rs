@@ -15,6 +15,8 @@ use crate::sync::Wake;
 const AGAIN: Duration = Duration::from_secs(5);
 /// Honored as asked: RFC 8620 7.3 lets a server clamp `ping` only outside 30 to 300 s.
 const PING: Duration = Duration::from_secs(60);
+/// How long Stalwart may leave a request waiting: for its response, counted from the request, and
+/// for each read of the body after.
 const SILENT: Duration = Duration::from_secs(3 * PING.as_secs());
 
 pub async fn listen(policy: &'static Policy, account: &Account, wake: UnboundedSender<Wake>) {
@@ -27,14 +29,11 @@ pub async fn listen(policy: &'static Policy, account: &Account, wake: UnboundedS
 }
 
 async fn stream(policy: &Policy, account: &Account, wake: &UnboundedSender<Wake>) -> Result<()> {
-    let client = Client::new();
+    let client = Client::builder().read_timeout(SILENT).build()?;
     let origin = format!("http://{}", policy.stalwart);
-    let session: Session = account
-        .send(client.get(format!("{origin}/jmap/session")), "JMAP session")
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let session =
+        account.send(client.get(format!("{origin}/jmap/session")), "JMAP session").await?;
+    let session: Session = session.error_for_status()?.json().await.context("the JMAP session")?;
     let owner = session
         .account(&policy.owner)
         .with_context(|| format!("{} isn't shared anything of {}", policy.account, policy.owner))?
@@ -46,18 +45,12 @@ async fn stream(policy: &Policy, account: &Account, wake: &UnboundedSender<Wake>
     // the mirror may have changed while no stream was open
     let _ = wake.send(Wake::Edited);
     let mut events = Events::default();
-    while let Some(chunk) = heard(reply.chunk()).await? {
+    while let Some(chunk) = reply.chunk().await.context("the JMAP push stream")? {
         for _ in events.push(&chunk).iter().filter(|e| changed(e, &owner)) {
             let _ = wake.send(Wake::Edited);
         }
     }
     anyhow::bail!("the stream ended")
-}
-
-/// `next`, unless the stream is silent for longer than its pings allow.
-async fn heard<T>(next: impl Future<Output = reqwest::Result<T>>) -> Result<T> {
-    let heard = tokio::time::timeout(SILENT, next).await;
-    Ok(heard.with_context(|| format!("no event or ping for {} s", SILENT.as_secs()))??)
 }
 
 fn changed(event: &str, owner: &str) -> bool {
