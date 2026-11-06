@@ -59,7 +59,8 @@ fn leading(subject: &str) -> Option<(&str, &str, &str)> {
         Some('.') => next.next().is_some_and(char::is_alphabetic),
         c => c.is_some_and(char::is_alphanumeric),
     };
-    (word.eq_ignore_ascii_case("urgent") && !runs_on).then(|| (&lead[..lead.len() - s.len()], word, rest))
+    (word.eq_ignore_ascii_case("urgent") && !runs_on)
+        .then(|| (&lead[..lead.len() - s.len()], word, rest))
 }
 
 /// Whether a subject opens with an URGENT tag: the word in capitals (`URGENT:`, `_URGENT_ …`, `URGENT.5%`), or any
@@ -70,9 +71,11 @@ fn tagged(subject: &str) -> bool {
     let Some((before, word, rest)) = leading(subject) else { return false };
     let spaced = rest.trim_start();
     // past spaces and symbols like 🚨 only, and not a `*` or `_` that opens a word (`*important*`, `_or not_`)
-    let closed = rest.trim_start_matches(|c: char| c.is_whitespace() || !(c.is_ascii() || c.is_alphanumeric()));
+    let closed = rest
+        .trim_start_matches(|c: char| c.is_whitespace() || !(c.is_ascii() || c.is_alphanumeric()));
     let closes = closed.starts_with(CLOSERS) && !closed[1..].starts_with(char::is_alphanumeric);
-    let bracketed = before.contains(['[', '(', '*', '_']) && (closes || rest.starts_with([',', '/', '?']));
+    let bracketed =
+        before.contains(['[', '(', '*', '_']) && (closes || rest.starts_with([',', '/', '?']));
     word == "URGENT"
         || bracketed
         || rest.starts_with('!')

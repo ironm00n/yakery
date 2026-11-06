@@ -132,7 +132,9 @@ fn an_urgent_subject_is_the_news_as_written() {
         )
     };
     let again = |news: &str| {
-        format!("error: \"{news}\" says urgent: --urgent puts URGENT at the start itself, so give only the news")
+        format!(
+            "error: \"{news}\" says urgent: --urgent puts URGENT at the start itself, so give only the news"
+        )
     };
     rows!(subject;
         LOST, &format!("  {LOST} ") => format!("URGENT: {LOST}");
@@ -212,9 +214,7 @@ async fn an_urgent_send_goes_out_as_checked_with_dispatch_copied() {
     ]);
     let (_wire, server, mail) = mail(&dir, stalwart).await;
     let parts = ["--done", "moved them", "--change", "nothing", "--topic", "pool", "--urgent"];
-    let args = parsed(
-        &[&parts[..], &["--subject", LOST, "--broke", BROKE]].concat(),
-    );
+    let args = parsed(&[&parts[..], &["--subject", LOST, "--broke", BROKE]].concat());
     send::send(&args.unwrap(), async { mail }, "\n  the log\n".into()).await.unwrap();
     let server = server.borrow();
     let [draft] = &server.emails[..] else { panic!("{:?}", server.emails) };
