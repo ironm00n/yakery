@@ -3,6 +3,7 @@
 
 use std::process::ExitCode;
 
+use ::jmap::{Queried, Set};
 use invitation::{At, Details, Invitation, Length, Person, Zone, address, mailto};
 use jiff::{
     Span, SpanRelativeTo, Timestamp,
@@ -15,33 +16,34 @@ use super::{send::sender, succeed};
 use crate::{
     TIME_ZONE,
     address::Topic,
-    jmap::{Call, wire},
-    mail::{Answer, Mail},
+    jmap::Call,
+    mail::{Mail, SetExt},
     policy::{Login, Recipients},
     prelude::*,
 };
 
-wire! {
-    views under Calendars (default) {
-        Calendar in "Calendar/get" { id: String = "id", default: bool = "isDefault" }
-        Event in "CalendarEvent/get" {
+::jmap::view! {
+    under crate::jmap::CALENDARS {
+        Calendar in "Calendar/get" (default) { id: String = "id", default: bool = "isDefault" }
+        Event in "CalendarEvent/get" (default) {
             id: String = "id", title: String = "title", start: String = "start", zone: String = "timeZone",
             duration: String = "duration",
             organizer: String = "organizerCalendarAddress",
             participants: HashMap<String, Participant> = "participants",
         }
     }
-    objects {
-        Participant {
-            address: String = "calendarAddress", answer: String = "participationStatus",
-            roles: HashMap<String, bool> = "roles",
-        }
+}
+
+::jmap::object! {
+    Participant {
+        address: String = "calendarAddress", answer: String = "participationStatus",
+        roles: HashMap<String, bool> = "roles",
     }
 }
 
-const CALENDARS: Call = Call::calendars("Calendar/set", None);
-const EVENTS: Call = Call::calendars("CalendarEvent/set", None);
-const FIND: Call = Call::calendars("CalendarEvent/query", None);
+const CALENDARS: Call<Set> = Call::calendars("Calendar/set", None);
+const EVENTS: Call<Set> = Call::calendars("CalendarEvent/set", None);
+const FIND: Call<Queried> = Call::calendars("CalendarEvent/query", None);
 
 #[derive(clap::Subcommand)]
 pub enum Args {
@@ -272,7 +274,7 @@ pub async fn invite(mail: &Mail, args: Args, now: Timestamp) -> Result<String> {
     }
 }
 
-async fn set(mail: &Mail, mut args: Value) -> Result<Answer> {
+async fn set(mail: &Mail, mut args: Value) -> Result<Set> {
     args["sendSchedulingMessages"] = json!(true);
     let answer = mail.call(EVENTS, args).await?;
     answer.taken()?;

@@ -19,6 +19,7 @@ comrak.workspace = true
 http-body.workspace = true
 invitation.workspace = true
 jiff.workspace = true
+jmap.workspace = true
 libc.workspace = true
 lol_html.workspace = true
 http.workspace = true

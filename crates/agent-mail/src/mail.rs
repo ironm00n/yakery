@@ -1,12 +1,15 @@
 use std::{cell::RefCell, fs::File, ops::ControlFlow};
 
+use ::jmap::{
+    Changed, Event, Events, Failed, Got, Limits, Queried, Request, Session, Set, Urls, View,
+};
 use private::{Secret, random::below};
 use reqwest::{Method, Response, header};
 use text::Address;
 
 use crate::{
     auth::Auth,
-    jmap::{CORE, Call, Cap, View, jmap_id, keywords, wire},
+    jmap::{Call, Cap, MAIL, jmap_id, keywords},
     policy::Login,
     prelude::*,
     store::Config,
@@ -27,8 +30,10 @@ pub struct Page {
     pub first: bool,
 }
 
-wire! {
-    views under Mail {
+pub use ::jmap::mail::Status;
+
+::jmap::view! {
+    under MAIL {
         Email in "Email/get" {
             id: String = "id", thread: String = "threadId", received: String = "receivedAt",
             from: Vec<Addr> = "from", to: Vec<Addr> = "to", cc: Vec<Addr> = "cc",
@@ -50,36 +55,23 @@ wire! {
             delivery: Option<HashMap<String, Status>> = "deliveryStatus",
         }
     }
-    objects {
-        Addr { email: String = "email" }
-        Part {
-            blob: String = "blobId", size: usize = "size", name: String = "name",
-            kind: String = "type", part: String = "partId", parts: Vec<Part> = "subParts",
-        }
-        Text { value: String = "value", truncated: bool = "isTruncated" }
-        Status { reply: String = "smtpReply", delivered: String = "delivered" }
-        Session {
-            api: String = "apiUrl", download: String = "downloadUrl", upload: String = "uploadUrl",
-            events: String = "eventSourceUrl", username: String = "username",
-            accounts: HashMap<String, String> = "primaryAccounts",
-            capabilities: HashMap<String, Value> = "capabilities",
-        }
-        Answer {
-            ids: Vec<String> = "ids", list: Vec<Value> = "list", more: bool = "hasMoreChanges",
-            state: String = "state", old_state: String = "oldState", new_state: String = "newState",
-            created: Value = "created", not_created: Map<String, Value> = "notCreated",
-            updated: Value = "updated", not_updated: Map<String, Value> = "notUpdated",
-            not_destroyed: Map<String, Value> = "notDestroyed", limit: Option<u64> = "limit",
-        }
-    }
 }
 
-pub const QUERY: Call = Call::mail("Email/query", Some("anchorNotFound"));
-pub const CHANGES: Call = Call::mail("Email/changes", Some("cannotCalculateChanges"));
-pub const SET: Call = Call::mail("Email/set", Some("stateMismatch"));
-pub const IMPORT: Call = Call::mail("Email/import", None);
-pub const SUBMIT: Call = Call::mail("EmailSubmission/set", None);
-pub const SUBMISSIONS: Call = Call::mail("EmailSubmission/query", None);
+::jmap::object! {
+    Addr { email: String = "email" }
+    Part {
+        blob: String = "blobId", size: usize = "size", name: String = "name",
+        kind: String = "type", part: String = "partId", parts: Vec<Part> = "subParts",
+    }
+    Text { value: String = "value", truncated: bool = "isTruncated" }
+}
+
+pub const QUERY: Call<Queried> = Call::mail("Email/query", Some("anchorNotFound"));
+pub const CHANGES: Call<Changed> = Call::mail("Email/changes", Some("cannotCalculateChanges"));
+pub const SET: Call<Set> = Call::mail("Email/set", Some("stateMismatch"));
+pub const IMPORT: Call<Set> = Call::mail("Email/import", None);
+pub const SUBMIT: Call<Set> = Call::mail("EmailSubmission/set", None);
+pub const SUBMISSIONS: Call<Queried> = Call::mail("EmailSubmission/query", None);
 
 // `$agentmail` marks the Sent copy of what agent-mail sends, so answering from Sent, meant for other tools, skips it.
 keywords! {
@@ -87,18 +79,26 @@ keywords! {
     AgentMail = "$agentmail", Draft = "$draft",
 }
 
-impl Answer {
-    pub fn id(&self, key: &str) -> Result<&str> {
+/// What Stalwart took of a /set.
+pub trait SetExt {
+    /// The id of what it created under `key`.
+    fn id(&self, key: &str) -> Result<&str>;
+    /// Ok once it took every update and destroy.
+    fn taken(&self) -> Result<()>;
+}
+
+impl SetExt for Set {
+    fn id(&self, key: &str) -> Result<&str> {
         let refused = || {
             format!(
                 "stalwart did not create it: {}",
                 self.not_created.get(key).unwrap_or(&Value::Null)
             )
         };
-        self.created[key]["id"].as_str().with_context(refused)
+        self.created.get(key).and_then(|c| c["id"].as_str()).with_context(refused)
     }
 
-    pub fn taken(&self) -> Result<()> {
+    fn taken(&self) -> Result<()> {
         ensure!(
             self.not_updated.is_empty() && self.not_destroyed.is_empty(),
             "stalwart refused {}",
@@ -152,9 +152,7 @@ const PING: Duration = Duration::from_secs(30);
 const SILENCE: Duration = Duration::from_secs(PING.as_secs() + 5);
 
 pub fn fill(template: &str, values: &[(&str, &str)]) -> Result<Pinned> {
-    let fill =
-        |url: String, (name, value): &(&str, &str)| url.replace(&format!("{{{name}}}"), value);
-    Origin::Mail.check(&values.iter().fold(template.to_owned(), fill))
+    Origin::Mail.check(&::jmap::fill(template, values))
 }
 
 pub fn check_account(username: &str, login: &Login) -> Result<()> {
@@ -224,12 +222,12 @@ impl Conn {
 
 pub struct Mail {
     pub conn: Conn,
+    /// Read for the primary account of each capability: mail's at open, and the others when first used, so a bad one
+    /// breaks only what uses it.
     session: Session,
+    urls: Urls,
     api: Pinned,
-    /// The primary account of each capability the session names, as it names it: mail's, checked at open, and the
-    /// others checked when first used, so a bad one breaks only what uses it.
-    accounts: HashMap<Cap, String>,
-    limits: [usize; 3],
+    limits: Limits,
     mailboxes: HashMap<String, String>,
 }
 
@@ -245,28 +243,18 @@ impl Mail {
     pub async fn over(conn: Conn) -> Result<Mail> {
         let session = conn.session().await?;
         let off = "the JMAP session names a URL off the mail origin";
-        for url in [&session.upload, &session.download, &session.events] {
-            Origin::Mail.check(url).context(off)?;
-        }
-        let api = Origin::Mail.check(&session.api).context(off)?;
+        let urls = session.checked(|url| Origin::Mail.check(url).map(drop)).context(off)?;
+        let api = Origin::Mail.check(&urls.api).context(off)?;
         check_account(&session.username, &conn.auth.login)?;
-        let accounts: HashMap<Cap, String> = (Cap::ALL.iter())
-            .filter_map(|c| Some((*c, session.accounts.get(c.account())?.clone())))
-            .collect();
-        jmap_id(accounts.get(&Cap::Mail).context("no mail account")?)?;
-        let core = session.capabilities.get(CORE).cloned().unwrap_or_default();
-        let limits = ["maxObjectsInGet", "maxObjectsInSet", "maxCallsInRequest"]
-            .map(|n| core[n].as_u64().map_or(100, |n| n as usize).max(1));
-        let mut mail = Mail { conn, session, api, accounts, limits, mailboxes: HashMap::new() };
+        session.primary(MAIL.account)?;
+        let limits = session.limits();
+        let mut mail = Mail { conn, session, urls, api, limits, mailboxes: HashMap::new() };
         mail.mailboxes = mail.all::<Mailbox>().await?.into_iter().map(|m| (m.role, m.id)).collect();
         Ok(mail)
     }
 
     fn account(&self, cap: Cap) -> Result<&str> {
-        let account = self.accounts.get(&cap);
-        jmap_id(
-            account.with_context(|| format!("the JMAP session names no {} account", cap.name()))?,
-        )
+        self.session.primary(cap.account)
     }
 
     pub fn login(&self) -> &Login {
@@ -282,81 +270,77 @@ impl Mail {
         self.conn.session().await.map(drop)
     }
 
-    pub async fn call(&self, call: Call, args: Value) -> Result<Answer> {
+    pub async fn call<T: DeserializeOwned>(&self, call: Call<T>, args: Value) -> Result<T> {
         let name = call.0;
         let answer = self.answer(false, call, args).await?;
         answer.with_context(|| format!("stalwart answered {name} with an error"))
     }
 
-    pub async fn answer(&self, locked: bool, call: Call, args: Value) -> Result<Option<Answer>> {
+    pub async fn answer<T: DeserializeOwned>(
+        &self,
+        locked: bool,
+        call: Call<T>,
+        args: Value,
+    ) -> Result<Option<T>> {
         self.answers(locked, &[(call, args)]).await?.remove(0)
     }
 
-    async fn answers(
+    async fn answers<T: DeserializeOwned>(
         &self,
         locked: bool,
-        calls: &[(Call, Value)],
-    ) -> Result<Vec<Result<Option<Answer>>>> {
-        let caps = Cap::ALL.iter().copied().filter(|c| calls.iter().any(|(call, _)| call.2 == *c));
-        let using: Vec<&str> =
-            [CORE].into_iter().chain(caps.flat_map(Cap::using).copied()).collect();
-        let method = |(n, (call, args)): (usize, &(Call, Value))| -> Result<Value> {
-            let mut args = args.clone();
-            args["accountId"] = json!(self.account(call.2)?);
-            Ok(json!([call.0, args, n.to_string()]))
-        };
-        let methods: Vec<Value> = calls.iter().enumerate().map(method).collect::<Result<_>>()?;
-        let body = json!({ "using": using, "methodCalls": methods });
-        let response: Value = self
+        calls: &[(Call<T>, Value)],
+    ) -> Result<Vec<Result<Option<T>>>> {
+        let mut using = vec![::jmap::CORE];
+        for &urn in calls.iter().flat_map(|(call, _)| call.2.using) {
+            if !using.contains(&urn) {
+                using.push(urn);
+            }
+        }
+        let mut request = Request::new(&using);
+        let sent = (calls.iter())
+            .map(|(call, args)| {
+                let mut args = args.clone();
+                args["accountId"] = json!(self.account(call.2)?);
+                Ok((call, request.call(call.0, args)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let response: ::jmap::Response = self
             .conn
             .retry(locked, async |t| {
-                let post = |r: reqwest::RequestBuilder| r.timeout(TIMEOUT).json(&body);
+                let post = |r: reqwest::RequestBuilder| r.timeout(TIMEOUT).json(&request);
                 Ok(self.conn.web.fetch(Method::POST, &self.api, &t, post).await?.json().await?)
             })
             .await?;
-        let replies = response["methodResponses"].as_array().cloned().unwrap_or_default();
-        let read = |(n, (Call(name, tolerated, _), _)): (usize, &(Call, Value))| {
-            let reply =
-                replies.get(n).filter(|r| r[2].as_str().and_then(|i| i.parse().ok()) == Some(n));
-            match reply.map(|r| (r[0].as_str(), r[1]["type"].as_str(), &r[1])) {
-                Some((Some("error"), kind, _)) if kind.is_some() && kind == *tolerated => Ok(None),
-                // A method answered with an error made no change (RFC 8620 §3.6.2).
-                Some((Some("error"), kind, _)) => Err(Failure::Unprocessed
-                    .with(format!("stalwart refused {name}: {}", kind.unwrap_or_default()))),
-                Some((Some(_), _, answer)) => Ok(Some(
-                    serde_json::from_value(answer.clone())
-                        .with_context(|| format!("stalwart's {name} reply"))?,
-                )),
-                _ => bail!("stalwart sent no reply to {name}"),
+        let read = |(call, id): (&Call<T>, ::jmap::Call)| match response.answer(id) {
+            Ok(answer) => Ok(Some(answer)),
+            Err(Failed::Refused(e)) if Some(e.kind.as_str()) == call.1 => Ok(None),
+            // A method answered with an error made no change (RFC 8620 §3.6.2).
+            Err(Failed::Refused(e)) => {
+                Err(Failure::Unprocessed.with(format!("stalwart refused {}: {}", call.0, e.kind)))
             }
+            Err(Failed::Unanswered) => bail!("stalwart sent no reply to {}", call.0),
+            Err(Failed::Unreadable(e)) => Err(e).context(format!("stalwart's {} reply", call.0)),
         };
-        Ok(calls.iter().enumerate().map(read).collect())
+        Ok(sent.into_iter().map(read).collect())
     }
 
-    pub async fn set(&self, locked: bool, args: Value) -> Result<Option<Answer>> {
+    pub async fn set(&self, locked: bool, args: Value) -> Result<Option<Set>> {
         let Some(answer) = self.answer(locked, SET, args).await? else { return Ok(None) };
         answer.taken()?;
         Ok(Some(answer))
     }
 
-    async fn got<V: View>(&self, locked: bool, ids: Value) -> Result<(String, Vec<V>)> {
-        let mut args = json!({ "ids": ids, "properties": V::PROPERTIES });
-        if let Some((bodies, bytes)) = V::VALUES {
-            (args[bodies], args["maxBodyValueBytes"]) = (json!(true), json!(bytes));
-        }
-        let answer =
-            self.answer(locked, Call(V::GET, None, V::CAP), args).await?.context(V::GET)?;
-        let list = serde_json::from_value(Value::Array(answer.list));
-        Ok((answer.state, list.with_context(|| format!("stalwart's {}", V::GET))?))
+    async fn got<V: View>(&self, locked: bool, ids: Value) -> Result<Got<V>> {
+        self.answer(locked, Call::new(V::GET, None, V::CAP), V::args(ids)).await?.context(V::GET)
     }
 
     pub async fn get<V: View>(&self, ids: &[impl Serialize]) -> Result<Vec<V>> {
         let parses = V::PROPERTIES.iter().any(|p| PARSED.contains(p));
         let mut found = vec![];
         for chunk in
-            ids.chunks(if parses { PARSED_PER_GET.min(self.limits[0]) } else { self.limits[0] })
+            ids.chunks(if parses { PARSED_PER_GET.min(self.limits.get) } else { self.limits.get })
         {
-            found.extend(self.got(false, json!(chunk)).await?.1);
+            found.extend(self.got(false, json!(chunk)).await?.list);
         }
         Ok(found)
     }
@@ -364,9 +348,9 @@ impl Mail {
     /// Every object of `V`, from a get with no ids. Past the server's get limit Stalwart cuts such a reply short, where
     /// RFC 8620 §5.1 asks for requestTooLarge, so a reply that fills the limit is refused.
     pub async fn all<V: View>(&self) -> Result<Vec<V>> {
-        let all = self.got(false, Value::Null).await?.1;
+        let all = self.got(false, Value::Null).await?.list;
         ensure!(
-            all.len() < self.limits[0],
+            all.len() < self.limits.get,
             "stalwart answered {} with {}, its whole get limit, so it may have left some out",
             V::GET,
             all.len()
@@ -375,7 +359,7 @@ impl Mail {
     }
 
     pub async fn state(&self) -> Result<String> {
-        Ok(self.got::<Email>(false, json!([])).await?.0)
+        Ok(self.got::<Email>(false, json!([])).await?.state)
     }
 
     /// Every id the filter matches, unsorted, since a sort is answered from the full-text index, which lags ingest.
@@ -429,10 +413,10 @@ impl Mail {
     /// The id each of `ids` has now, one query each, as many to a request as Stalwart takes, since its limit counts
     /// requests. Stalwart refuses an id outside its alphabet in Email/query; Email/get just finds no such email.
     pub async fn currents(&self, ids: &[String]) -> Result<Vec<Option<Current>>> {
-        const FIND: Call = Call::mail("Email/query", Some("invalidArguments"));
+        const FIND: Call<Queried> = Call::mail("Email/query", Some("invalidArguments"));
         let valid: Vec<&String> = ids.iter().filter(|id| jmap_id(id).is_ok()).collect();
         let mut now = HashMap::new();
-        for chunk in valid.chunks(self.limits[2]) {
+        for chunk in valid.chunks(self.limits.calls) {
             let calls: Vec<_> =
                 chunk.iter().map(|id| (FIND, json!({ "filter": { "id": [id] } }))).collect();
             for (id, answer) in chunk.iter().zip(self.answers(false, &calls).await?) {
@@ -460,11 +444,7 @@ impl Mail {
         loop {
             let args = json!({ "sinceState": state, "maxChanges": PAGE });
             let Some(changed) = self.answer(false, CHANGES, args).await? else { return Ok(None) };
-            for list in [changed.created, changed.updated] {
-                let list: Option<Vec<String>> =
-                    serde_json::from_value(list).context("stalwart's Email/changes reply")?;
-                ids.extend(list.unwrap_or_default());
-            }
+            ids.extend(changed.created.into_iter().chain(changed.updated));
             if !changed.more {
                 return Ok(Some((ids.into_iter().collect(), changed.new_state)));
             }
@@ -474,18 +454,18 @@ impl Mail {
     }
 
     pub async fn mark(&self, marks: &[Mark]) -> Result<()> {
-        for chunk in marks.chunks(self.limits[1]) {
+        for chunk in marks.chunks(self.limits.set) {
             self.set(false, json!({ "update": patches(chunk) })).await?;
         }
         Ok(())
     }
 
-    pub fn created(answer: &Answer, key: &str) -> Result<Current> {
+    pub fn created(answer: &Set, key: &str) -> Result<Current> {
         Current::new(answer.id(key)?)
     }
 
     pub async fn upload(&self, bytes: &[u8], kind: &str) -> Result<String> {
-        let url = fill(&self.session.upload, &[("accountId", self.account(Cap::Mail)?)])?;
+        let url = fill(&self.urls.upload, &[("accountId", self.account(MAIL)?)])?;
         let post = async |t| {
             Web::paced(bytes, async |body| {
                 let post =
@@ -508,9 +488,9 @@ impl Mail {
     }
 
     pub async fn download(&self, blob: &str, most: usize) -> Result<Option<Vec<u8>>> {
-        let ids = [("accountId", jmap_id(self.account(Cap::Mail)?)?), ("blobId", jmap_id(blob)?)];
-        let fixed = [("name", "attachment"), ("type", "application%2Foctet-stream")];
-        let url = fill(&self.session.download, &[ids, fixed].concat())?;
+        let ids = [("accountId", self.account(MAIL)?), ("blobId", jmap_id(blob)?)];
+        let fixed = [("name", "attachment"), ("type", "application/octet-stream")];
+        let url = fill(&self.urls.download, &[ids, fixed].concat())?;
         self.conn
             .retry(false, async |t| {
                 let get = self.conn.web.fetch(Method::GET, &url, &t, |r| r);
@@ -534,7 +514,7 @@ impl Mail {
     pub async fn pushes(&self) -> Result<Pushes> {
         let ping = PING.as_secs().to_string();
         let values = [("types", "Email"), ("closeafter", "no"), ("ping", ping.as_str())];
-        let (url, token) = (fill(&self.session.events, &values)?, self.conn.token.borrow().clone());
+        let (url, token) = (fill(&self.urls.events, &values)?, self.conn.token.borrow().clone());
         let accept = |r: reqwest::RequestBuilder| r.header(header::ACCEPT, "text/event-stream");
         let opened =
             tokio::time::timeout(TIMEOUT, self.conn.web.fetch(Method::GET, &url, &token, accept));
@@ -560,23 +540,21 @@ impl Mail {
 
     pub async fn snapshot(&self, ids: &[Current]) -> Result<Vec<Email>> {
         Ok(self
-            .got(true, json!(&ids[..ids.len().min(self.limits[0]).min(self.limits[1])]))
+            .got(true, json!(&ids[..ids.len().min(self.limits.get).min(self.limits.set)]))
             .await?
-            .1)
+            .list)
     }
 
     pub fn calls_per_request(&self) -> usize {
-        self.limits[2]
+        self.limits.calls
     }
 
     pub async fn each(&self, locked: bool, marks: &[Mark]) -> Result<Vec<Result<bool>>> {
         let set = |mark: &Mark| (SET, json!({ "update": patches(std::slice::from_ref(mark)) }));
         let answers = self.answers(locked, &marks.iter().map(set).collect::<Vec<_>>()).await?;
-        let wrote = |(answer, (id, _)): (Result<Option<Answer>>, &Mark)| {
-            let answer = answer?;
-            Ok(answer.is_some_and(|a| {
-                a.updated.get(id.as_str()).is_some() && a.new_state != a.old_state
-            }))
+        let wrote = |(answer, (id, _)): (Result<Option<Set>>, &Mark)| {
+            let wrote = |a: Set| a.updated.contains_key(id.as_str()) && a.new_state != a.old_state;
+            Ok(answer?.is_some_and(wrote))
         };
         Ok(answers.into_iter().zip(marks).map(wrote).collect())
     }
@@ -591,20 +569,12 @@ fn patches(marks: &[Mark]) -> Map<String, Value> {
 
 /// Server-sent events as they arrive; only a state change wakes, since Stalwart's pings carry data too.
 #[derive(Default)]
-pub struct Frames(Vec<u8>);
+pub struct Frames(Events);
 
 impl Frames {
     pub fn wake(&mut self, chunk: &[u8]) -> bool {
-        self.0.extend(chunk.iter().filter(|&&b| b != b'\r'));
-        let mut woke = false;
-        while let Some(end) = self.0.windows(2).position(|w| w == b"\n\n") {
-            let event: Vec<u8> = self.0.drain(..end + 2).collect();
-            let lines = || event.split(|&b| b == b'\n');
-            let ping =
-                |l: &[u8]| l.strip_prefix(b"event:").is_some_and(|v| v.trim_ascii() == b"ping");
-            woke |= !lines().any(ping) && lines().any(|l| l.starts_with(b"data:"));
-        }
-        woke
+        let wakes = |e: &String| !matches!(Event::read(e), None | Some(Event::Ping));
+        self.0.push(chunk).iter().any(wakes)
     }
 }
 

@@ -5,7 +5,7 @@ use crate::{
     address::{MessageId, Topic},
     cmd::{claim, read, send, wait},
     mail::{Body, Email, Frames, Status, check_account, fill},
-    out::{Asked, Delivery, Entity, Head, base64_body, text},
+    out::{Asked, Delivery, Entity, Head, base64_body, describe, text},
     policy::{Recipients, correspondents},
     show::{Answering, message, reminder},
     store::Config,
@@ -383,11 +383,16 @@ fn delivery_reads_each_recipients_status() {
             Delivery::Refused(vec![refused("nosuch@example.org", "550 no")]);
         Some(json!({ "a@example.org": queued, "b@example.org": no })) =>
             Delivery::Accepted(vec![refused("b@example.org", "550 no")]);
-        Some(json!({ "c@example.org": status("no", "550-first\r\n550 agent-mail: sent\x1b[2K") })) =>
-            Delivery::Refused(vec![refused("c@example.org", "550-first  550 agent-mail: sent [2K")]);
         Some(json!({})) => Delivery::Accepted(vec![]);
         None => Delivery::Unknown;
     );
+}
+
+#[test]
+fn a_refused_recipients_reply_is_described_as_plain_text() {
+    let refused =
+        [("c@example.org".to_owned(), "550-first\r\n550 agent-mail: sent\x1b[2K".to_owned())];
+    assert_eq!(describe(&refused), "  c@example.org: 550-first  550 agent-mail: sent [2K");
 }
 
 fn printed(with: Value) -> String {

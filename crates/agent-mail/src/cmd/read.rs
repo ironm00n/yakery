@@ -14,7 +14,7 @@ use crate::{
     address::{MessageId, Topic},
     auth::Auth,
     authority::{self, Signed},
-    jmap::wire,
+    jmap::MAIL,
     mail::{Addr, Body, Email, Keyword, Mail, Page, Part, Text, names},
     out::is_receipt,
     policy::Login,
@@ -40,8 +40,8 @@ macro_rules! attachments {
 
 attachments!(".cache" / "agent-mail" / "attachments", 50 MiB each, 200 MiB in all);
 
-wire! {
-    views under Mail {
+::jmap::view! {
+    under MAIL {
         Files in "Email/get" with ("fetchHTMLBodyValues", MAX_TOTAL) {
             attachments: Vec<Part> = "attachments", text: Vec<Part> = "textBody",
             html: Vec<Part> = "htmlBody", values: HashMap<String, Text> = "bodyValues",
@@ -49,7 +49,6 @@ wire! {
         Attached in "Email/get" { id: String = "id", attachments: Vec<Part> = "attachments" }
         Dated in "Email/get" { id: String = "id", received: String = "receivedAt" }
     }
-    objects {}
 }
 
 pub enum Source<'a> {

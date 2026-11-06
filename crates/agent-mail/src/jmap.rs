@@ -1,96 +1,24 @@
-use crate::prelude::*;
+use std::marker::PhantomData;
 
-pub fn nullable<'de, D: serde::Deserializer<'de>, T: Default + Deserialize<'de>>(
-    d: D,
-) -> Result<T, D::Error> {
-    Option::<T>::deserialize(d).map(Option::unwrap_or_default)
-}
+pub use ::jmap::{Cap, id as jmap_id};
 
-/// A view is fetched with exactly the properties it declares, so it reads none it did not fetch, and decoding a
-/// reply that lacks one fails; null, JMAP's empty, reads as the default. Views under `(default)` read a missing one
-/// as the default too: JSCalendar leaves a property at its default out (RFC 8984), and Stalwart's get does.
-pub trait View: DeserializeOwned {
-    const GET: &str;
-    const CAP: Cap;
-    const PROPERTIES: &[&str];
-    const VALUES: Option<(&str, usize)> = None;
-}
+pub const MAIL: Cap = Cap { using: &[::jmap::MAIL, ::jmap::SUBMISSION], account: ::jmap::MAIL };
+pub const CALENDARS: Cap = Cap { using: &[::jmap::CALENDARS], account: ::jmap::CALENDARS };
 
-pub const CORE: &str = "urn:ietf:params:jmap:core";
-const MAIL: &str = "urn:ietf:params:jmap:mail";
-const SUBMISSION: &str = "urn:ietf:params:jmap:submission";
-const CALENDARS: &str = "urn:ietf:params:jmap:calendars";
+/// A method, the answer it reads as, the method error it takes for no answer, and what it is called under.
+pub struct Call<T>(pub &'static str, pub Option<&'static str>, pub Cap, PhantomData<fn() -> T>);
 
-/// `Cap => name [the capabilities a request declares] @ the one whose primary account the method acts on`.
-macro_rules! caps {
-    ($($cap:ident => $name:literal [$($urn:ident),+] @ $account:ident),* $(,)?) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-        pub enum Cap { $($cap),* }
-
-        impl Cap {
-            pub const ALL: &[Cap] = &[$(Cap::$cap),*];
-
-            pub const fn name(self) -> &'static str {
-                match self { $(Cap::$cap => $name),* }
-            }
-
-            pub const fn using(self) -> &'static [&'static str] {
-                match self { $(Cap::$cap => &[$($urn),+]),* }
-            }
-
-            pub const fn account(self) -> &'static str {
-                match self { $(Cap::$cap => $account),* }
-            }
-        }
-    };
-}
-
-caps! {
-    Mail => "mail" [MAIL, SUBMISSION] @ MAIL,
-    Calendars => "calendars" [CALENDARS] @ CALENDARS,
-}
-
-macro_rules! wire {
-    (views under $cap:ident (default) $($rest:tt)*) => { wire!(@views [#[serde(default)]] $cap $($rest)*); };
-    (views under $cap:ident $($rest:tt)*) => { wire!(@views [] $cap $($rest)*); };
-    (@views $meta:tt $cap:ident { $($view:ident in $get:literal $(with ($bodies:literal, $bytes:expr))? {
-        $($vf:ident: $vt:ty = $vp:literal),* $(,)?
-    })* }
-     objects { $($object:ident { $($of:ident: $ot:ty = $op:literal),* $(,)? })* }) => {
-        $(
-            wire!(@struct $meta $view { $($vf: $vt = $vp),* });
-            impl $crate::jmap::View for $view {
-                const GET: &str = $get;
-                const CAP: $crate::jmap::Cap = $crate::jmap::Cap::$cap;
-                const PROPERTIES: &[&str] = &[$($vp),*];
-                $(const VALUES: Option<(&str, usize)> = Some(($bodies, $bytes));)?
-            }
-        )*
-        $(wire!(@struct [#[serde(default)]] $object { $($of: $ot = $op),* });)*
-    };
-    (@struct [$($meta:tt)*] $name:ident { $($field:ident: $ty:ty = $prop:literal),* }) => {
-        #[derive(Clone, Debug, Default, Deserialize)]
-        $($meta)*
-        pub struct $name {
-            $(
-                #[serde(rename = $prop, deserialize_with = "crate::jmap::nullable")]
-                pub $field: $ty,
-            )*
-        }
-    };
-}
-pub(crate) use wire;
-
-/// A method, the error type that answers it without failing (as None), and what it belongs to.
-pub struct Call(pub &'static str, pub Option<&'static str>, pub Cap);
-
-impl Call {
-    pub const fn mail(name: &'static str, tolerated: Option<&'static str>) -> Call {
-        Call(name, tolerated, Cap::Mail)
+impl<T> Call<T> {
+    pub const fn new(name: &'static str, tolerated: Option<&'static str>, cap: Cap) -> Call<T> {
+        Call(name, tolerated, cap, PhantomData)
     }
 
-    pub const fn calendars(name: &'static str, tolerated: Option<&'static str>) -> Call {
-        Call(name, tolerated, Cap::Calendars)
+    pub const fn mail(name: &'static str, tolerated: Option<&'static str>) -> Call<T> {
+        Call::new(name, tolerated, MAIL)
+    }
+
+    pub const fn calendars(name: &'static str, tolerated: Option<&'static str>) -> Call<T> {
+        Call::new(name, tolerated, CALENDARS)
     }
 }
 
@@ -106,10 +34,3 @@ macro_rules! keywords {
     };
 }
 pub(crate) use keywords;
-
-pub fn jmap_id(id: &str) -> Result<&str> {
-    let valid = (1..=255).contains(&id.len())
-        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    ensure!(valid, "{} is not a JMAP id", id.escape_debug());
-    Ok(id)
-}

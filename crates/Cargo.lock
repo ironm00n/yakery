@@ -37,6 +37,7 @@ dependencies = [
  "http-body",
  "invitation",
  "jiff",
+ "jmap",
  "libc",
  "lol_html",
  "mail-parser",

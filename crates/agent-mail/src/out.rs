@@ -5,8 +5,7 @@ use text::Address;
 use crate::{
     address::MessageId,
     mail::{
-        Current, Email, IMPORT, Identity, Keyword, Mail, SUBMISSIONS, SUBMIT, Status, Submission,
-        keywords,
+        Current, Email, IMPORT, Identity, Keyword, Mail, SUBMISSIONS, SUBMIT, Submission, keywords,
     },
     policy::{Login, Recipients},
     prelude::*,
@@ -157,34 +156,12 @@ impl Entity {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Delivery {
-    Accepted(Vec<(String, String)>),
-    Refused(Vec<(String, String)>),
-    Unknown,
-}
-
-impl Delivery {
-    pub fn of(statuses: Option<&HashMap<String, Status>>) -> Delivery {
-        let Some(statuses) = statuses else { return Delivery::Unknown };
-        let mut refused: Vec<_> = statuses
-            .iter()
-            .filter(|(_, s)| s.delivered == "no")
-            .map(|(a, s)| (a.clone(), plain(&s.reply).trim().to_owned()))
-            .collect();
-        refused.sort();
-        if refused.len() == statuses.len() && !statuses.is_empty() {
-            Delivery::Refused(refused)
-        } else {
-            Delivery::Accepted(refused)
-        }
-    }
-}
+pub use ::jmap::mail::Delivery;
 
 pub fn describe(refused: &[(String, String)]) -> String {
     refused
         .iter()
-        .map(|(address, reply)| format!("  {address}: {reply}"))
+        .map(|(address, reply)| format!("  {address}: {}", plain(reply)))
         .collect::<Vec<_>>()
         .join("\n")
 }
