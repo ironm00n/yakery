@@ -1,6 +1,7 @@
 {
   lib,
   rustPlatform,
+  cacert,
   tzdata,
   policy,
 }:
@@ -20,6 +21,7 @@ rustPlatform.buildRustPackage {
     "-p"
     "outlook-sync"
   ];
+  nativeCheckInputs = [ cacert ];
   env = {
     OUTLOOK_SYNC_POLICY = builtins.toJSON policy;
     # the tests read the time zones calendar apps name
