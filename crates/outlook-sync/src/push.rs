@@ -13,6 +13,9 @@ use crate::stalwart::Account;
 use crate::sync::Wake;
 
 const AGAIN: Duration = Duration::from_secs(5);
+/// Honored as asked: RFC 8620 7.3 lets a server clamp `ping` only outside 30 to 300 s.
+const PING: Duration = Duration::from_secs(60);
+const SILENT: Duration = Duration::from_secs(3 * PING.as_secs());
 
 pub async fn listen(policy: &'static Policy, account: &Account, wake: UnboundedSender<Wake>) {
     loop {
@@ -36,17 +39,25 @@ async fn stream(policy: &Policy, account: &Account, wake: &UnboundedSender<Wake>
         .account(&policy.owner)
         .with_context(|| format!("{} isn't shared anything of {}", policy.account, policy.owner))?
         .to_owned();
-    let source = format!("{origin}/jmap/eventsource/?types=CalendarEvent&closeafter=no&ping=60");
+    let ping = PING.as_secs();
+    let source =
+        format!("{origin}/jmap/eventsource/?types=CalendarEvent&closeafter=no&ping={ping}");
     let mut reply = account.send(client.get(source), "JMAP push").await?.error_for_status()?;
     // the mirror may have changed while no stream was open
     let _ = wake.send(Wake::Edited);
     let mut events = Events::default();
-    while let Some(chunk) = reply.chunk().await? {
+    while let Some(chunk) = heard(reply.chunk()).await? {
         for _ in events.push(&chunk).iter().filter(|e| changed(e, &owner)) {
             let _ = wake.send(Wake::Edited);
         }
     }
     anyhow::bail!("the stream ended")
+}
+
+/// `next`, unless the stream is silent for longer than its pings allow.
+async fn heard<T>(next: impl Future<Output = reqwest::Result<T>>) -> Result<T> {
+    let heard = tokio::time::timeout(SILENT, next).await;
+    Ok(heard.with_context(|| format!("no event or ping for {} s", SILENT.as_secs()))??)
 }
 
 fn changed(event: &str, owner: &str) -> bool {
