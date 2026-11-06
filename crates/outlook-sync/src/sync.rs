@@ -50,6 +50,11 @@ impl Wake {
             }
         }
     }
+
+    /// New credentials may be what the failed run lacked.
+    fn waits_out_backoff(self) -> bool {
+        self != Wake::SignedIn
+    }
 }
 
 impl std::ops::BitOr for Needs {
@@ -101,13 +106,19 @@ impl Sync {
         let mut retry: Option<tokio::time::Instant> = None;
         let mut pending = BTreeSet::new();
         loop {
+            let mut woken = BTreeSet::new();
             tokio::select! {
-                Some(wake) = wakes.recv() => { pending.insert(wake); }
-                _ = daily.tick() => { pending.insert(Wake::Daily); }
-                () = sleep_until(retry) => {}
+                Some(wake) = wakes.recv() => { woken.insert(wake); }
+                _ = daily.tick() => { woken.insert(Wake::Daily); }
+                () = sleep_until(retry) => { retry = None; }
             }
             while let Ok(wake) = wakes.try_recv() {
-                pending.insert(wake);
+                woken.insert(wake);
+            }
+            let backing_off = retry.is_some() && woken.iter().all(|w| w.waits_out_backoff());
+            pending.extend(woken);
+            if backing_off {
+                continue;
             }
             retry = match self.handle(needs(&pending)).await {
                 Ok(()) => {
