@@ -1449,6 +1449,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jiff",
+ "jmap",
  "oidc",
  "private",
  "reqwest",

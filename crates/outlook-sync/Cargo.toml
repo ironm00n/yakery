@@ -20,6 +20,7 @@ http-body-util.workspace = true
 hyper.workspace = true
 hyper-util = { workspace = true, features = ["http1"] }
 jiff.workspace = true
+jmap.workspace = true
 oidc.workspace = true
 private.workspace = true
 reqwest.workspace = true
