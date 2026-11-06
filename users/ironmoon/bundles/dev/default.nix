@@ -28,7 +28,12 @@ in
   };
 
   config = mkIf cfg.enable (mkMerge [
-    { home.packages = [ (pkgs.callPackage ./comma-noninteractive.nix { }) ]; }
+    {
+      home.packages = [
+        (pkgs.callPackage ./comma-noninteractive.nix { })
+        (pkgs.callPackage ./xb.nix { inherit (config.home) homeDirectory; })
+      ];
+    }
     (mkIf cfg.codex-desktop { programs.codexDesktopLinux.enable = true; })
     (mkIf cfg.langs (
       let
