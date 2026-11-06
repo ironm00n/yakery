@@ -4,6 +4,7 @@ trap 'rm -rf "$dir"' EXIT
 goal() { jq -cn --argjson met "$1" '{type:"attachment",attachment:{type:"goal_status",condition:"finish the port",met:$met}}'; }
 { goal false; echo '{"type":"user","message":{"content":"go"}}'; } >"$dir/running"
 { goal false; goal true; } >"$dir/met"
+{ goal false; jq -cn '{type:"attachment",attachment:{type:"goal_status",condition:"finish the port",met:false,failed:true}}'; } >"$dir/impossible"
 echo '{"type":"user","message":{"content":"no goal here"}}' >"$dir/none"
 jq -cn '{type:"user",message:{content:[{type:"tool_result",content:"{\"type\":\"goal_status\",\"met\":false}"}]}}' >"$dir/quoted"
 
@@ -43,5 +44,6 @@ EOF'
 # Outside a running /goal, waiting is allowed.
 check PASS "$dir/none" 'sleep 3600'
 check PASS "$dir/met" 'sleep 3600'
+check PASS "$dir/impossible" 'sleep 3600'
 check PASS "$dir/absent" 'sleep 3600'
 check PASS "$dir/quoted" 'sleep 3600'

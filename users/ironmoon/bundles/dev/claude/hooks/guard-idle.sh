@@ -21,7 +21,8 @@ goal_active() {
   transcript=$(jq -r '.transcript_path // ""' <<<"$payload")
   [[ -r "$transcript" ]] || return 1
   [[ "$(tac -- "$transcript" | grep -F '"type":"goal_status"' | head -n 5 |
-    jq -rs 'map(select(.type == "attachment" and .attachment.type == "goal_status"))[0].attachment.met')" == false ]]
+    jq -rs 'map(select(.type == "attachment" and .attachment.type == "goal_status"))[0].attachment
+      | .met == false and (.failed | not)')" == true ]]
 }
 
 deny() {
