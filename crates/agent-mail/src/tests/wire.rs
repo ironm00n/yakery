@@ -389,6 +389,14 @@ impl Stalwart {
                 if args["ifInState"].as_str().is_some_and(|s| s != state) {
                     return Err("stateMismatch");
                 }
+                let mut created = Map::new();
+                for (key, email) in args["create"].as_object().into_iter().flatten() {
+                    let id = format!("new{}", self.changed.len());
+                    let mut m = email.clone();
+                    m["id"] = json!(id);
+                    self.arrive(m);
+                    created.insert(key.clone(), json!({ "id": id }));
+                }
                 let mut updated = Map::new();
                 for (id, patch) in args["update"].as_object().into_iter().flatten() {
                     let now = self.now(id);
@@ -410,7 +418,8 @@ impl Stalwart {
                 self.emails.retain(|m| !destroy.contains(&m["id"]));
                 let new = self.state.to_string();
                 json!({
-                    "oldState": state, "newState": new, "updated": updated, "destroyed": destroy,
+                    "oldState": state, "newState": new, "created": created, "updated": updated,
+                    "destroyed": destroy,
                 })
             }
             _ => return Err("unknownMethod"),

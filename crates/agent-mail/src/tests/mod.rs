@@ -5,6 +5,7 @@ mod cli;
 mod files;
 mod text;
 mod undefined;
+mod urgent;
 mod wire;
 
 pub use wire::wire;

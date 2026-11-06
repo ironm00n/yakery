@@ -17,6 +17,7 @@ use crate::{
     show::{emails, plain, preview},
     store::Config,
     undefined::undefined,
+    urgent,
 };
 
 #[derive(clap::Args)]
@@ -40,7 +41,7 @@ pub struct Args {
     /// Also send to everyone on the --reply mail but us: its From to To, its To and Cc to Cc.
     #[arg(long, requires = "reply")]
     pub all: bool,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub subject: Option<String>,
     #[arg(long, value_name = "FILE")]
     pub attach: Vec<PathBuf>,
@@ -52,6 +53,8 @@ pub struct Args {
     /// whichever session watches them.
     #[arg(long)]
     pub no_watch: bool,
+    #[command(flatten)]
+    pub urgent: urgent::Urgent,
 }
 
 enum Content {
@@ -267,6 +270,21 @@ pub async fn lint(_: Nothing) -> Result<ExitCode> {
 
 pub async fn run(args: Args) -> Result<ExitCode> {
     let config = Config::load()?;
+    let stdin = match args.mime {
+        Some(_) => String::new(),
+        None => io::read_to_string(io::stdin())?,
+    };
+    send(&args, Mail::with(config), stdin).await
+}
+
+/// Sends the mail `args` and `stdin` make through `mail`, which signs in only once both check out.
+pub async fn send(
+    args: &Args,
+    mail: impl Future<Output = Result<Mail>>,
+    stdin: String,
+) -> Result<ExitCode> {
+    let report = args.urgent.report();
+    let subject = urgent::subject(report.as_ref(), args.subject.as_deref())?;
     let content = match &args.mime {
         Some(path) => {
             let bytes = fs::read(path).with_context(|| path.display().to_string())?;
@@ -275,13 +293,14 @@ pub async fn run(args: Args) -> Result<ExitCode> {
             )
         }
         None => {
-            let markdown = io::read_to_string(io::stdin())?;
+            let (markdown, layout) = urgent::markdown(report.as_ref(), stdin)?;
             ensure!(
                 !markdown.trim().is_empty(),
                 "send reads the body from stdin, and it was empty"
             );
             for hit in undefined(&markdown) {
-                warn!("line {}: {}", hit.line, unresolved(&hit.text));
+                let (part, line) = layout.name(hit.line);
+                warn!("{part}line {line}: {}", unresolved(&hit.text));
             }
             let attached = args.attach.iter().map(|path| {
                 let name = path
@@ -297,7 +316,7 @@ pub async fn run(args: Args) -> Result<ExitCode> {
         }
     };
 
-    let mail = Mail::with(config).await?;
+    let mail = mail.await?;
     let (outbox, login) = (Outbox::open(&mail).await?, mail.login());
     let parent = reply_to(&mail, args.reply.as_deref(), args.past).await?;
     let from = sender(login, args.topic.as_ref(), parent.as_ref().map(|p| &p.1))?;
@@ -305,9 +324,10 @@ pub async fn run(args: Args) -> Result<ExitCode> {
         Some((_, p)) if args.all => reply_all(login, &args.to, &args.cc, p)?,
         _ => (args.to.clone(), args.cc.clone()),
     };
+    let cc = urgent::cc(report.as_ref(), login, &to, cc)?;
     let to = Recipients::check(login, from, to, cc)?;
     let reply = parent.as_ref().map(|p| &p.1);
-    let (subject, head) = head(&to, args.subject.as_deref(), reply, now(), &fresh_id()?)?;
+    let (subject, head) = head(&to, subject.as_deref(), reply, now(), &fresh_id()?)?;
     let draft = match content {
         Content::Mime(entity) => outbox.import(&entity.message(&head), &outbox.drafts, DRAFT).await,
         Content::Markdown(rendered, attached) => {
@@ -344,7 +364,7 @@ pub async fn run(args: Args) -> Result<ExitCode> {
             }
         }
     }
-    if let (Some(s), Some(watch)) = (session(), watching(&args, login, &to.from, &draft)) {
+    if let (Some(s), Some(watch)) = (session(), watching(args, login, &to.from, &draft)) {
         let recorded = s
             .session_id
             .parse()
@@ -352,6 +372,9 @@ pub async fn run(args: Args) -> Result<ExitCode> {
         if let Err(e) = recorded {
             warn!("sent, but recording its topic and thread for this session failed: {e:#}");
         }
+    }
+    if report.is_some() {
+        note!("{}", urgent::TELL_DISPATCH);
     }
     let everyone: Vec<String> = to.everyone().map(Address::to_string).collect();
     succeed!(

@@ -11,6 +11,7 @@ mod prelude;
 mod show;
 mod store;
 mod undefined;
+mod urgent;
 mod web;
 
 use std::process::ExitCode;
