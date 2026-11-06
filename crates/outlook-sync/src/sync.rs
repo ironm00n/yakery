@@ -178,18 +178,20 @@ impl Sync {
                 }
                 Edit::Edited(mirrored) => {
                     let Some((ics, etag)) = self.mirror.get(&file).await? else { continue };
-                    let edited = local::graph(&ics);
-                    let sent = match &edited {
+                    let taken = match local::graph(&ics) {
                         Err(e) => Err(Refused(format!("{e:#}"))),
-                        Ok(event) => match local::moved(event, &mirrored.fields) {
-                            moved if moved.is_empty() => Ok(()),
-                            moved => self.graph.update(&mirrored.id, Value::Object(moved)).await?,
+                        Ok(event) => match local::moved(&event, &mirrored.fields) {
+                            moved if moved.is_empty() => Ok(local::fields(&event)),
+                            moved => {
+                                (self.graph.update(&mirrored.id, Value::Object(moved)).await?)
+                                    .map(|()| local::fields(&event))
+                            }
                         },
                     };
-                    if let Err(refused) = sent {
+                    let fields = taken.unwrap_or_else(|refused| {
                         self.put_back(&file, refused);
-                    }
-                    let fields = edited.map_or(mirrored.fields.clone(), |e| local::fields(&e));
+                        mirrored.fields.clone()
+                    });
                     let mirrored = Mirrored { etag: Some(etag), fields, content: None, ..mirrored };
                     ledger.record(file, mirrored)?;
                 }
