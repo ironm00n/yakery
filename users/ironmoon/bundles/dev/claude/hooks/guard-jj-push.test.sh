@@ -7,8 +7,8 @@ printf '[user]\nname = "t"\nemail = "t@t"\n' >"$JJ_CONFIG"
 q() { "$@" >/dev/null 2>&1; }
 echo 0 >"$dir/verdict"
 # xb as jj-push.sh sees it: the command runs in a copy of the worktree's tracked and unignored
-# files, with each --with DIR=PATH copied in and a leading `nix develop DIR -c` taken off, and its
-# arguments kept in xb-argv
+# files, with each --with DIR=PATH copied in and a leading `nix develop DIR -c` taken off; its
+# arguments are kept in xb-argv, and the command after its own options in xb-command
 xb=$dir/.local/state/xb/current/bin/xb
 mkdir -p "${xb%/*}"
 cat >"$xb" <<EOF
@@ -17,7 +17,11 @@ printf '%s\\n' "\$*" >"$dir/xb-argv"
 job=\$(mktemp -d -p "$dir")
 GIT_DIR=\$(jj --ignore-working-copy git root) GIT_WORK_TREE=\$PWD GIT_INDEX_FILE=\$job.none \\
   git ls-files -zo --exclude-standard | xargs -0r cp -a --parents -t "\$job"
-while [[ \$1 == --with ]]; do mkdir -p "\$job/\${2#*=}"; cp -a "\${2%%=*}/." "\$job/\${2#*=}"; shift 2; done
+while [[ \$1 == --* ]]; do
+  [[ \$1 != --with ]] || { mkdir -p "\$job/\${2#*=}"; cp -a "\${2%%=*}/." "\$job/\${2#*=}"; }
+  shift 2
+done
+printf '%s\\n' "\$*" >"$dir/xb-command"
 cd "\$job"
 args=("\$@")
 [[ \${args[0]} == env ]] && { i=1; while [[ \${args[i]} == *=* ]]; do ((i++)); done
@@ -200,7 +204,7 @@ same "but not when git can't say whether it has one, and git's words are given" 
 
 change hooked d
 push hooked 0 git push -b main
-same "a hook the worktree tracks runs on xb from its own path" "$(cut -d' ' -f1-4 "$dir/xb-argv")" "env bash -c remote=\$1"
+same "a hook the worktree tracks runs on xb from its own path" "$(cut -d' ' -f1-4 "$dir/xb-command")" "env bash -c remote=\$1"
 same "with its own path in the tree" "$(grep -o '\./\.githooks/pre-push' "$dir/xb-argv")" ./.githooks/pre-push
 change inner d
 push inner 0 git push -b main
@@ -212,7 +216,7 @@ git -C "$k" config --add xb.prePushEnv UNSET_HERE
 change hooked e
 SKIP_LEAN=1 push hooked 0 git push -b main
 same "a clone's shell and the variables it names go with the job, a set one only" \
-  "$(cut -d' ' -f1-6 "$dir/xb-argv")" "env SKIP_LEAN=1 nix develop ./formalization -c"
+  "$(cut -d' ' -f1-6 "$dir/xb-command")" "env SKIP_LEAN=1 nix develop ./formalization -c"
 same "and the hook still gets git's stdin" "$(cut -d' ' -f1 "$dir/stdin")" refs/heads/main
 
 change unrouted b
@@ -280,7 +284,18 @@ home=$dir/nowhere push hooked 1 git push -b main
 same "with no xb here the push is refused" "$(grep -c 'there is no' "$dir/out")" 1
 git -C "$k" config --add xb.prePushEnv url
 SKIP_LEAN=1 url=mine push hooked 0 git push -b main
-same "a named variable is the caller's, not one of jj-push.sh's own" "$(cut -d' ' -f1-3 "$dir/xb-argv")" "env SKIP_LEAN=1 url=mine"
+same "a named variable is the caller's, not one of jj-push.sh's own" "$(cut -d' ' -f1-3 "$dir/xb-command")" "env SKIP_LEAN=1 url=mine"
+git -C "$k" config branch.main.remote origin
+git -C "$k" config branch.main.merge refs/heads/main
+change hooked state
+new=$(id hooked main)
+push hooked 0 git push -b main
+same "the job's repo gets the pushed tip, the remote's ref for it and the branch's upstream" \
+  "$(grep -o -- '--git-ref [^ ]*' "$dir/xb-argv" | sort | tr '\n' ' ')" \
+  "--git-ref refs/heads/main=$new --git-ref refs/remotes/origin/main "
+same "with the config naming that upstream" \
+  "$(grep -o -- '--git-config [^ ]*' "$dir/xb-argv" | sort | tr '\n' ' ')" \
+  "--git-config branch.main.merge=refs/heads/main --git-config branch.main.remote=origin --git-config remote.origin.fetch=+refs/heads/*:refs/remotes/origin/* "
 change hooked g
 git -C "$k" config --add xb.prePushEnv 'a.b'
 push hooked 1 git push -b main

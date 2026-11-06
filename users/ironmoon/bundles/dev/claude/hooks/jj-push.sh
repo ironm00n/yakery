@@ -6,11 +6,12 @@
 #
 # Nothing builds on desktop (Owen 11-05 21:53), so per clone `git config xb.prePushShell DIR` runs
 # the hook as an xb job on the worktree's snapshot, in DIR's flake dev shell (empty: none), with
-# each `xb.prePushEnv NAME` the caller's environment sets passed on. A job gets no stdin, so the ref lines go as
-# arguments, and a hook outside the tracked tree is shipped beside it. The snapshot holds none of
-# the pushed commits, so a clone opts in only once its hook is checked to refuse, not pass, a
-# commit it can't find. `xb.prePushLocal true` runs a hook that builds nothing here as before; a
-# hooked clone with neither is refused.
+# each `xb.prePushEnv NAME` the caller's environment sets passed on. A job gets no stdin, so the ref
+# lines go as arguments, and a hook outside the tracked tree is shipped beside it. The job's repo
+# gets the pushed tips, the remote's refs for them, and each branch with an upstream, that upstream
+# and the config naming it, so `branch@{upstream}` and a tip's history read as here.
+# `xb.prePushLocal true` runs a hook that builds nothing here as before; a hooked clone with
+# neither is refused.
 
 set -euo pipefail
 . "${BASH_SOURCE[0]%/*}/lib/jj.sh"
@@ -69,7 +70,7 @@ if [[ $(setting --bool --get xb.prePushLocal || true) == true ]]; then
   exec jj "$@" "${own[@]}"
 fi
 shell=$(setting --get xb.prePushShell) ||
-  fail "$hook would run here, where nothing may build: once it is checked to refuse a pushed commit it can't find, \`git config xb.prePushShell DIR\` runs it on xb, on the worktree's snapshot, in DIR's flake dev shell (empty: none); a hook that builds nothing may run here with \`git config xb.prePushLocal true\`"
+  fail "$hook would run here, where nothing may build: \`git config xb.prePushShell DIR\` runs it on xb, on the worktree's snapshot, in DIR's flake dev shell (empty: none); a hook that builds nothing may run here with \`git config xb.prePushLocal true\`"
 xb=$HOME/.local/state/xb/current/bin/xb
 [[ -x $xb ]] || fail "$hook runs on xb, and there is no $xb here"
 real=$(realpath "$hook")
@@ -94,8 +95,25 @@ while IFS= read -r name; do
   mapfile -d '' -t given < <(grep -azm1 "^$name=" /proc/$$/environ)
   pass+=("${given[@]}")
 done < <(setting --get-all xb.prePushEnv || true)
+declare -A named=()
+state=()
+ship_ref() { [[ -n ${named[$1]-} ]] || { named[$1]=1; state+=(--git-ref "$1${2:+=$2}"); }; }
+exists() { env "${genv[@]}" git -C "$root" rev-parse -q --verify "$1" >/dev/null; }
+for line in "${refs[@]}"; do
+  read -r lref lsha rref _ <<<"$line"
+  [[ $lsha == "$zero" ]] || ship_ref "$lref" "$lsha"
+  tracking=refs/remotes/$remote/${rref#refs/heads/}
+  ! exists "$tracking" || ship_ref "$tracking"
+done
+while read -r branch upstream; do
+  [[ -z $upstream ]] || ! exists "$upstream" || { ship_ref "$branch"; ship_ref "$upstream"; }
+done < <(env "${genv[@]}" git -C "$root" for-each-ref refs/heads \
+  --format='%(if)%(symref)%(then)%(else)%(refname) %(upstream)%(end)')
+while read -r key value; do
+  state+=(--git-config "$key=$value")
+done < <(setting --get-regexp '^(branch\..*\.(remote|merge)|remote\..*\.fetch)$' || true)
 feed='remote=$1 url=$2; shift 2; printf "%s\n" "$@" | "$0" "$remote" "$url"'
-(cd "$root" && "$xb" "${ship[@]}" env "${pass[@]}" "${in_shell[@]}" \
+(cd "$root" && "$xb" "${ship[@]}" "${state[@]}" env "${pass[@]}" "${in_shell[@]}" \
   bash -c "$feed" "$run" "$remote" "$url" "${refs[@]}") || status=$?
 ((status == 0)) || fail "$hook exited $status on xb (70 is also xb's own failure, in its words above), so nothing was pushed" "$status"
 exec jj "$@" "${own[@]}"
