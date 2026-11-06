@@ -155,7 +155,7 @@ fn an_edit_sends_only_what_moved_from_the_version_the_sync_wrote() {
 }
 
 #[test]
-fn a_description_he_removes_goes_out_as_an_empty_body() {
+fn a_description_removed_goes_out_as_an_empty_body() {
     let base = fields(&graph(&ios("")).unwrap());
     let bare = graph(&ios("").replace("DESCRIPTION:line one\\nline\r\n  two\r\n", "")).unwrap();
     assert_eq!(

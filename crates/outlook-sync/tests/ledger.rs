@@ -51,9 +51,15 @@ fn only_the_syncs_settled_write_of_the_same_content_is_left_unwritten() {
     let etag = "\"7\"".to_string();
     assert!(untouched(Some(&mirrored("\"7\"")), Some(&etag), "c1"));
     assert!(!untouched(Some(&mirrored("\"7\"")), Some(&etag), "c2"), "Graph changed it");
-    assert!(!untouched(Some(&mirrored("\"7\"")), Some(&"\"8\"".to_string()), "c1"), "his edit");
+    assert!(
+        !untouched(Some(&mirrored("\"7\"")), Some(&"\"8\"".to_string()), "c1"),
+        "the owner's edit"
+    );
     assert!(!untouched(Some(&writing()), None, "c1"), "in flight");
     assert!(!untouched(None, Some(&etag), "c1"), "unrecorded");
-    let his = Mirrored { content: None, ..mirrored("\"7\"") };
-    assert!(!untouched(Some(&his), Some(&etag), "c1"), "his version, recorded by edits()");
+    let owners = Mirrored { content: None, ..mirrored("\"7\"") };
+    assert!(
+        !untouched(Some(&owners), Some(&etag), "c1"),
+        "the owner's version, recorded by edits()"
+    );
 }

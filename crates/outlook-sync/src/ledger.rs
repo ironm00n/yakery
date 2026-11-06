@@ -35,7 +35,7 @@ pub struct Mirrored {
 }
 
 /// Whether the file is still the sync's settled write of this same content, so writing it again
-/// would change nothing. A file holding his edit, unrecorded or in flight is written: the listing
+/// would change nothing. A file holding the owner's edit, unrecorded or in flight is written: the listing
 /// is its put-back too.
 pub fn untouched(mirrored: Option<&Mirrored>, etag: Option<&String>, content: &str) -> bool {
     mirrored.is_some_and(|m| {
@@ -113,8 +113,8 @@ impl<'a> Ledger<'a> {
         self.save()
     }
 
-    /// With `guarded`, each file only over the sync's own last version; the files a newer one, an
-    /// owner edit not yet sent, kept are returned.
+    /// With `guarded`, each file is written only over the sync's own last version. Returns the files
+    /// where a newer one, an owner's edit not yet sent, was kept.
     pub async fn write(&mut self, puts: Vec<Put>, guarded: bool) -> Result<Vec<FileName>> {
         if puts.is_empty() {
             return Ok(vec![]);

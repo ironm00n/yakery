@@ -1,5 +1,3 @@
-//! The account the sync signs in to Stalwart as.
-
 use anyhow::{Context, Result};
 use private::{Dir, Secret};
 use reqwest::{RequestBuilder, Response, StatusCode};

@@ -205,7 +205,7 @@ pkgs.testers.runNixOSTest {
             expect("write.update.only-moved", update["keys"] == ["end", "start"], update)
             retry(lambda _: list(at(f"{day(0)} 17:00", 60)) in busy(), timeout_seconds=60)
 
-        with subtest("an event he makes goes as a create, and comes back as Outlook's copy"):
+        with subtest("an event the owner makes goes as a create, and comes back as Outlook's copy"):
             ics = made_here("mine-1", f"{day(5)}T09:00", "SUMMARY:Office hours")
             status, _ = http(server, owen, "PUT", NEU + "mine.ics", ics, "text/calendar")
             expect("write.create.put", status in (201, 204), status)
