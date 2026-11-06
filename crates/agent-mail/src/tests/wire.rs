@@ -20,7 +20,7 @@ use super::*;
 use crate::{
     BACKOFF, RECHECK, REOPEN,
     address::SessionId,
-    auth::{Auth, Http},
+    auth::{Auth, Http, Zitadel},
     cmd::{read, wait},
     listeners::Heartbeat,
     mail::{BUSY_FOR, Conn, Current, Email, Keyword, Mail},
@@ -182,7 +182,8 @@ pub struct Stalwart {
     /// Answers in place of the inbox's for a method, in turn.
     pub canned: Vec<(&'static str, Canned)>,
     granted: u32,
-    refresh_refused: bool,
+    /// The token endpoint's error code for every grant.
+    refresh_refused: Option<&'static str>,
     pub session: Value,
     pub log: Vec<String>,
     pub requests: Vec<Value>,
@@ -239,8 +240,8 @@ impl Stalwart {
             return reply(401, "");
         }
         match (r.url().host_str().unwrap(), r.url().path()) {
-            ("auth.example.org", "/oauth/v2/token") if self.refresh_refused => {
-                reply(400, r#"{"error":"invalid_grant"}"#)
+            ("auth.example.org", "/oauth/v2/token") if self.refresh_refused.is_some() => {
+                reply(400, json!({ "error": self.refresh_refused }).to_string())
             }
             ("auth.example.org", "/oauth/v2/token") => {
                 self.granted += 1;
@@ -581,6 +582,21 @@ async fn a_redirect_is_followed_only_on_the_requests_origin() {
         web.fetch(Method::GET, &Origin::Mail.url("/found"), &token, |r| r).await.unwrap_err();
     let failure = (format!("{fetched:#}"), Failure::of(&fetched));
     assert_eq!(failure, ("stalwart: /found: HTTP 302 Found".into(), Failure::Transient));
+}
+
+#[tokio::test]
+async fn only_a_dead_refresh_token_leaves_a_sign_in_to_get_tokens() {
+    for (code, want) in [
+        ("invalid_grant", "sign in"),
+        ("invalid_request", "sign in"),
+        ("unauthorized_client", "error: zitadel refused the refresh token: unauthorized_client"),
+    ] {
+        let stalwart = Stalwart { refresh_refused: Some(code), ..Stalwart::new(vec![]) };
+        let (_wire, _) = stalwart.wire();
+        let refreshed = Http(Web::new(false).unwrap()).refresh(&Secret::new("r1")).await;
+        let got = shown(refreshed.map(|t| if t.is_some() { "refreshed" } else { "sign in" }));
+        assert_eq!(got, want, "{code}");
+    }
 }
 
 #[tokio::test]
@@ -1070,7 +1086,8 @@ async fn a_busy_server_is_checked_again_in_30_s_and_a_config_error_ends_the_wait
         start.elapsed()
     );
     server.borrow_mut().emails.clear();
-    (server.borrow_mut().expire_on_stream, server.borrow_mut().refresh_refused) = (true, true);
+    (server.borrow_mut().expire_on_stream, server.borrow_mut().refresh_refused) =
+        (true, Some("invalid_grant"));
     let ended = wait::watch(&mail, watching(600)).await.unwrap_err();
     assert!(Failure::of(&ended).permanent(), "{ended:#}");
 }

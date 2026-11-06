@@ -1,5 +1,5 @@
 use lol_html::{RewriteStrSettings, element, rewrite_str};
-use oidc::{Access, Device, Failed, Grant, OAuthError};
+use oidc::{Access, Device, ErrorCode, Failed, Grant, OAuthError};
 use private::{Secret, now};
 use reqwest::Method;
 use tokio::time::{Instant, sleep};
@@ -18,6 +18,7 @@ pub const ADMIN_SCOPE: &str =
 
 pub trait Zitadel {
     async fn device_flow(&self, login: &Login, password: &Secret, scope: &str) -> Result<Tokens>;
+    /// `None` when the refresh token is dead, so that only a sign-in gets tokens.
     async fn refresh(&self, refresh: &Secret) -> Result<Option<Tokens>>;
     async fn change_password(&self, token: &Secret, old: &Secret, new: &Secret) -> Result<()>;
 }
@@ -227,9 +228,18 @@ impl Zitadel for Http {
     }
 
     async fn refresh(&self, refresh: &Secret) -> Result<Option<Tokens>> {
-        let refused =
-            |e: OAuthError| note!("zitadel refused the refresh token ({}); signing in", e.code);
-        Ok(self.token(Grant::Refresh(refresh)).await?.map_err(refused).ok())
+        match self.token(Grant::Refresh(refresh)).await? {
+            Ok(tokens) => Ok(Some(tokens)),
+            // ZITADEL answers a refresh token it no longer takes with invalid_request.
+            Err(OAuthError {
+                code: code @ (ErrorCode::InvalidGrant | ErrorCode::InvalidRequest),
+                ..
+            }) => {
+                note!("zitadel refused the refresh token ({code}); signing in");
+                Ok(None)
+            }
+            Err(error) => bail!("zitadel refused the refresh token: {}", error.code),
+        }
     }
 
     async fn change_password(&self, token: &Secret, old: &Secret, new: &Secret) -> Result<()> {
