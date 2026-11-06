@@ -61,7 +61,8 @@ impl Mirror {
         match reply.status() {
             StatusCode::NOT_FOUND => Ok(None),
             s if s.is_success() => {
-                let tag = etag(reply.headers()).unwrap_or_default();
+                let tag = etag(reply.headers())
+                    .with_context(|| format!("stalwart GET {file}: no ETag"))?;
                 Ok(Some((reply.text().await?, tag)))
             }
             s => anyhow::bail!("stalwart GET {file}: HTTP {s}"),
@@ -135,19 +136,20 @@ pub struct Entry {
     pub gone: bool,
 }
 
-/// Tags match by local name, whatever namespace prefix the server picked.
+/// Tags match by local name, whatever namespace prefix the server picked. A removal is the
+/// response's own 404 (RFC 6578 §3.2); a propstat's is a property the file lacks.
 fn responses(xml: &str) -> (Vec<Entry>, Option<String>) {
     let (mut entries, mut token) = (vec![], None);
     let mut current: Option<(Option<FileName>, Option<String>, bool)> = None;
+    let mut propstat = false;
     for tag in xml.split('<') {
         let Some((name, text)) = tag.split_once('>') else { continue };
+        let name = name.split_whitespace().next().unwrap_or_default();
         let closing = name.starts_with('/');
-        let local = name
-            .trim_start_matches('/')
-            .rsplit_once(':')
-            .map_or(name.trim_start_matches('/'), |(_, l)| l);
-        let local = local.split_whitespace().next().unwrap_or_default();
+        let name = name.trim_start_matches('/');
+        let local = name.rsplit_once(':').map_or(name, |(_, l)| l);
         match (local, closing) {
+            ("propstat", closing) => propstat = !closing,
             ("response", false) => current = Some((None, None, false)),
             ("response", true) => {
                 if let Some((Some(file), etag, gone)) = current.take() {
@@ -164,7 +166,7 @@ fn responses(xml: &str) -> (Vec<Entry>, Option<String>) {
                     *etag = Some(text.replace("&quot;", "\""));
                 }
             }
-            ("status", false) if text.contains(" 404") => {
+            ("status", false) if !propstat && text.contains(" 404") => {
                 if let Some((_, _, gone)) = current.as_mut() {
                     *gone = true;
                 }
