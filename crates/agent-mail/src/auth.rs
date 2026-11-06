@@ -52,15 +52,67 @@ fn refusal() -> anyhow::Error {
     Failure::PasswordRefused.with("zitadel refused the password")
 }
 
-/// ZITADEL's error IDs for a wrong password: its own, and the one IgnoreUnknownUsernames gives every
-/// failed sign-in.
-const WRONG_PASSWORD: [&str; 2] = ["COMMAND-3M0fs", "EVENT-SDe2f"];
+/// ZITADEL's error IDs for a password post it failed before checking the password, so before a
+/// failed check could count toward a lockout: reading the login policy failed.
+const UNCHECKED: [&str; 1] = ["COMMAND-Edf3g"];
 
-/// What a login page showing error `id` after the password's post says of the password.
-fn answered(id: &str) -> anyhow::Error {
-    match WRONG_PASSWORD.contains(&id) {
-        true => refusal(),
-        false => anyhow!("zitadel answered the password with error {id}"),
+/// Where the walk through the login pages is with the password.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Password {
+    Unposted,
+    /// The page in hand answers the password's post, so it is what ZITADEL says of the password.
+    Answered,
+    /// The walk moved past the page that answered it, so ZITADEL took it.
+    Taken,
+}
+
+impl Password {
+    fn after(self, post: &Post) -> Password {
+        match (self, post.asks_password) {
+            (_, true) => Password::Answered,
+            (Password::Answered, false) => Password::Taken,
+            (walked, false) => walked,
+        }
+    }
+
+    /// A failure on the page answering the password, which says nothing else of itself, taken as
+    /// its refusal: only a refusal stops the password being posted again.
+    fn refusing(self, e: anyhow::Error) -> anyhow::Error {
+        match self == Password::Answered && Failure::tag(&e).is_none() {
+            true => Failure::PasswordRefused.with(format!("{e:#}; taken as a refusal")),
+            false => e,
+        }
+    }
+}
+
+/// The post answering `page`, or none when it has no form.
+fn answer(page: &Page, answers: &[(&str, &str)], password: Password) -> Result<Option<Post>> {
+    let path = page.url.path();
+    let read = || {
+        let form = Form::read(&page.text)?;
+        if let Some(id) = form.error.as_ref().filter(|_| password == Password::Answered) {
+            let shown = format!("error {id:?} at {path}");
+            return match UNCHECKED.contains(&id.as_str()) {
+                true => Err(Failure::Transient
+                    .with(format!("zitadel failed before checking the password: {shown}"))),
+                false => bail!("zitadel answered the password with {shown}"),
+            };
+        }
+        let post = form.post(answers, &page.url)?;
+        let again =
+            password != Password::Unposted && post.as_ref().is_some_and(|p| p.asks_password);
+        ensure!(!again, "zitadel asked for the password again without saying why");
+        Ok(post)
+    };
+    read().map_err(|e| password.refusing(e))
+}
+
+/// `page`, unless what is in front of ZITADEL failed: its login renders its own errors, internal
+/// ones too, as 200 pages, so a 5xx says nothing of the password.
+fn served(page: Page) -> Result<Page> {
+    match page.status.is_server_error() {
+        true => Err(Failure::Transient.with(format!("{}: HTTP {}", page.url.path(), page.status))),
+        false => Ok(page),
     }
 }
 
@@ -227,20 +279,13 @@ impl Http {
         ];
         let browser = Web::new(true)?;
         let start = Origin::Auth.check(&device.verification_uri)?;
-        let mut page = browser.send(Method::GET, start, Body::Empty, None).await?;
-        let mut password_posted = false;
+        let mut page = served(browser.send(Method::GET, start, Body::Empty, None).await?)?;
+        let mut password = Password::Unposted;
         for _ in 0..8 {
-            let form = Form::read(&page.text)?;
-            if password_posted && let Some(id) = &form.error {
-                return Err(answered(id));
-            }
-            let Some(post) = form.post(&answers, &page.url)? else { break };
-            ensure!(
-                !(post.asks_password && password_posted),
-                "zitadel asked for the password again without saying why"
-            );
-            password_posted |= post.asks_password;
-            page = browser.send(Method::POST, post.url, Body::Form(&post.fields), None).await?;
+            let Some(post) = answer(&page, &answers, password)? else { break };
+            password = password.after(&post);
+            let sent = browser.send(Method::POST, post.url, Body::Form(&post.fields), None);
+            page = served(sent.await?)?;
             if post.consents {
                 break;
             }
@@ -304,7 +349,7 @@ impl Zitadel for Http {
 
 pub struct Form {
     elements: Vec<[String; 5]>,
-    /// The ID of the error the page shows.
+    /// The ID of the error the page shows: empty on an error page, which has it only in its text.
     pub error: Option<String>,
 }
 
@@ -335,8 +380,8 @@ impl Form {
             }
             Ok(())
         });
-        let shown = element!("div.lgn-error[title]", |el| {
-            error = el.get_attribute("title");
+        let shown = element!("div.lgn-error", |el| {
+            error = Some(el.get_attribute("title").unwrap_or_default());
             Ok(())
         });
         let settings = RewriteStrSettings::new().append_element_content_handler(collect);

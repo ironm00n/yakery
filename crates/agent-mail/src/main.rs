@@ -100,8 +100,13 @@ impl Failure {
         Tagged(self, message.into()).into()
     }
 
+    /// The tag `e` carries, if any; [`Failure::of`] reads an untagged error as transient.
+    pub fn tag(e: &anyhow::Error) -> Option<Failure> {
+        e.chain().find_map(|c| c.downcast_ref::<Tagged>()).map(|t| t.0)
+    }
+
     pub fn of(e: &anyhow::Error) -> Failure {
-        e.chain().find_map(|c| c.downcast_ref::<Tagged>()).map_or(Failure::Transient, |t| t.0)
+        Failure::tag(e).unwrap_or(Failure::Transient)
     }
 
     pub fn permanent(self) -> bool {
