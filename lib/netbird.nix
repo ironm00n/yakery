@@ -19,4 +19,5 @@ rec {
       v6 = "fd69::d9cb:7dd5:5e8a:7b1d";
     };
   };
+  addresses = host: builtins.attrValues (peers.${host} or { });
 }

@@ -17,7 +17,7 @@ let
 
   anyTls = lib.any (h: h.tls) (lib.attrValues cfg.hosts);
   anyOverlay = lib.any (h: h.listenOnOverlay) (lib.attrValues cfg.hosts);
-  overlayAddresses = lib.attrValues (my-lib.netbird.peers.${config.networking.hostName} or { });
+  overlayAddresses = my-lib.netbird.addresses config.networking.hostName;
 
   bracketV6 = a: if lib.hasInfix ":" a && !lib.hasPrefix "[" a then "[${a}]" else a;
 

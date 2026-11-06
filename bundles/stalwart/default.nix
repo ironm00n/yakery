@@ -56,6 +56,16 @@ let
   get-stalwart-secret = stalwart-secrets.get-path;
   credential = name: "/run/credentials/stalwart.service/${name}";
   certDir = config.security.acme.certs.${hostname}.directory;
+  smtpTls = cfg.receiving.enable || cfg.submission.enable;
+  smtpListener = name: port: addresses: {
+    inherit name;
+    bind = toSet (
+      map (a: if lib.hasInfix ":" a then "[${a}]:${toString port}" else "${a}:${toString port}") addresses
+    );
+    protocol = "smtp";
+    useTls = true;
+    tlsImplicit = false;
+  };
 
   defaults = import ./default-perms.nix {
     inherit lib;
@@ -432,9 +442,29 @@ in
       '';
     };
     receiving.enable = lib.mkEnableOption ''
-      SMTP on port 25 of the public addresses, with STARTTLS on the ACME certificate nginx keeps for
-      ${hostname}, so mail from other servers reaches the local domains
+      SMTP on port 25 of the public addresses, with STARTTLS on {option}`bundles.stalwart.certificate`,
+      so mail from other servers reaches the local domains
     '';
+    submission.enable = lib.mkEnableOption ''
+      SMTP submission on port 587 of the public addresses, and of the NetBird overlay addresses
+      that NetBird's DNS sends peers to, with STARTTLS on {option}`bundles.stalwart.certificate`.
+      Mail is taken only from an account signed in there, and sign-in is offered only once STARTTLS
+      is done
+    '';
+    certificate = lib.mkOption {
+      type = lib.types.submodule {
+        options = {
+          chain = lib.mkOption { type = lib.types.path; };
+          key = lib.mkOption { type = lib.types.path; };
+        };
+      };
+      default = {
+        chain = "${certDir}/fullchain.pem";
+        key = "${certDir}/key.pem";
+      };
+      defaultText = lib.literalMD "the ACME certificate nginx keeps for ${hostname}";
+      description = "The certificate chain and key Stalwart's SMTP listeners present for ${hostname}.";
+    };
     deliveryWebhooks = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -563,9 +593,9 @@ in
         s3_secret_key = get-stalwart-secret "s3_secret_key";
         dkim_tsig = "${tsig.dir}/secret";
       }
-      // lib.optionalAttrs cfg.receiving.enable {
-        tls_certificate = "${certDir}/fullchain.pem";
-        tls_key = "${certDir}/key.pem";
+      // lib.optionalAttrs smtpTls {
+        tls_certificate = cfg.certificate.chain;
+        tls_key = cfg.certificate.key;
       };
 
       environmentFile = pkgs.writeText "stalwart-env" ''
@@ -604,21 +634,15 @@ in
                 tlsImplicit = false;
               };
             }
-            // lib.optionalAttrs cfg.receiving.enable {
-              smtp = {
-                name = "smtp";
-                bind = toSet [
-                  "${ips.ipv4.address}:25"
-                  "[${address}]:25"
-                ];
-                protocol = "smtp";
-                useTls = true;
-                tlsImplicit = false;
-              };
+            // lib.optionalAttrs cfg.receiving.enable { smtp = smtpListener "smtp" 25 hostnameAddresses; }
+            // lib.optionalAttrs cfg.submission.enable {
+              submission = smtpListener "submission" 587 (
+                hostnameAddresses ++ my-lib.netbird.addresses config.networking.hostName
+              );
             }
           ))
           (reconcile "Certificate" [ "certificate" ] (
-            lib.optionalAttrs cfg.receiving.enable {
+            lib.optionalAttrs smtpTls {
               mail = {
                 certificate = fileSecret (credential "tls_certificate");
                 privateKey = fileSecret (credential "tls_key");
@@ -716,7 +740,7 @@ in
             defaultHostname = hostname;
             defaultDomainId = ref "ironmoon";
             # SMTP clients often send no SNI
-            defaultCertificateId = if cfg.receiving.enable then ref "mail" else null;
+            defaultCertificateId = if smtpTls then ref "mail" else null;
           })
           (upsertOn1 "Account" "root" [ "name" "domainId" ] {
             "@type" = "User";
@@ -780,6 +804,18 @@ in
               match = [ ];
               "else" =
                 "!is_empty(authenticated_as) || (!key_exists('spam-block', sender_domain) && !is_local_domain(sender_domain))";
+            };
+          })
+          # Stalwart's default also offers OAUTHBEARER before STARTTLS, so a token would cross in the clear
+          (update "MtaStageAuth" {
+            saslMechanisms = {
+              match = [
+                {
+                  "if" = "local_port != 25 && is_tls";
+                  "then" = "[plain, login, oauthbearer, xoauth2]";
+                }
+              ];
+              "else" = "false";
             };
           })
           (reconcile "SieveSystemScript" [ "name" ] (
@@ -997,11 +1033,14 @@ in
     };
 
     networking.firewall.allowedUDPPorts = [ 53 ];
-    networking.firewall.allowedTCPPorts = [ 53 ] ++ lib.optional cfg.receiving.enable 25;
+    networking.firewall.allowedTCPPorts = [
+      53
+    ]
+    ++ lib.optional cfg.receiving.enable 25
+    ++ lib.optional cfg.submission.enable 587;
     # Stalwart reads the certificate files only at start
-    security.acme.certs.${hostname}.reloadServices =
-      lib.optional cfg.receiving.enable "stalwart.service";
-    systemd.services.stalwart = lib.mkIf cfg.receiving.enable {
+    security.acme.certs.${hostname}.reloadServices = lib.optional smtpTls "stalwart.service";
+    systemd.services.stalwart = lib.mkIf smtpTls {
       wants = [ "acme-${hostname}.service" ];
       after = [ "acme-${hostname}.service" ];
     };

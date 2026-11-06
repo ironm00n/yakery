@@ -81,9 +81,13 @@ let
         mkdir $out && cd $out
         ${lib.concatMapStrings (host: "minica --domains ${host}\n") (vhosts ++ tlsHosts ++ [ s3Host ])}
       '';
+      pem = host: {
+        chain = "${tls}/${host}/cert.pem";
+        key = "${tls}/${host}/key.pem";
+      };
       certificate = host: {
-        sslCertificate = "${tls}/${host}/cert.pem";
-        sslCertificateKey = "${tls}/${host}/key.pem";
+        sslCertificate = (pem host).chain;
+        sslCertificateKey = (pem host).key;
       };
     in
     {
@@ -114,9 +118,10 @@ let
         };
       };
 
-      # a VM reaches no ACME server, so nginx serves certificates from a build-time CA
+      # a VM reaches no ACME server, so nginx and Stalwart serve certificates from a build-time CA
       security.acme.certs = lib.mkForce { };
       security.pki.certificateFiles = [ "${tls}/minica.pem" ];
+      bundles.stalwart.certificate = pem my-lib.ironmoon.mail.host;
       services.nginx.virtualHosts =
         lib.genAttrs vhosts (host: certificate host // { enableACME = lib.mkForce false; })
         // lib.genAttrs tlsHosts certificate
@@ -199,6 +204,7 @@ in
     my-lib
     s3
     unavailableFlag
+    secretFiles
     ;
   address = user: "${user}@${domain}";
 
