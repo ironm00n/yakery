@@ -99,6 +99,10 @@ fn only_urgent_sends_a_subject_opening_with_an_urgent_tag() {
         "__URGENT__: d0149 lost" => refused("__URGENT__: d0149 lost");
         "Urgently, a pick" => "Urgently, a pick";
         "(urgent-ish) Olek's pick on c6 needed by Friday" => "(urgent-ish) Olek's pick on c6 needed by Friday";
+        "(Urgent & *important*) pick" => "(Urgent & *important*) pick";
+        "**Urgent … _or not_** weekly usage" => "**Urgent … _or not_** weekly usage";
+        "(\"Urgent\") label on c6 is a false alarm" => "(\"Urgent\") label on c6 is a false alarm";
+        "(urgent `_private` fix) landed" => "(urgent `_private` fix) landed";
         "**Urgent questions** for Olek on c6, whenever he's up"
             => "**Urgent questions** for Olek on c6, whenever he's up";
         "[urgent.rs] one more pass" => "[urgent.rs] one more pass";

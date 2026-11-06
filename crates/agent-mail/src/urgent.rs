@@ -69,9 +69,10 @@ fn tagged(subject: &str) -> bool {
     const CLOSERS: [char; 4] = [']', ')', '*', '_'];
     let Some((before, word, rest)) = leading(subject) else { return false };
     let spaced = rest.trim_start();
-    let closed = rest.trim_start_matches(|c: char| !c.is_alphanumeric() && !CLOSERS.contains(&c));
-    let bracketed = before.contains(['[', '(', '*', '_'])
-        && (closed.starts_with(CLOSERS) || rest.starts_with([',', '/', '?']));
+    // past spaces and symbols like 🚨 only, and not a `*` or `_` that opens a word (`*important*`, `_or not_`)
+    let closed = rest.trim_start_matches(|c: char| c.is_whitespace() || !(c.is_ascii() || c.is_alphanumeric()));
+    let closes = closed.starts_with(CLOSERS) && !closed[1..].starts_with(char::is_alphanumeric);
+    let bracketed = before.contains(['[', '(', '*', '_']) && (closes || rest.starts_with([',', '/', '?']));
     word == "URGENT"
         || bracketed
         || rest.starts_with('!')
