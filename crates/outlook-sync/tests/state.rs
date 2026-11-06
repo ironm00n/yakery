@@ -54,15 +54,17 @@ fn a_sign_in_serves_only_a_policy_whose_scope_it_asked_for() {
 async fn a_redeem_ends_the_sign_in_whether_or_not_its_connection_stays() {
     let temp = tempfile::tempdir().unwrap();
     let dir = Rc::new(Dir::open(temp.path(), &[]).unwrap());
-    let local = LocalSet::new();
-    let refused = finish(dir.clone(), async { Err("refused".into()) });
+    let (local, redeeming) = (LocalSet::new(), Some(Login::Redeeming { state: Secret::new("s") }));
+    dir.save(LOGIN, &redeeming).unwrap();
+    let refused = finish(dir.clone(), Secret::new("s"), async { Err("refused".into()) });
     assert_eq!(local.run_until(refused).await, Err("refused".into()));
     assert_eq!(login(&dir), json!({ "Done": { "Err": "refused" } }));
-    dir.save(LOGIN, &Some(Login::Redeeming)).unwrap();
+    dir.save(LOGIN, &redeeming).unwrap();
     let (answer, answered) = tokio::sync::oneshot::channel();
     local
         .run_until(async {
-            let mut dropped = pin!(finish(dir.clone(), async { answered.await.unwrap() }));
+            let answer = async { answered.await.unwrap() };
+            let mut dropped = pin!(finish(dir.clone(), Secret::new("s"), answer));
             std::future::poll_fn(|cx| {
                 assert!(dropped.as_mut().poll(cx).is_pending());
                 Poll::Ready(())
@@ -70,10 +72,41 @@ async fn a_redeem_ends_the_sign_in_whether_or_not_its_connection_stays() {
             .await;
         })
         .await;
-    assert_eq!(login(&dir), json!("Redeeming"));
+    assert_eq!(login(&dir), json!({ "Redeeming": { "state": "s" } }));
     assert!(answer.send(Ok(())).is_ok(), "the redeem was dropped with its connection");
     local.await;
     assert_eq!(login(&dir), json!({ "Done": { "Ok": null } }));
+}
+
+#[tokio::test]
+async fn a_redeem_ending_after_a_newer_login_leaves_that_sign_in_as_it_is() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = Rc::new(Dir::open(temp.path(), &[]).unwrap());
+    let until = "2026-11-06T12:00:00Z";
+    let pending = |state: &str, verifier: &str| Login::Pending {
+        state: Secret::new(state),
+        verifier: Secret::new(verifier),
+        until: until.parse().unwrap(),
+    };
+    let rows = [
+        (
+            pending("s2", "v2"),
+            json!({ "Pending": { "state": "s2", "verifier": "v2", "until": until } }),
+        ),
+        (Login::Redeeming { state: Secret::new("s2") }, json!({ "Redeeming": { "state": "s2" } })),
+        (Login::Done(Ok(())), json!({ "Done": { "Ok": null } })),
+    ];
+    let (mut got, mut want) = (vec![], vec![]);
+    for (newer, left) in rows {
+        dir.save(LOGIN, &Some(pending("s1", "v1"))).unwrap();
+        let returned = Returned::read("code=c&state=s1");
+        let pkce = take(&dir, &returned, until.parse().unwrap()).unwrap().unwrap();
+        dir.save(LOGIN, &Some(newer)).unwrap();
+        let late = finish(dir.clone(), pkce.state().clone(), async { Err("late".into()) });
+        got.push((LocalSet::new().run_until(late).await, login(&dir)));
+        want.push((Err("late".into()), left));
+    }
+    assert_eq!(got, want);
 }
 
 #[test]
@@ -85,7 +118,8 @@ fn a_sign_in_left_redeeming_is_failed_as_the_daemon_starts() {
         abandon(&dir).unwrap();
         login(&dir)
     };
-    assert_eq!(abandoned(Some(Login::Redeeming)), json!({ "Done": { "Err": ABANDONED } }));
+    let redeeming = Login::Redeeming { state: Secret::new("s") };
+    assert_eq!(abandoned(Some(redeeming)), json!({ "Done": { "Err": ABANDONED } }));
     assert_eq!(abandoned(Some(Login::Done(Ok(())))), json!({ "Done": { "Ok": null } }));
     assert_eq!(abandoned(None), Value::Null);
     let until = "2026-11-06T12:00:00Z";

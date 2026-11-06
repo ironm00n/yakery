@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use jiff::Timestamp;
 use oidc::{Pkce, Returned};
 use private::{Dir, Secret};
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub enum Login {
     Pending { state: Secret, verifier: Secret, until: Timestamp },
-    Redeeming,
+    Redeeming { state: Secret },
     Done(Result<(), String>),
 }
 
@@ -28,26 +28,28 @@ pub enum Untaken {
 pub fn take(dir: &Dir, returned: &Returned, now: Timestamp) -> Result<Result<Pkce, Untaken>> {
     let (pkce, until) = match dir.load(LOGIN)? {
         Some(Login::Pending { state, verifier, until }) => (Pkce::kept(state, verifier), until),
-        Some(Login::Redeeming) => return Ok(Err(Untaken::Taken)),
+        Some(Login::Redeeming { .. }) => return Ok(Err(Untaken::Taken)),
         _ => return Ok(Err(Untaken::Nothing)),
     };
     if !returned.returns_from(&pkce) || now > until {
         return Ok(Err(Untaken::Stale));
     }
-    dir.save(LOGIN, &Some(Login::Redeeming))?;
+    dir.save(LOGIN, &Some(Login::Redeeming { state: pkce.state().clone() }))?;
     Ok(Ok(pkce))
 }
 
-/// Ends the sign-in `take` recorded as redeeming with how `redeem` ends. The redeem runs as a task
-/// of its own, so a dropped connection doesn't cancel it: Entra may have taken the code already,
-/// and a code is redeemed only once (RFC 6749 §4.1.2).
+/// Ends the sign-in `take` recorded as redeeming under `state` with how `redeem` ends, unless a
+/// newer sign-in has replaced it. The redeem runs as a task of its own, so a dropped connection
+/// doesn't cancel it: Entra may have taken the code already, and a code is redeemed only once
+/// (RFC 6749 §4.1.2).
 pub async fn finish(
     dir: Rc<Dir>,
+    state: Secret,
     redeem: impl Future<Output = Result<(), String>> + 'static,
 ) -> Result<(), String> {
     let redeeming = tokio::task::spawn_local(async move {
         let outcome = redeem.await;
-        if let Err(e) = dir.save(LOGIN, &Some(Login::Done(outcome.clone()))) {
+        if let Err(e) = end(&dir, &state, &outcome) {
             yakery_log::warn!("recording the sign-in: {e:#}");
         }
         outcome
@@ -55,10 +57,19 @@ pub async fn finish(
     redeeming.await.unwrap_or_else(|e| Err(format!("the redeem stopped: {e}")))
 }
 
+fn end(dir: &Dir, state: &Secret, outcome: &Result<(), String>) -> Result<()> {
+    match dir.load(LOGIN)? {
+        Some(Login::Redeeming { state: taken }) if taken == *state => {
+            dir.save(LOGIN, &Some(Login::Done(outcome.clone())))
+        }
+        _ => bail!("a newer sign-in replaced it"),
+    }
+}
+
 /// Records as failed a sign-in a stopped daemon left redeeming: redeems run only in the daemon, so
 /// none is in flight as it starts.
 pub fn abandon(dir: &Dir) -> Result<()> {
-    if let Some(Login::Redeeming) = dir.load(LOGIN)? {
+    if let Some(Login::Redeeming { .. }) = dir.load(LOGIN)? {
         dir.save(LOGIN, &Some(Login::Done(Err(ABANDONED.into()))))?;
     }
     Ok(())

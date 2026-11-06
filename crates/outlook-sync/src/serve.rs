@@ -135,7 +135,7 @@ impl Sync {
                 );
             }
         };
-        let outcome = state::finish(self.state.clone(), async move {
+        let outcome = state::finish(self.state.clone(), pkce.state().clone(), async move {
             let code = returned.code(&pkce).map_err(|denied| {
                 let error = match denied {
                     Denied::Error { error, .. } => error,
