@@ -482,9 +482,7 @@
           correspondentsFor = inputs.secrets.data.mail.agentCorrespondentsFor;
         }
       );
-      # the same without agent-mail's values, which read the secrets input: what a build on Explorer gets (xb's base for
-      # yakery names it), where that input can't be fetched
-      crates-cluster = crates-shell pkgs { };
+      crates-without-secrets = crates-shell pkgs { };
     });
   };
 }
