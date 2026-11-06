@@ -862,13 +862,30 @@ fn watching(timeout: u64) -> wait::Args {
     }
 }
 
+/// The wait on the mail `opening` opens, as `wait` runs it: its deadline its --timeout from now.
+async fn watch<M: std::borrow::Borrow<Mail>>(
+    opening: impl Future<Output = Result<M>>,
+    args: wait::Args,
+) -> Result<ExitCode> {
+    wait::watch(opening, args.deadline()?, args).await
+}
+
+/// How a wait ended, the paths it names under `dir`'s locks' home left short.
+fn ending(dir: &Scratch, ended: Result<ExitCode>) -> String {
+    match ended {
+        Ok(code) if code == ExitCode::SUCCESS => "delivered".into(),
+        Ok(code) => format!("{code:?}"),
+        Err(e) => dir.shown::<&str>(Err(e)),
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_wait_signs_in_again_when_its_token_expires_and_then_claims() {
     let dir = Scratch::new("wait-expired");
     let mut stalwart = Stalwart::new(vec![email("a1", json!({}))]);
     stalwart.expire_on_stream = true;
     let (_wire, server, mail) = mail(&dir, stalwart).await;
-    assert_eq!(wait::watch(async { mail }, watching(600)).await.unwrap(), ExitCode::SUCCESS);
+    assert_eq!(watch(async { mail }, watching(600)).await.unwrap(), ExitCode::SUCCESS);
     let server = server.borrow();
     let [first, second] = server.opened[..] else { panic!("{:?}", server.opened) };
     assert_eq!(first, Duration::ZERO);
@@ -887,7 +904,7 @@ async fn a_wait_has_stalwart_parse_only_the_mail_it_delivers() {
     let other = |id| email(id, json!({ "to": [{ "email": "agent+other@example.org" }] }));
     let stalwart = Stalwart::new(vec![other("o1"), email("a1", json!({})), other("o2")]);
     let (_wire, server, mail) = mail(&dir, stalwart).await;
-    assert_eq!(wait::watch(async { mail }, watching(600)).await.unwrap(), ExitCode::SUCCESS);
+    assert_eq!(watch(async { mail }, watching(600)).await.unwrap(), ExitCode::SUCCESS);
     assert_eq!(server.borrow().parsed, BTreeSet::from(["a1".to_owned()]));
 }
 
@@ -915,7 +932,7 @@ async fn claimed_beside(name: &str, listener: Heartbeat) -> Vec<bool> {
     let unsigned = format!("From: {HIM}\r\nTo: {POOL}\r\n\r\nyes\r\n");
     stalwart.downloads.extend([reply(200, signed_to(POOL)), reply(200, unsigned)]);
     let (_wire, server, mail) = mail(&dir, stalwart).await;
-    store_in(&dir).listeners().unwrap().put(&"mod-1".parse().unwrap(), listener).unwrap();
+    store_in(&dir).listeners().unwrap().put(&"mod-1".parse().unwrap(), listener).await.unwrap();
     let topics = ["pool", "other"].map(|t| t.parse().unwrap()).into();
     let watching = wait::Watching { topic: topics, thread: vec![] };
     let own = wait::Args {
@@ -924,7 +941,7 @@ async fn claimed_beside(name: &str, listener: Heartbeat) -> Vec<bool> {
         timeout: Some(Duration::from_secs(600)),
         json: false,
     };
-    assert_eq!(wait::watch(async { mail }, own).await.unwrap(), ExitCode::SUCCESS);
+    assert_eq!(watch(async { mail }, own).await.unwrap(), ExitCode::SUCCESS);
     server.borrow().emails.iter().map(|m| m["keywords"]["$seen"] == true).collect()
 }
 
@@ -947,7 +964,7 @@ async fn a_listener_beats_after_its_scans_and_leaves_when_its_wait_ends() {
     let dir = Scratch::new("listener-beats");
     let (_wire, _server, mail) = mail(&dir, Stalwart::new(vec![])).await;
     let (store, id): (Store, SessionId) = (store_in(&dir), "mod-1".parse().unwrap());
-    store.records().unwrap().record(&id, vec!["pool".parse().unwrap()], vec![]).unwrap();
+    store.records().unwrap().record(&id, vec!["pool".parse().unwrap()], vec![]).await.unwrap();
     let listeners = store.listeners().unwrap();
     let args = wait::Args {
         watching: wait::Watching::default(),
@@ -956,7 +973,7 @@ async fn a_listener_beats_after_its_scans_and_leaves_when_its_wait_ends() {
         json: true,
     };
     let mail = mail.unwrap();
-    let (ended, (first, again)) = tokio::join!(wait::watch(async { Ok(&mail) }, args), async {
+    let (ended, (first, again)) = tokio::join!(watch(async { Ok(&mail) }, args), async {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let first = listeners.all().unwrap();
         listeners.leave(&id).unwrap();
@@ -987,16 +1004,19 @@ async fn handed_over(steps: &[(u64, Step)]) -> Option<u64> {
     let dir = Scratch::new("late");
     let (_wire, server, mail) = mail(&dir, Stalwart::new(vec![])).await;
     let (store, id): (Store, SessionId) = (store_in(&dir), "mod-1".parse().unwrap());
-    let take = |step| match step {
+    let take = async |step| match step {
         Step::Arrive => {
             let late = json!({ "to": [{ "email": "agent+late@example.org" }] });
             server.borrow_mut().arrive(email("l1", late))
         }
         Step::Watch => {
-            store.records().unwrap().record(&id, vec!["late".parse().unwrap()], vec![]).unwrap()
+            let records = store.records().unwrap();
+            records.record(&id, vec!["late".parse().unwrap()], vec![]).await.unwrap()
         }
     };
-    steps.iter().filter(|s| s.0 == 0).for_each(|s| take(s.1));
+    for &(_, step) in steps.iter().filter(|s| s.0 == 0) {
+        take(step).await;
+    }
     let args = wait::Args {
         watching: wait::Watching::default(),
         session: Some(id.clone()),
@@ -1007,11 +1027,11 @@ async fn handed_over(steps: &[(u64, Step)]) -> Option<u64> {
     let later = async {
         for &(at, step) in steps.iter().filter(|s| s.0 > 0) {
             tokio::time::sleep_until(start + Duration::from_secs(at)).await;
-            take(step);
+            take(step).await;
         }
     };
     let mail = mail.unwrap();
-    let (ended, ()) = tokio::join!(wait::watch(async { Ok(&mail) }, args), later);
+    let (ended, ()) = tokio::join!(watch(async { Ok(&mail) }, args), later);
     (ended.unwrap() == ExitCode::SUCCESS).then(|| start.elapsed().as_secs())
 }
 
@@ -1038,7 +1058,7 @@ async fn a_wait_reopens_an_idle_silent_or_dropped_stream_and_gives_up_at_its_dea
     let mut stalwart = Stalwart::new(vec![]);
     stalwart.streams.extend([stream(&[PING]), open(&[], false), reply(200, "")]);
     let (_wire, server, mail) = mail(&dir, stalwart).await;
-    assert_eq!(wait::watch(async { mail }, watching(400)).await.unwrap(), ExitCode::from(2));
+    assert_eq!(watch(async { mail }, watching(400)).await.unwrap(), ExitCode::from(2));
     let server = server.borrow();
     let opened = &server.opened;
     let after = |i: usize| opened[i] - opened[i - 1];
@@ -1068,9 +1088,63 @@ async fn a_waits_timeout_covers_waiting_for_the_auth_lock() {
     let auth = Auth { zitadel: http, login: store.login.clone(), store, password };
     let opening = async { Mail::over(Conn::open(auth, Web::new(false)?).await?).await };
     let start = Instant::now();
-    let ended = tokio::time::timeout(Duration::from_secs(3600), wait::watch(opening, watching(60)));
+    let ended = tokio::time::timeout(Duration::from_secs(3600), watch(opening, watching(60)));
     let ended = shown(ended.await.expect("still waiting after an hour").map(|_| ""));
     let unscanned = "error: the wait timed out before any scan finished: opening the mail took all of --timeout";
+    assert_eq!((start.elapsed().as_secs(), ended), (60, unscanned.into()));
+}
+
+/// How a wait on `emails` ends, and when, while another process holds the lock at `path` under a day's lease.
+async fn held_out(path: &str, emails: Vec<Value>, args: wait::Args) -> (u64, String) {
+    let dir = Scratch::new("wait-held-out");
+    let (_wire, _server, mail) = mail(&dir, Stalwart::new(emails)).await;
+    store_in(&dir).listeners().unwrap();
+    let _held = dir.hold(path, 4242, now() + 86400);
+    let start = Instant::now();
+    let ended = tokio::time::timeout(Duration::from_secs(3600), watch(async { mail }, args)).await;
+    let ended = ended.map_or("still waiting after an hour".into(), |e| ending(&dir, e));
+    (start.elapsed().as_secs(), ended)
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_waits_timeout_covers_the_locks_its_claims_wait_for() {
+    let (mut got, mut want) = (vec![], vec![]);
+    for lock in ["auth.lock", "claims.lock"] {
+        let path = format!("agent-mail/locks/{lock}");
+        got.push(held_out(&path, vec![email("a1", json!({}))], watching(60)).await);
+        want.push((60, format!(
+            "error: the wait timed out before any scan finished: gave up waiting for {path} at the deadline"
+        )));
+    }
+    assert_eq!(got, want);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_listeners_timeout_covers_the_lock_its_beats_wait_for() {
+    let args = wait::Args {
+        watching: wait::Watching::default(),
+        session: Some("mod-1".parse().unwrap()),
+        json: true,
+        ..watching(60)
+    };
+    let path = "agent-mail/sessions/listeners.lock";
+    assert_eq!(held_out(path, vec![], args).await, (60, format!("{:?}", ExitCode::from(2))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_waits_timeout_covers_signing_in_again() {
+    let dir = Scratch::new("wait-reconnect");
+    let mut stalwart = Stalwart::new(vec![]);
+    stalwart.streams.push_back(reply(503, ""));
+    let (_opened, server, mail) = mail(&dir, stalwart).await;
+    let _wire = wired(move |r| match r.url().path() {
+        "/.well-known/jmap" => reply(429, LIMIT),
+        _ => server.borrow_mut().answer(r),
+    });
+    let start = Instant::now();
+    let ended = ending(&dir, watch(async { mail }, watching(60)).await);
+    let unscanned =
+        "error: the wait timed out before any scan finished: signing in again ran past --timeout";
     assert_eq!((start.elapsed().as_secs(), ended), (60, unscanned.into()));
 }
 
@@ -1122,7 +1196,7 @@ async fn a_busy_server_is_checked_again_in_30_s_and_a_config_error_ends_the_wait
     let (_wire, server, mail) = mail(&dir, stalwart).await;
     let mail = mail.unwrap();
     let start = Instant::now();
-    assert_eq!(wait::watch(async { Ok(&mail) }, watching(600)).await.unwrap(), ExitCode::SUCCESS);
+    assert_eq!(watch(async { Ok(&mail) }, watching(600)).await.unwrap(), ExitCode::SUCCESS);
     assert!(
         start.elapsed() >= Duration::from_millis(111_500 + 30_000 + 500),
         "{:?}",
@@ -1131,7 +1205,7 @@ async fn a_busy_server_is_checked_again_in_30_s_and_a_config_error_ends_the_wait
     server.borrow_mut().emails.clear();
     (server.borrow_mut().expire_on_stream, server.borrow_mut().refresh_refused) =
         (true, Some("invalid_grant"));
-    let ended = wait::watch(async { Ok(&mail) }, watching(600)).await.unwrap_err();
+    let ended = watch(async { Ok(&mail) }, watching(600)).await.unwrap_err();
     assert!(Failure::of(&ended).permanent(), "{ended:#}");
 }
 
@@ -1149,7 +1223,7 @@ async fn a_sign_in_only_a_person_can_finish_ends_the_wait_and_holds_the_password
         (Some("auth.example.org"), path) if path != "/oauth/v2/token" => pages(r),
         _ => server.borrow_mut().answer(r),
     });
-    let ended = wait::watch(async { Ok(&mail) }, watching(600)).await.unwrap_err();
+    let ended = watch(async { Ok(&mail) }, watching(600)).await.unwrap_err();
     let (failure, refused) =
         (format!("{:?}", Failure::of(&ended)), dir.lock("refused.json").exists());
     assert_eq!((failure.as_str(), refused), ("Unfinished", false), "{ended:#}");
@@ -1165,11 +1239,7 @@ async fn through_outage(
     let (_wire, server, mail) = mail(&dir, Stalwart::new(emails)).await;
     server.borrow_mut().down = down;
     let start = Instant::now();
-    let ended = match wait::watch(async { mail }, watching(timeout)).await {
-        Ok(code) if code == ExitCode::SUCCESS => "delivered".into(),
-        Ok(code) => format!("{code:?}"),
-        Err(e) => format!("error: {e:#}"),
-    };
+    let ended = ending(&dir, watch(async { mail }, watching(timeout)).await);
     (start.elapsed().as_secs(), ended)
 }
 

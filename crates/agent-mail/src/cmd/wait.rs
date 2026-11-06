@@ -15,6 +15,7 @@ use crate::{
     BACKOFF, RECHECK, REOPEN, STALE, SUBMISSION_KEY,
     address::{SessionId, Topic},
     authority::{self, Word},
+    deadline::{before, by},
     jmap::MAIL,
     listeners::{Leave, Listeners},
     mail::{Addr, Body, Current, Email, Keyword, Mail, Mark, names},
@@ -81,6 +82,14 @@ pub struct Args {
     pub json: bool,
 }
 
+impl Args {
+    /// When this wait gives up, if started now.
+    pub fn deadline(&self) -> Result<Option<Instant>> {
+        let at = |t| Instant::now().checked_add(t).context("timeout too far ahead");
+        self.timeout.map(at).transpose()
+    }
+}
+
 #[derive(clap::Args)]
 #[command(group(ArgGroup::new("watched").required(true).multiple(true).args(["topic", "thread"])))]
 pub struct Subscribe {
@@ -107,8 +116,8 @@ pub struct Unsubscribe {
 }
 
 /// Records `given` for `id`'s `wait --session` and says what that session now watches.
-fn record(records: &Records, id: &SessionId, given: &Watching) -> Result<String> {
-    records.record(id, given.topic.clone(), given.thread.clone())?;
+async fn record(records: &Records, id: &SessionId, given: &Watching) -> Result<String> {
+    records.record(id, given.topic.clone(), given.thread.clone()).await?;
     watches(records, id)
 }
 
@@ -124,8 +133,8 @@ pub fn watches(records: &Records, id: &SessionId) -> Result<String> {
 }
 
 /// Takes `given` out of `id`'s record, warning of what it did not hold, and says what that session still watches.
-pub fn forget(records: &Records, id: &SessionId, given: Watching) -> Result<String> {
-    let absent = records.forget(id, given.topic, given.thread)?;
+pub async fn forget(records: &Records, id: &SessionId, given: Watching) -> Result<String> {
+    let absent = records.forget(id, given.topic, given.thread).await?;
     if !absent.topics.is_empty() || !absent.threads.is_empty() {
         warn!("session {id} did not watch {}", listed(&absent));
     }
@@ -147,7 +156,10 @@ pub async fn subscribe(args: Subscribe) -> Result<ExitCode> {
     let session =
         session().context("subscribe records for a Claude Code session, and this is none")?;
     let id: SessionId = session.session_id.parse()?;
-    succeed!("{}", record(&Store::new(&Config::load()?.login)?.records()?, &id, &args.watching)?)
+    succeed!(
+        "{}",
+        record(&Store::new(&Config::load()?.login)?.records()?, &id, &args.watching).await?
+    )
 }
 
 /// Says what a Claude Code session's `wait --session` watches, this one's unless --session names another.
@@ -165,19 +177,22 @@ pub fn subscribed(records: &Records, id: &SessionId, json: bool) -> Result<Strin
 /// names another.
 pub async fn unsubscribe(args: Unsubscribe) -> Result<ExitCode> {
     let id = target(args.session, "unsubscribe edits")?;
-    succeed!("{}", forget(&Store::new(&Config::load()?.login)?.records()?, &id, args.watching)?)
+    succeed!(
+        "{}",
+        forget(&Store::new(&Config::load()?.login)?.records()?, &id, args.watching).await?
+    )
 }
 
 /// While `session`'s mail-listener mod is live, records `given` for its wait and says so: that wait hands the session
 /// all its mail, so a second one would only race it.
-pub fn deferred(
+pub async fn deferred(
     store: &Store,
     session: &SessionId,
     given: &Watching,
     now: i64,
 ) -> Result<Option<String>> {
     let Some(listener) = store.listeners()?.listening(session, now)? else { return Ok(None) };
-    let watches = record(&store.records()?, session, given)?;
+    let watches = record(&store.records()?, session, given).await?;
     Ok(Some(format!(
         "the mail-listener mod (pid {}) already waits for this session and hands its mail in as prompts; {watches}",
         listener.pid
@@ -413,7 +428,7 @@ impl Watch<'_> {
             let claimed = claimed?;
             self.scanned = Some(Instant::now());
             if let Some((listeners, session)) = &self.beat
-                && let Err(e) = listeners.beat(session, &self.topics, &self.starts, now())
+                && let Err(e) = listeners.beat(session, &self.topics, &self.starts, now()).await
             {
                 warn!(
                     "{e:#}; this listener's scan goes unrecorded, so other waits may claim Owen's word"
@@ -443,12 +458,12 @@ impl Watch<'_> {
     async fn until_due(&mut self) -> Result<Option<(Vec<Email>, Ready)>> {
         let (mut backoff, mut reopen) = (BACKOFF, REOPEN);
         loop {
-            let before = self.scanned;
+            let last = self.scanned;
             let e = match self.settle().await {
                 Ok(wake) => return Ok(wake),
                 Err(e) => e,
             };
-            if self.scanned != before {
+            if self.scanned != last {
                 (backoff, reopen) = (BACKOFF, REOPEN);
             }
             let since = self.scanned.unwrap_or(self.started).elapsed();
@@ -461,6 +476,7 @@ impl Watch<'_> {
             let (pause, reconnect, why) = match Failure::of(&e) {
                 Failure::Idle => continue,
                 Failure::Config | Failure::PasswordRefused | Failure::Unfinished => return Err(e),
+                _ if self.remaining().is_some_and(|left| left.is_zero()) => return self.ended(e),
                 // Every wait on a host loses its stream when Stalwart restarts; drawn apart, their scans don't
                 // arrive together, and the spread doubles while the drops come in a row.
                 Failure::Dropped => {
@@ -480,51 +496,54 @@ impl Watch<'_> {
             let pause = pause.min(STALE - since);
             warn!("{why} in {:.1}s", pause.as_secs_f64());
             if !self.pause(pause).await {
-                return match self.scanned {
-                    Some(_) => Ok(None),
-                    None => Err(e.context(UNSCANNED)),
-                };
+                return self.ended(e);
             }
             if reconnect {
                 backoff *= 2;
-                match self.mail.reconnect().await {
-                    Err(e) if Failure::of(&e).permanent() => return Err(e),
-                    Err(e) => warn!("{e:#}"),
-                    Ok(()) => note!("signed in again; waiting"),
+                match before(self.deadline, self.mail.reconnect()).await {
+                    None => return self.ended(anyhow!("signing in again ran past --timeout")),
+                    Some(Err(e)) if Failure::of(&e).permanent() => return Err(e),
+                    Some(Err(e)) => warn!("{e:#}"),
+                    Some(Ok(())) => note!("signed in again; waiting"),
                 }
             }
+        }
+    }
+
+    /// How the wait ends at its deadline: timed out, or failed with `e` if no scan finished before.
+    fn ended(&self, e: anyhow::Error) -> Result<Option<(Vec<Email>, Ready)>> {
+        match self.scanned {
+            Some(_) => Ok(None),
+            None => Err(e.context(UNSCANNED)),
         }
     }
 }
 
 pub async fn run(args: Args) -> Result<ExitCode> {
-    let caller = session().filter(|_| !args.json).and_then(|s| s.session_id.parse().ok());
+    let (deadline, caller) = (args.deadline()?, session().filter(|_| !args.json));
+    let caller = caller.and_then(|s| s.session_id.parse().ok());
     // Its mod watches what this session records, so only a wait on the same or less stands down.
-    if let Some(caller) = caller.filter(|c| args.session.as_ref().is_none_or(|s| s == c))
-        && let Some(line) =
-            deferred(&Store::new(&Config::load()?.login)?, &caller, &args.watching, now())?
-    {
-        out(&line)?;
-        return Ok(ExitCode::from(DEFERRED));
+    if let Some(caller) = caller.filter(|c| args.session.as_ref().is_none_or(|s| s == c)) {
+        let store = Store::new(&Config::load()?.login)?;
+        if let Some(line) = by(deadline, deferred(&store, &caller, &args.watching, now())).await? {
+            out(&line)?;
+            return Ok(ExitCode::from(DEFERRED));
+        }
     }
-    watch(Mail::open(), args).await
+    watch(Mail::open(), deadline, args).await
 }
 
-/// The wait on the mail `opening` opens, whose deadline covers the opening: signing in, and the auth lock.
+/// The wait on the mail `opening` opens, which gives up at `deadline` on the opening, the scans and the sign-ins
+/// between them, and every lock they wait for, but not on delivering what it claimed.
 pub async fn watch<M: Borrow<Mail>>(
     opening: impl Future<Output = Result<M>>,
+    deadline: Option<Instant>,
     args: Args,
 ) -> Result<ExitCode> {
-    let deadline =
-        args.timeout.map(|t| Instant::now().checked_add(t).context("timeout too far ahead"));
-    let (deadline, cursor) = (deadline.transpose()?, Cursor::default());
-    let wall = args.timeout.map(|t| now().saturating_add(t.as_secs() as i64));
-    let opened = match deadline {
-        Some(deadline) => tokio::time::timeout_at(deadline, opening)
-            .await
-            .map_err(|_| anyhow!("opening the mail took all of --timeout").context(UNSCANNED))?,
-        None => opening.await,
-    }?;
+    let left = |d: Instant| d.saturating_duration_since(Instant::now()).as_secs_f64().ceil();
+    let (wall, cursor) = (deadline.map(|d| now() + left(d) as i64), Cursor::default());
+    let opened = before(deadline, opening).await;
+    let opened = opened.context("opening the mail took all of --timeout").context(UNSCANNED)??;
     let mail = opened.borrow();
     let (inbox, sent) = (mail.mailbox("inbox")?, mail.mailbox("sent")?);
     let store = &mail.conn.auth.store;
@@ -555,16 +574,20 @@ pub async fn watch<M: Borrow<Mail>>(
         reminded: HashSet::new(),
         json,
     };
-    for start in &watch.given.thread {
-        ensure!(mail.current(start).await?.is_some(), "no email {start}");
-    }
+    by(deadline, async {
+        for start in &watch.given.thread {
+            ensure!(mail.current(start).await?.is_some(), "no email {start}");
+        }
+        anyhow::Ok(())
+    })
+    .await?;
     watch.refresh()?;
     let topics = watch.topics.iter().map(|a| a.to_string().to_lowercase());
     let threads = watch.starts.iter().map(|t| format!("the thread of {t}"));
     let recorded = watch.session.iter().map(|(_, s)| format!("what session {s} records"));
     note!("waiting for {}", topics.chain(threads).chain(recorded).collect::<Vec<_>>().join(", "));
     loop {
-        let Some((mut claimed, mut ready)) = watch.until_due().await? else {
+        let Some((mut claimed, mut ready)) = by(deadline, watch.until_due()).await? else {
             note!("no mail by {}", utc(wall.unwrap_or_else(now)));
             return Ok(ExitCode::from(TIMED_OUT));
         };

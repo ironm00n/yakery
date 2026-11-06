@@ -16,6 +16,7 @@ use tokio::time::Instant;
 
 use crate::{
     address::{SessionId, Topic},
+    deadline,
     listeners::Listeners,
     policy::Login,
     prelude::*,
@@ -199,6 +200,56 @@ struct Lease {
 }
 
 impl Lock {
+    /// `name` in `dir`, if no other process holds it, leased for one request's time.
+    pub fn try_take(dir: &Dir, name: &str) -> Result<Option<Lock>> {
+        let (file, path) = (dir.file(name)?, dir.path(name).display().to_string());
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Ok(None),
+            Err(TryLockError::Error(e)) => return Err(e).context(format!("locking {path}")),
+        }
+        let lock = Lock { file, path };
+        lock.lease(Instant::now() + TIMEOUT)?;
+        Ok(Some(lock))
+    }
+
+    /// Waits while another process holds `name` in `dir` under a lease, and fails naming it once two polls find the
+    /// same lease ended, or none: one poll may come between a holder taking the lock and leasing it. Under
+    /// [`deadline::by`], it gives up at that deadline too.
+    pub async fn take(dir: &Dir, name: &str) -> Result<Lock> {
+        let path = dir.path(name).display().to_string();
+        let waiting = async {
+            let mut seen = None;
+            loop {
+                if let Some(lock) = Lock::try_take(dir, name)? {
+                    return anyhow::Ok(lock);
+                }
+                let said = dir.read(name)?.unwrap_or_default();
+                let lease = serde_json::from_slice::<Lease>(&said).ok();
+                if seen.as_ref() == Some(&said) && lease.as_ref().is_none_or(|l| l.until < now()) {
+                    bail!(match lease {
+                        Some(l) => format!(
+                            "{path} is held by pid {}, past its lease until {}",
+                            l.pid,
+                            utc(l.until)
+                        ),
+                        None => format!(
+                            "{path} is held by a process that wrote no lease, so which one is not known"
+                        ),
+                    });
+                }
+                if seen.is_none() {
+                    note!("another agent-mail holds {path}; waiting for it");
+                }
+                seen = Some(said);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        };
+        deadline::bounded(waiting)
+            .await
+            .with_context(|| format!("gave up waiting for {path} at the deadline"))?
+    }
+
     fn lease(&self, until: Instant) -> Result<()> {
         let left = until.saturating_duration_since(Instant::now()).as_secs_f64().ceil() as i64;
         let lease = serde_json::to_vec(&Lease { pid: std::process::id(), until: now() + left })?;
@@ -253,7 +304,7 @@ impl Records {
         self.0.load(&format!("{session}.json"))
     }
 
-    pub fn record(
+    pub async fn record(
         &self,
         session: &SessionId,
         topics: Vec<Topic>,
@@ -263,10 +314,11 @@ impl Records {
             watched.topics.extend(topics);
             watched.threads.extend(threads);
         })
+        .await
     }
 
     /// Takes exactly the topics and threads named out of `session`'s record, and returns those it did not hold.
-    pub fn forget(
+    pub async fn forget(
         &self,
         session: &SessionId,
         topics: Vec<Topic>,
@@ -276,13 +328,13 @@ impl Records {
         self.change(session, |watched| {
             absent.topics = topics.into_iter().filter(|t| !watched.topics.remove(t)).collect();
             absent.threads = threads.into_iter().filter(|t| !watched.threads.remove(t)).collect();
-        })?;
+        })
+        .await?;
         Ok(absent)
     }
 
-    fn change(&self, session: &SessionId, edit: impl FnOnce(&mut Watched)) -> Result<()> {
-        let lock = self.0.file("lock")?;
-        lock.lock().context("locking the session records")?;
+    async fn change(&self, session: &SessionId, edit: impl FnOnce(&mut Watched)) -> Result<()> {
+        let _held = Lock::take(&self.0, "lock").await?;
         let name = format!("{session}.json");
         let mut watched: Watched = self.0.load(&name)?;
         edit(&mut watched);
@@ -335,42 +387,8 @@ impl Store {
         self.login.to_string().to_lowercase()
     }
 
-    /// Waits while another process holds the lock under a lease, and fails naming it once two polls find the same
-    /// lease ended, or none: one poll may come between a holder taking the lock and leasing it. A holder gets one
-    /// request's time before its first lease.
     pub async fn lock(&self, name: &str) -> Result<Lock> {
-        let dir = self.dir(true)?;
-        let (file, path) = (dir.file(name)?, dir.path(name).display().to_string());
-        let mut seen = None;
-        loop {
-            match file.try_lock() {
-                Ok(()) => break,
-                Err(TryLockError::WouldBlock) => {}
-                Err(TryLockError::Error(e)) => return Err(e).context(format!("locking {path}")),
-            }
-            let said = dir.read(name)?.unwrap_or_default();
-            let lease = serde_json::from_slice::<Lease>(&said).ok();
-            if seen.as_ref() == Some(&said) && lease.as_ref().is_none_or(|l| l.until < now()) {
-                bail!(match lease {
-                    Some(l) => format!(
-                        "{path} is held by pid {}, past its lease until {}",
-                        l.pid,
-                        utc(l.until)
-                    ),
-                    None => format!(
-                        "{path} is held by a process that wrote no lease, so which one is not known"
-                    ),
-                });
-            }
-            if seen.is_none() {
-                note!("another agent-mail holds {path}; waiting for it");
-            }
-            seen = Some(said);
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        let lock = Lock { file, path };
-        lock.lease(Instant::now() + TIMEOUT)?;
-        Ok(lock)
+        Lock::take(&self.dir(true)?, name).await
     }
 
     pub fn records(&self) -> Result<Records> {

@@ -5,9 +5,10 @@
 use private::Dir;
 use text::Address;
 
-use crate::{RECHECK, address::SessionId, prelude::*};
+use crate::{RECHECK, address::SessionId, prelude::*, store::Lock};
 
 const FILE: &str = "listeners.json";
+const LOCK: &str = "listeners.lock";
 
 /// A listener as its last scan left it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -29,16 +30,18 @@ impl Heartbeat {
 pub struct Listeners(pub Dir);
 
 impl Listeners {
-    fn change(&self, edit: impl FnOnce(&mut BTreeMap<String, Heartbeat>)) -> Result<()> {
-        let lock = self.0.file("listeners.lock")?;
-        lock.lock().context("locking the listeners")?;
+    fn edit(&self, _held: Lock, edit: impl FnOnce(&mut BTreeMap<String, Heartbeat>)) -> Result<()> {
         let mut all = self.0.load(FILE)?;
         edit(&mut all);
         self.0.save(FILE, &all)
     }
 
+    async fn change(&self, edit: impl FnOnce(&mut BTreeMap<String, Heartbeat>)) -> Result<()> {
+        self.edit(Lock::take(&self.0, LOCK).await?, edit)
+    }
+
     /// Records that this process scanned for `session` at `now`, watching `topics` and the threads of `threads`.
-    pub fn beat(
+    pub async fn beat(
         &self,
         session: &SessionId,
         topics: &[Address],
@@ -47,17 +50,25 @@ impl Listeners {
     ) -> Result<()> {
         let topics = topics.iter().map(|t| t.to_string().to_lowercase()).collect();
         let threads = threads.iter().cloned().collect();
-        self.put(session, Heartbeat { pid: std::process::id(), topics, threads, scanned: now })
+        let beat = Heartbeat { pid: std::process::id(), topics, threads, scanned: now };
+        self.put(session, beat).await
     }
 
-    pub fn put(&self, session: &SessionId, beat: Heartbeat) -> Result<()> {
-        self.change(|all| drop(all.insert(session.to_string(), beat)))
+    pub async fn put(&self, session: &SessionId, beat: Heartbeat) -> Result<()> {
+        self.change(|all| drop(all.insert(session.to_string(), beat))).await
     }
 
-    /// Takes out `session`'s heartbeat if this process wrote it: a newer listener for the session keeps its own.
+    /// Takes out `session`'s heartbeat if this process wrote it, so a newer listener for the session keeps its own.
+    /// It does not wait for the lock, which a drop cannot do: while another process holds it, the heartbeat stays,
+    /// and counts as gone once its process ends.
     pub fn leave(&self, session: &SessionId) -> Result<()> {
+        let held = Lock::try_take(&self.0, LOCK)?.with_context(|| {
+            format!(
+                "another process holds {LOCK}, so {session} stays listed until this process ends"
+            )
+        })?;
         let (key, pid) = (session.to_string(), std::process::id());
-        self.change(|all| {
+        self.edit(held, |all| {
             if all.get(&key).is_some_and(|b| b.pid == pid) {
                 all.remove(&key);
             }

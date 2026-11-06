@@ -144,6 +144,27 @@ async fn a_lock_let_go_leaves_no_lease_for_a_later_holder_that_writes_none() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_session_record_or_listener_waits_for_its_lock_only_while_the_holders_lease_lasts() {
+    let dir = Scratch::new("session-locks");
+    let store = dir.store("agent@example.org");
+    let (records, listeners) = (store.records().unwrap(), store.listeners().unwrap());
+    let (id, ended): (SessionId, i64) = ("a-1".parse().unwrap(), now() - 1);
+    let past = |lock| {
+        format!(
+            "error: agent-mail/sessions/{lock} is held by pid 4242, past its lease until {}",
+            utc(ended)
+        )
+    };
+    let held = dir.hold("agent-mail/sessions/lock", 4242, ended);
+    let recorded = records.record(&id, vec!["smoke".parse().unwrap()], vec![]).await;
+    assert_eq!(dir.shown(recorded.map(|()| "")), past("lock"));
+    drop(held);
+    let _held = dir.hold("agent-mail/sessions/listeners.lock", 4242, ended);
+    let beat = listeners.beat(&id, &[], &[], now()).await;
+    assert_eq!(dir.shown(beat.map(|()| "")), past("listeners.lock"));
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_waiter_takes_the_lock_once_its_holder_lets_go() {
     let dir = Scratch::new("released");
     let agents = dir.store("agent@example.org");
@@ -225,13 +246,13 @@ async fn a_password_is_staged_beside_its_file_and_promoted_once() {
     assert_eq!((dir.file("pw"), dir.file("pw.new")), (Some("new-b".into()), None));
 }
 
-#[test]
-fn a_sessions_records_add_up_privately_and_stay_its_own() {
+#[tokio::test]
+async fn a_sessions_records_add_up_privately_and_stay_its_own() {
     let dir = Scratch::new("records");
     let records = dir.store("agent@example.org").records().unwrap();
     let (a, b): (SessionId, SessionId) = ("a-1".parse().unwrap(), "b-2".parse().unwrap());
-    records.record(&a, vec!["pool".parse().unwrap()], vec![]).unwrap();
-    records.record(&a, vec!["pool".parse().unwrap()], vec!["e1".into()]).unwrap();
+    records.record(&a, vec!["pool".parse().unwrap()], vec![]).await.unwrap();
+    records.record(&a, vec!["pool".parse().unwrap()], vec!["e1".into()]).await.unwrap();
     let Watched { topics, threads } = records.of(&a).unwrap();
     assert_eq!(
         (
@@ -246,15 +267,15 @@ fn a_sessions_records_add_up_privately_and_stay_its_own() {
     rows!(parsed::<SessionId>; "../a", "", "a/b", &"a".repeat(65) => "refused"; "0f3c-9a" => "0f3c-9a");
 }
 
-#[test]
-fn a_listener_counts_while_its_process_runs_and_it_scanned_within_three_rechecks() {
+#[tokio::test]
+async fn a_listener_counts_while_its_process_runs_and_it_scanned_within_three_rechecks() {
     let dir = Scratch::new("listeners");
     let listeners = dir.store("agent@example.org").listeners().unwrap();
     let ids: [SessionId; 3] = ["a-1", "b-2", "c-3"].map(|s| s.parse().unwrap());
     let topic = |t: &str| address(&format!("agent+{t}@example.org"));
     let (now, limit) = (1_800_000_000, 3 * RECHECK.as_secs() as i64);
-    listeners.beat(&ids[0], &[topic("live")], &["e1".into()], now - limit).unwrap();
-    listeners.beat(&ids[1], &[topic("stale")], &[], now - limit - 1).unwrap();
+    listeners.beat(&ids[0], &[topic("live")], &["e1".into()], now - limit).await.unwrap();
+    listeners.beat(&ids[1], &[topic("stale")], &[], now - limit - 1).await.unwrap();
     let gone = std::process::Command::new("true").spawn().unwrap();
     let pid = gone.id();
     drop(gone.wait_with_output().unwrap());
@@ -264,7 +285,7 @@ fn a_listener_counts_while_its_process_runs_and_it_scanned_within_three_rechecks
         threads: [].into(),
         scanned: now,
     };
-    listeners.put(&ids[2], beat).unwrap();
+    listeners.put(&ids[2], beat).await.unwrap();
     assert_eq!(listeners.watched(now).unwrap(), [topic("live")]);
     let mine = &listeners.all().unwrap()["a-1"];
     assert_eq!(
@@ -279,8 +300,8 @@ fn a_listener_counts_while_its_process_runs_and_it_scanned_within_three_rechecks
     );
 }
 
-#[test]
-fn a_listener_leaving_keeps_the_heartbeat_a_newer_one_wrote_for_its_session() {
+#[tokio::test]
+async fn a_listener_leaving_keeps_the_heartbeat_a_newer_one_wrote_for_its_session() {
     let dir = Scratch::new("leave");
     let listeners = dir.store("agent@example.org").listeners().unwrap();
     let session: SessionId = "a-1".parse().unwrap();
@@ -290,29 +311,29 @@ fn a_listener_leaving_keeps_the_heartbeat_a_newer_one_wrote_for_its_session() {
         threads: [].into(),
         scanned: 0,
     };
-    listeners.put(&session, newer.clone()).unwrap();
+    listeners.put(&session, newer.clone()).await.unwrap();
     listeners.leave(&session).unwrap();
     assert_eq!(listeners.all().unwrap().get("a-1"), Some(&newer));
 }
 
-#[test]
-fn a_plain_wait_stands_down_only_for_its_own_live_listener_and_records_what_it_was_given() {
+#[tokio::test]
+async fn a_plain_wait_stands_down_only_for_its_own_live_listener_and_records_what_it_was_given() {
     let dir = Scratch::new("deferred");
     let store = dir.store("agent@example.org");
     let (listeners, records) = (store.listeners().unwrap(), store.records().unwrap());
     let (mine, other): (SessionId, SessionId) = ("a-1".parse().unwrap(), "b-2".parse().unwrap());
     let given = wait::Watching { topic: vec!["pool".parse().unwrap()], thread: vec!["e1".into()] };
     let (now, limit) = (1_800_000_000, 3 * RECHECK.as_secs() as i64);
-    let deferred = || wait::deferred(&store, &mine, &given, now).unwrap();
-    listeners.beat(&other, &[], &[], now).unwrap();
-    assert_eq!(deferred(), None, "another session's listener");
-    listeners.beat(&mine, &[], &[], now - limit - 1).unwrap();
-    assert_eq!(deferred(), None, "a stale listener");
+    let deferred = async || wait::deferred(&store, &mine, &given, now).await.unwrap();
+    listeners.beat(&other, &[], &[], now).await.unwrap();
+    assert_eq!(deferred().await, None, "another session's listener");
+    listeners.beat(&mine, &[], &[], now - limit - 1).await.unwrap();
+    assert_eq!(deferred().await, None, "a stale listener");
     let Watched { topics, threads } = records.of(&mine).unwrap();
     assert!(topics.is_empty() && threads.is_empty(), "a wait that runs records nothing");
-    listeners.beat(&mine, &[], &[], now - limit).unwrap();
+    listeners.beat(&mine, &[], &[], now - limit).await.unwrap();
     assert_eq!(
-        deferred().unwrap(),
+        deferred().await.unwrap(),
         format!(
             "the mail-listener mod (pid {}) already waits for this session and hands its mail in as prompts; \
              session a-1 watches topics [pool] and the threads of [e1]",
@@ -322,13 +343,14 @@ fn a_plain_wait_stands_down_only_for_its_own_live_listener_and_records_what_it_w
     assert!(records.of(&other).unwrap().topics.is_empty());
 }
 
-#[test]
-fn subscriptions_says_what_a_session_recorded_and_records_nothing() {
+#[tokio::test]
+async fn subscriptions_says_what_a_session_recorded_and_records_nothing() {
     let dir = Scratch::new("subscriptions");
     let records = dir.store("agent@example.org").records().unwrap();
     let (a, b): (SessionId, SessionId) = ("a-1".parse().unwrap(), "b-2".parse().unwrap());
     records
         .record(&a, vec!["pool".parse().unwrap(), "pyret".parse().unwrap()], vec!["e1".into()])
+        .await
         .unwrap();
     rows!(|id: &SessionId| wait::watches(&records, id).unwrap();
         &a => "session a-1 watches topics [pool, pyret] and the threads of [e1]";
@@ -345,25 +367,26 @@ fn subscriptions_says_what_a_session_recorded_and_records_nothing() {
     assert_eq!(entries(&dir.0.join("locks/agent-mail/sessions")), ["a-1.json", "lock"]);
 }
 
-#[test]
-fn unsubscribe_takes_out_exactly_what_it_names_and_only_from_its_session() {
+#[tokio::test]
+async fn unsubscribe_takes_out_exactly_what_it_names_and_only_from_its_session() {
     let dir = Scratch::new("unsubscribe");
     let records = dir.store("agent@example.org").records().unwrap();
     let (a, b): (SessionId, SessionId) = ("a-1".parse().unwrap(), "b-2".parse().unwrap());
     let topics = || vec!["pool".parse().unwrap(), "pyret".parse().unwrap()];
     let threads = || vec!["e1".to_owned(), "e2".to_owned()];
-    records.record(&a, topics(), threads()).unwrap();
-    records.record(&b, topics(), threads()).unwrap();
+    records.record(&a, topics(), threads()).await.unwrap();
+    records.record(&b, topics(), threads()).await.unwrap();
     let named = wait::Watching {
         topic: vec!["pool".parse().unwrap(), "absent".parse().unwrap()],
         thread: vec!["e2".into(), "e9".into()],
     };
     assert_eq!(
-        wait::forget(&records, &a, named).unwrap(),
+        wait::forget(&records, &a, named).await.unwrap(),
         "session a-1 watches topics [pyret] and the threads of [e1]"
     );
     let absent = records
         .forget(&a, vec!["pyret".parse().unwrap(), "pool".parse().unwrap()], vec![])
+        .await
         .unwrap();
     assert_eq!(
         wait::listed(&absent),

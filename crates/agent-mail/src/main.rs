@@ -2,6 +2,7 @@ mod address;
 mod auth;
 mod authority;
 mod cmd;
+mod deadline;
 mod jmap;
 mod listeners;
 mod mail;

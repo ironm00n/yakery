@@ -101,6 +101,20 @@ impl Scratch {
     pub fn lease(&self, name: &str, pid: u32, until: i64) {
         fs::write(self.lock(name), json!({ "pid": pid, "until": until }).to_string()).unwrap();
     }
+
+    /// Holds the lock at `path` under the locks' home as process `pid` would, leased until `until`.
+    pub fn hold(&self, path: &str, pid: u32, until: i64) -> std::fs::File {
+        let path = self.0.join("locks").join(path);
+        fs::write(&path, json!({ "pid": pid, "until": until }).to_string()).unwrap();
+        let held = std::fs::File::open(path).unwrap();
+        held.lock().unwrap();
+        held
+    }
+
+    /// `shown` with this directory's locks' home left out of the paths it names.
+    pub fn shown<T: std::fmt::Display>(&self, r: Result<T>) -> String {
+        shown(r).replace(&format!("{}/", self.0.join("locks").display()), "")
+    }
 }
 
 impl Drop for Scratch {

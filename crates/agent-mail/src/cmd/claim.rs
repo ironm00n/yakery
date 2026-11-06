@@ -5,6 +5,7 @@
 
 use crate::{
     address::MessageId,
+    deadline::by,
     mail::{Current, Email, Keyword, Mail, Mark},
     out::{Asked, is_receipt},
     policy::Login,
@@ -56,7 +57,10 @@ pub async fn claim<R: Default>(
                 .await?;
             let readied = ready(&ids).await?;
             match locked(server, login, &ids).await {
-                Ok(Some(claimed)) => return Ok((taken(server, login, claimed).await, readied)),
+                // Marked already: it runs on past any deadline, or a receipt it owes could go unsent.
+                Ok(Some(claimed)) => {
+                    return Ok((by(None, taken(server, login, claimed)).await, readied));
+                }
                 Ok(None) => {}
                 Err(e) if Failure::of(&e) == Failure::TokenRefused => {}
                 Err(e) => return Err(e),

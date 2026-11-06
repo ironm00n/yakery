@@ -365,11 +365,11 @@ pub async fn send(
         }
     }
     if let (Some(s), Some(watch)) = (session(), watching(args, login, &to.from, &draft)) {
-        let recorded = s
-            .session_id
-            .parse()
-            .and_then(|id| mail.conn.auth.store.records()?.record(&id, watch.topic, watch.thread));
-        if let Err(e) = recorded {
+        let recorded = async {
+            let id = s.session_id.parse()?;
+            mail.conn.auth.store.records()?.record(&id, watch.topic, watch.thread).await
+        };
+        if let Err(e) = recorded.await {
             warn!("sent, but recording its topic and thread for this session failed: {e:#}");
         }
     }
