@@ -296,7 +296,8 @@
       "$defaults",
       "outward facing prose under my identity which has not been approved by declaudish agent",
       "including an PII (ex email) in user agents etc",
-      "circumventing /goal timelines (especially using sleep commands)"
+      "circumventing /goal timelines (especially using sleep commands)",
+      "a Claude session logging in to the xb remote builder on Explorer: an ssh to a host named xb-*, `xb ops connect` used as an ssh ProxyCommand, or any ssh to an allocation's sshd, to open a shell or run commands there. Only Owen logs in to it; builds that desktop's nix-daemon sends through nix.buildMachines are not a login, and the xb session building and testing the builder's own code with a test key is not covered"
     ],
     "hard_deny": [
       "$defaults",
