@@ -46,9 +46,9 @@ let
   # jj.toml's agent identity scope is the one list of repos; git gets the same identity in the same repos
   agentIdentity =
     let
-      scope = lib.findFirst (s: s ? user) (throw "jj.toml has no identity scope") (
-        builtins.fromTOML (builtins.readFile ./jj.toml)
-      )."--scope";
+      scope =
+        lib.findFirst (s: s ? user) (throw "jj.toml has no identity scope")
+          (builtins.fromTOML (builtins.readFile ./jj.toml))."--scope";
     in
     assert lib.assertMsg (scope.user.email == agentEmail) "jj.toml's agent email isn't ${agentEmail}";
     scope;
@@ -74,7 +74,9 @@ in
       [includeIf "gitdir:${repo}/"]
       	path = claude-identity.user
     '') agentIdentity."--when".repositories;
-    xdg.configFile."git/claude-identity.user".text = lib.generators.toGitINI { inherit (agentIdentity) user; };
+    xdg.configFile."git/claude-identity.user".text = lib.generators.toGitINI {
+      inherit (agentIdentity) user;
+    };
     # a push from a Claude Code session keeps its commit messages within the width rule (hooks/lib/widths.sh): jj
     # pushes go through jj-push.sh, and plain git ones run this beside the repo's own pre-push hook, which passes
     # everything outside a session
