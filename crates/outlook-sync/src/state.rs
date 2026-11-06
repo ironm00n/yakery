@@ -1,11 +1,39 @@
+use anyhow::Result;
 use jiff::Timestamp;
-use private::Secret;
+use oidc::{Pkce, Returned};
+use private::{Dir, Secret};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub enum Login {
     Pending { state: Secret, verifier: Secret, until: Timestamp },
+    Redeeming,
     Done(Result<(), String>),
+}
+
+/// Why a return to the callback redeems no code.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Untaken {
+    Nothing,
+    /// It carries another sign-in's state, or came back past its sign-in's time.
+    Stale,
+    /// Another return is redeeming the code.
+    Taken,
+}
+
+/// The waiting sign-in `returned` comes back from, recorded as redeeming. It awaits nothing, so no
+/// other return reads the sign-in as waiting before it is recorded.
+pub fn take(dir: &Dir, returned: &Returned, now: Timestamp) -> Result<Result<Pkce, Untaken>> {
+    let (pkce, until) = match dir.load(LOGIN)? {
+        Some(Login::Pending { state, verifier, until }) => (Pkce::kept(state, verifier), until),
+        Some(Login::Redeeming) => return Ok(Err(Untaken::Taken)),
+        _ => return Ok(Err(Untaken::Nothing)),
+    };
+    if !returned.returns_from(&pkce) || now > until {
+        return Ok(Err(Untaken::Stale));
+    }
+    dir.save(LOGIN, &Some(Login::Redeeming))?;
+    Ok(Ok(pkce))
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -33,3 +61,7 @@ pub const SUBSCRIPTION: &str = "subscription.json";
 pub const DELTA: &str = "delta.json";
 pub const KEY: &str = "key.pem";
 pub const CERTIFICATE: &str = "certificate.pem";
+
+#[cfg(test)]
+#[path = "../tests/state.rs"]
+mod tests;

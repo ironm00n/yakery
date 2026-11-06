@@ -48,10 +48,14 @@ impl Returned {
         self.state.as_deref()
     }
 
-    /// The code, if it returns from `pkce`'s sign-in, its state compared in constant time.
+    /// Whether it carries `pkce`'s state, compared in constant time.
+    pub fn returns_from(&self, pkce: &Pkce) -> bool {
+        self.state.as_deref().map(Secret::new).is_some_and(|state| state == *pkce.state())
+    }
+
+    /// The code, if it returns from `pkce`'s sign-in.
     pub fn code(self, pkce: &Pkce) -> Result<Code<'_>, Denied> {
-        let ours = self.state.map(Secret::new).is_some_and(|state| state == *pkce.state());
-        if !ours {
+        if !self.returns_from(pkce) {
             return Err(Denied::Mismatched);
         }
         self.code.map(|code| Code { code, pkce })

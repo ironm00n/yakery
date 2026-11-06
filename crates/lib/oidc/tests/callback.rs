@@ -35,3 +35,12 @@ fn another_state_or_none_gives_no_code_and_no_error() {
         );
     }
 }
+
+#[test]
+fn a_return_comes_from_the_sign_in_whose_state_it_carries() {
+    let returns_from = |query| Returned::read(query).returns_from(&sign_in());
+    assert_eq!(
+        ["code=c&state=s1", "code=c&state=s2", "code=c"].map(returns_from),
+        [true, false, false]
+    );
+}

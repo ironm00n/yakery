@@ -1458,6 +1458,7 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "yakery-log",
  "yakery-serve",

@@ -9,12 +9,12 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use jiff::Timestamp;
-use oidc::{Denied, Pkce, Returned};
+use oidc::{Denied, Returned};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 
 use crate::policy::{Feed, Route};
-use crate::state::{self, Login};
+use crate::state::{self, Login, Untaken};
 use crate::sync::{Sync, Wake};
 
 /// Graph's notifications carry ids and metadata only; this is well past a batch of them.
@@ -109,23 +109,33 @@ impl Sync {
             );
             reply(status, "text/html; charset=utf-8", html)
         };
-        let Ok(Some(Login::Pending { state, verifier, until })) =
-            self.state.load::<Option<Login>>(state::LOGIN)
-        else {
-            return page(
-                StatusCode::NOT_FOUND,
-                "No sign-in is waiting. Run outlook-sync login first.",
-            );
+        let pkce = match state::take(&self.state, &returned, Timestamp::now()) {
+            Ok(Ok(pkce)) => pkce,
+            Ok(Err(untaken)) => {
+                let (status, text) = match untaken {
+                    Untaken::Nothing => (
+                        StatusCode::NOT_FOUND,
+                        "No sign-in is waiting. Run outlook-sync login first.",
+                    ),
+                    Untaken::Stale => (
+                        StatusCode::FORBIDDEN,
+                        "This sign-in link is not the one waiting, or it has expired.",
+                    ),
+                    Untaken::Taken => {
+                        (StatusCode::CONFLICT, "This sign-in is being finished already.")
+                    }
+                };
+                return page(status, text);
+            }
+            Err(e) => {
+                yakery_log::warn!("recording the sign-in: {e:#}");
+                return page(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "The sign-in couldn't be recorded.",
+                );
+            }
         };
-        let pkce = Pkce::kept(state, verifier);
-        let code = returned.code(&pkce);
-        if matches!(code, Err(Denied::Mismatched)) || Timestamp::now() > until {
-            return page(
-                StatusCode::FORBIDDEN,
-                "This sign-in link is not the one waiting, or it has expired.",
-            );
-        }
-        let outcome = match code {
+        let outcome = match returned.code(&pkce) {
             Ok(code) => self.graph.redeem(&code).await.map_err(|e| format!("{e:#}")),
             Err(denied) => {
                 let error = match denied {
