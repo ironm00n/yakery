@@ -13,7 +13,7 @@ use std::fmt;
 
 pub use self::callback::{Code, Denied, Returned};
 pub use self::client::{Assertion, Auth, Client};
-pub use self::device::Device;
+pub use self::device::{Device, Polling};
 pub use self::endpoints::Endpoints;
 pub use self::pkce::{Authorization, Pkce};
 pub use self::token::{Access, Grant, Tokens};

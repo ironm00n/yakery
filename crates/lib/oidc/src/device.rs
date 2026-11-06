@@ -1,19 +1,51 @@
 //! The device authorization grant (RFC 8628): a code the user approves elsewhere, which the
 //! client then trades at the token endpoint by [`crate::Grant::Device`].
 
+use std::time::{Duration, Instant};
+
 use http::{StatusCode, Uri};
 use private::Secret;
 use serde::Deserialize;
 
-use crate::{Client, Failed, failure};
+use crate::{Client, ErrorCode, Failed, OAuthError, failure};
 
 #[derive(Deserialize)]
 pub struct Device {
     pub device_code: Secret,
     pub user_code: String,
     pub verification_uri: String,
-    /// Seconds to wait between polls, five if the issuer names none (RFC 8628 3.2).
-    pub interval: Option<u64>,
+    expires_in: u64,
+    interval: Option<u64>,
+}
+
+/// The wait between polls when the issuer names none (RFC 8628 3.2).
+const INTERVAL: Duration = Duration::from_secs(5);
+/// How much longer every later wait is after a `slow_down` (RFC 8628 3.5).
+const SLOWER: Duration = Duration::from_secs(5);
+
+/// When to poll the token endpoint for a device's grant (RFC 8628 3.5).
+pub struct Polling {
+    every: Duration,
+    asked: Instant,
+    lasts: Duration,
+}
+
+impl Polling {
+    /// How long to wait, at `now`, before polling again after the issuer answered `error`.
+    pub fn next(&mut self, error: OAuthError, now: Instant) -> Result<Duration, Failed> {
+        match error.code {
+            ErrorCode::AuthorizationPending => {}
+            ErrorCode::SlowDown => self.every = self.every.saturating_add(SLOWER),
+            _ => return Err(Failed::Refused(error)),
+        }
+        let polled_at = now.saturating_duration_since(self.asked).saturating_add(self.every);
+        if polled_at >= self.lasts {
+            return Err(Failed::Unacceptable(
+                "the device code expires before its next poll".into(),
+            ));
+        }
+        Ok(self.every)
+    }
 }
 
 impl Device {
@@ -28,6 +60,13 @@ impl Device {
         let mut fields = client.fields(&token.to_string(), now)?;
         fields.push(("scope", scope.to_owned()));
         Ok(fields)
+    }
+
+    /// The polls for a code asked for at `asked`: its lifetime counts from the reply, which comes
+    /// no earlier.
+    pub fn polling(&self, asked: Instant) -> Polling {
+        let every = self.interval.map_or(INTERVAL, Duration::from_secs);
+        Polling { every, asked, lasts: Duration::from_secs(self.expires_in) }
     }
 
     pub fn read(status: StatusCode, body: &[u8]) -> Result<Device, Failed> {

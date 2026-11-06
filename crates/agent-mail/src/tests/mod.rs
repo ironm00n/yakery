@@ -2,6 +2,7 @@ mod auth;
 mod authority;
 mod claims;
 mod cli;
+mod device_flow;
 mod files;
 mod invite;
 mod text;

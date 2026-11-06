@@ -46,7 +46,7 @@ pub fn wire(request: &Request) -> Option<Response> {
 
 pub struct Wired;
 
-fn wired(answer: impl FnMut(&Request) -> Reply + 'static) -> Wired {
+pub(super) fn wired(answer: impl FnMut(&Request) -> Reply + 'static) -> Wired {
     let _ = rustls::crypto::ring::default_provider().install_default();
     WIRE.set(Some(Box::new(answer)));
     Wired
@@ -58,7 +58,7 @@ impl Drop for Wired {
     }
 }
 
-fn reply(status: u16, body: impl Into<String>) -> Reply {
+pub(super) fn reply(status: u16, body: impl Into<String>) -> Reply {
     let kind = if status == 400 || status == 429 {
         "application/problem+json"
     } else {
@@ -68,7 +68,7 @@ fn reply(status: u16, body: impl Into<String>) -> Reply {
     reply.body(body.into().into()).unwrap()
 }
 
-fn moved(status: u16, to: &str) -> Reply {
+pub(super) fn moved(status: u16, to: &str) -> Reply {
     http::Response::builder().status(status).header("location", to).body("".into()).unwrap()
 }
 

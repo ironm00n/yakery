@@ -1,7 +1,8 @@
 use lol_html::{RewriteStrSettings, element, rewrite_str};
-use oidc::{Access, Device, ErrorCode, Failed, Grant, OAuthError};
+use oidc::{Access, Device, Failed, Grant, OAuthError};
 use private::{Secret, now};
 use reqwest::Method;
+use tokio::time::{Instant, sleep};
 
 use crate::{
     CLIENT_ID,
@@ -190,10 +191,11 @@ impl Http {
 
 impl Zitadel for Http {
     async fn device_flow(&self, login: &Login, password: &Secret, scope: &str) -> Result<Tokens> {
-        let asking = Device::form(&client(), scope, &token(), now())?;
+        let (asking, asked) = (Device::form(&client(), scope, &token(), now())?, Instant::now());
         let reply = self.post("/oauth/v2/device_authorization", asking).await?;
         let device =
             Device::read(reply.status, reply.text.as_bytes()).map_err(|f| unread(&reply, f))?;
+        let mut polling = device.polling(asked.into_std());
         let login = login.to_string();
         let answers = [
             ("user_code", device.user_code.as_str()),
@@ -214,18 +216,14 @@ impl Zitadel for Http {
                 break;
             }
         }
-        for _ in 0..10 {
-            match self.token(Grant::Device(&device.device_code)).await? {
+        loop {
+            let error = match self.token(Grant::Device(&device.device_code)).await? {
                 Ok(tokens) => return Ok(tokens),
-                Err(OAuthError {
-                    code: ErrorCode::AuthorizationPending | ErrorCode::SlowDown,
-                    ..
-                }) => {}
-                Err(error) => bail!("token: {}", error.code),
-            }
-            tokio::time::sleep(Duration::from_secs(3)).await;
+                Err(error) => error,
+            };
+            let ended = |failed| anyhow!("device flow: {failed}; last page {}", page.url.path());
+            sleep(polling.next(error, Instant::now().into_std()).map_err(ended)?).await;
         }
-        bail!("device flow never authorized; last page {}", page.url.path())
     }
 
     async fn refresh(&self, refresh: &Secret) -> Result<Option<Tokens>> {
