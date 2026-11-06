@@ -18,6 +18,10 @@ rec {
       v4 = "100.69.57.252";
       v6 = "fd69::d9cb:7dd5:5e8a:7b1d";
     };
+    oracle-a1-flex-1 = {
+      v4 = "100.69.2.1";
+      v6 = "fd69::2:1";
+    };
   };
   addresses = host: builtins.attrValues (peers.${host} or { });
 }

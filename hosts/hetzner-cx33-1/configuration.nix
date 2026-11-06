@@ -13,6 +13,7 @@
 {
   imports = [
     ./hardware-configuration.nix
+    ./program-accounts.nix
     ../common/server
     ../common/hetzner-cloud
   ];
@@ -24,6 +25,7 @@
     deliveryWebhooks = [ "http://${my-lib.netbird.peers.desktop.v4}:7310/" ];
     receiving.enable = true;
     sending.enable = true;
+    submission.enable = true;
     sharedMailboxes = [
       "catchall"
       "pool"
