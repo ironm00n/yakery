@@ -19,7 +19,7 @@ use crate::ask::{
     Refusal, Shown, Week, WeekAsk,
 };
 use crate::checked::Checked;
-use crate::link::{Booker, Booking, Digest, Limits, Links, QUIET, State};
+use crate::link::{Booker, Booking, Created, Digest, Limits, Links, QUIET, State};
 use crate::policy::Policy;
 use crate::slots::{Period, days, open, reach, shown, slots};
 use crate::stalwart::{Calendar, Stalwart, event};
@@ -84,10 +84,12 @@ impl<C: Calendar> Core<C> {
         let event = event(self.policy, self.calendar.owner(), digest, &limits, &claim.booking);
         let created = self.calendar.create(event).await?;
         crash_point("created");
+        if let Created::Refused(why) = &created {
+            yakery_log::warn!("link {}: Stalwart refused its event: {why}", digest.id());
+        }
         store.apply(|links| Ok(links.settle(digest, created)))
     }
 
-    /// An error answers Unavailable.
     pub async fn ask<Q: Question>(&self, question: Q) -> Answer<Q::Answer>
     where
         Self: Answers<Q>,
@@ -216,7 +218,7 @@ impl<C: Calendar> Answers<BookAsk> for Core<C> {
                 booker: booking.booker,
                 owner: self.calendar.owner().into(),
             }),
-            _ => Err(Refusal::SlotGone),
+            _ => Err(Refusal::Unavailable),
         })
     }
 }

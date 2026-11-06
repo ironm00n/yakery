@@ -209,7 +209,7 @@ fn a_refusal_reopens_a_link_only_when_it_answers_the_one_send() {
         let core = setup.core(&fake, fixture());
         issued(&core, 'a', issue(WEEK.0, WEEK.1)).await;
         fake.refuse.set(true);
-        answers!(book(&core, 'a', monday("10:00")).await, Err(Refusal::SlotGone));
+        answers!(book(&core, 'a', monday("10:00")).await, Err(Refusal::Unavailable));
         answers!(shown(&core, 'a').await, Shown::Open(_));
         fake.lose.set(Some(false));
         answers!(book(&core, 'a', monday("10:00")).await, Err(Refusal::Pending));
