@@ -99,14 +99,9 @@ async fn tokens_are_private_and_kept_with_their_login() {
     assert!(again.tokens(&again.held().await.unwrap()).unwrap().access.is_none());
 }
 
-/// What taking the auth lock comes to, within an hour, while another process holds it under the lease `lease`
-/// writes, and how many seconds that took.
-async fn waited(lease: impl FnOnce(&Scratch)) -> (u64, String) {
-    let dir = Scratch::new("lock");
-    let agents = dir.store("agent@example.org");
-    let _held = agents.held().await.unwrap();
-    lease(&dir);
-    let start = Instant::now();
+/// What taking the auth lock in `dir` comes to, within an hour, and how many seconds that took.
+async fn taking(dir: &Scratch) -> (u64, String) {
+    let (agents, start) = (dir.store("agent@example.org"), Instant::now());
     let taken = tokio::time::timeout(Duration::from_secs(3600), agents.held()).await;
     let shown = taken.map_or("still waiting".into(), |t| shown(t.map(|_| "taken")));
     (
@@ -114,6 +109,17 @@ async fn waited(lease: impl FnOnce(&Scratch)) -> (u64, String) {
         shown.replace(&dir.lock("auth.lock").display().to_string(), "auth.lock"),
     )
 }
+
+/// What taking the auth lock comes to while another process holds it under the lease `lease` writes.
+async fn waited(lease: impl FnOnce(&Scratch)) -> (u64, String) {
+    let dir = Scratch::new("lock");
+    let _held = dir.store("agent@example.org").held().await.unwrap();
+    lease(&dir);
+    taking(&dir).await
+}
+
+const UNLEASED: &str =
+    "error: auth.lock is held by a process that wrote no lease, so which one is not known";
 
 #[tokio::test(start_paused = true)]
 async fn a_lock_is_waited_for_while_its_lease_lasts_and_given_up_naming_its_holder_after() {
@@ -125,7 +131,16 @@ async fn a_lock_is_waited_for_while_its_lease_lasts_and_given_up_naming_its_hold
         (0, format!("error: auth.lock is held by pid 4242, past its lease until {}", utc(ended)))
     );
     let unsaid = waited(|dir| fs::write(dir.lock("auth.lock"), "").unwrap()).await;
-    assert_eq!(unsaid, (0, "error: auth.lock is held with no lease".into()));
+    assert_eq!(unsaid, (0, UNLEASED.into()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lock_let_go_leaves_no_lease_for_a_later_holder_that_writes_none() {
+    let dir = Scratch::new("let-go");
+    drop(dir.store("agent@example.org").held().await.unwrap());
+    let unleased = File::open(dir.lock("auth.lock")).unwrap();
+    unleased.lock().unwrap();
+    assert_eq!(taking(&dir).await, (0, UNLEASED.into()));
 }
 
 #[tokio::test(start_paused = true)]

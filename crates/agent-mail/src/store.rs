@@ -178,10 +178,18 @@ impl PasswordFile {
 }
 
 /// A lock this process holds. Its file holds its lease: until when the holder says it is busy, which is as long as
-/// a waiter waits for it.
+/// a waiter waits for it. Letting the lock go empties the file, so no lease outlasts its holding.
 pub struct Lock {
     file: File,
     path: String,
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        if let Err(e) = self.file.set_len(0) {
+            warn!("clearing the lease on {}: {e}", self.path);
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -349,7 +357,9 @@ impl Store {
                         l.pid,
                         utc(l.until)
                     ),
-                    None => format!("{path} is held with no lease"),
+                    None => format!(
+                        "{path} is held by a process that wrote no lease, so which one is not known"
+                    ),
                 });
             }
             if seen.is_none() {
