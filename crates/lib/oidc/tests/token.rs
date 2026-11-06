@@ -105,3 +105,14 @@ fn a_reply_of_another_shape_or_a_refusal_is_no_tokens() {
     let error = OAuthError { code: ErrorCode::AuthorizationPending, description: None };
     assert_eq!(refused, Failed::Refused(error));
 }
+
+#[test]
+fn a_scope_covers_what_it_lists_in_any_order_and_nothing_else() {
+    let read = "openid offline_access https://graph.microsoft.com/Calendars.Read";
+    let write = "openid offline_access https://graph.microsoft.com/Calendars.ReadWrite";
+    assert!(covers(read, read));
+    assert!(covers(read, "https://graph.microsoft.com/Calendars.Read openid"));
+    assert!(!covers(read, write));
+    assert!(!covers(write, read));
+    assert!(!covers(read, "openid offline_access https://graph.microsoft.com/calendars.read"));
+}

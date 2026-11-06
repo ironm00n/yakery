@@ -14,7 +14,7 @@ use crate::graph::{Delta, Graph, Refused};
 use crate::ledger::{Edit, Entry, Ledger, Mirror, Mirrored, Put};
 use crate::local;
 use crate::policy::Policy;
-use crate::state::{self, Subscription, Tokens};
+use crate::state::{self, Subscription};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Wake {
@@ -166,9 +166,8 @@ impl Sync {
 
     async fn handle(&self, needs: Needs) -> Result<(), Unmet> {
         let whole = |why| Unmet { needs, why };
-        let Tokens { refresh } = self.state.load(state::TOKENS).map_err(whole)?;
-        if refresh.is_none() {
-            yakery_log::warn!("not signed in; run `outlook-sync login`");
+        if let Err(unsigned) = self.graph.signed_in().map_err(whole)? {
+            yakery_log::warn!("{unsigned}");
             return Ok(());
         }
         let mut ledger = Ledger::open(&self.mirror, &self.state).map_err(whole)?;

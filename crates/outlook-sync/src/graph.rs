@@ -12,7 +12,7 @@ use tokio::sync::{Mutex, MutexGuard};
 use crate::event::Change;
 use crate::local::Owned;
 use crate::policy::{Feed, Policy, Route};
-use crate::state::{self, Subscription};
+use crate::state::{self, SignedIn, Subscription};
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
 pub fn scope(policy: &Policy) -> &'static str {
@@ -75,22 +75,23 @@ impl Graph {
     }
 
     /// Takes the cache's guard so that grants run one at a time, and the refresh token saved last
-    /// comes from the grant made last.
+    /// comes from the grant made last. `signed_in` is the scope its sign-in asked for.
     async fn grant(
         &self,
         cache: &mut MutexGuard<'_, Option<Access>>,
         grant: Grant<'_>,
+        signed_in: &str,
     ) -> Result<Tokens> {
-        let scope = Some(scope(self.policy));
         let (at, sent) = (&self.endpoints.token, Timestamp::now().as_second());
-        let form = grant.form(&self.entra, scope, at, sent)?;
+        let form = grant.form(&self.entra, Some(scope(self.policy)), at, sent)?;
         let reply = self.client.post(at.to_string()).form(&form).send().await.context("entra")?;
         let status = reply.status();
         let tokens = Tokens::read(status, &reply.bytes().await?, sent)
             .map_err(|failed| anyhow!("entra token: HTTP {status}: {}", said(&failed)))?;
         **cache = Some(tokens.access.clone());
-        if let Some(refresh) = &tokens.refresh {
-            self.state.save(state::TOKENS, &state::Tokens { refresh: Some(refresh.clone()) })?;
+        if let Some(refresh) = tokens.refresh.clone() {
+            let signed_in = Some(SignedIn { refresh, scope: signed_in.to_owned() });
+            self.state.save(state::TOKENS, &state::Tokens { signed_in })?;
         }
         Ok(tokens)
     }
@@ -98,7 +99,8 @@ impl Graph {
     pub async fn redeem(&self, code: &Code<'_>) -> Result<()> {
         let redirect = self.policy.public.url(Route::Callback);
         let mut cache = self.access.lock().await;
-        let tokens = self.grant(&mut cache, Grant::Code { code, redirect: &redirect }).await?;
+        let code = Grant::Code { code, redirect: &redirect };
+        let tokens = self.grant(&mut cache, code, scope(self.policy)).await?;
         anyhow::ensure!(tokens.refresh.is_some(), "entra granted no refresh token");
         Ok(())
     }
@@ -108,9 +110,13 @@ impl Graph {
         if let Some(access) = cache.as_ref().filter(|a| a.fresh(now, WITHIN)) {
             return Ok(access.token.clone());
         }
-        let state::Tokens { refresh } = self.state.load(state::TOKENS)?;
-        let refresh = refresh.context("not signed in: run `outlook-sync login`")?;
-        Ok(self.grant(&mut cache, Grant::Refresh(&refresh)).await?.access.token)
+        let SignedIn { refresh, scope } = self.signed_in()?.map_err(|why| anyhow!(why))?;
+        Ok(self.grant(&mut cache, Grant::Refresh(&refresh), &scope).await?.access.token)
+    }
+
+    pub fn signed_in(&self) -> Result<Result<SignedIn, String>> {
+        let tokens: state::Tokens = self.state.load(state::TOKENS)?;
+        Ok(tokens.signed_in_for(scope(self.policy)))
     }
 
     async fn call(

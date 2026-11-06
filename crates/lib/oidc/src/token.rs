@@ -82,6 +82,12 @@ struct Reply {
     expires_in: Option<i64>,
 }
 
+/// Whether a grant of the scope `granted` includes each scope `asked` lists: a refresh asks for no
+/// more than its sign-in did (RFC 6749 3.3, 6).
+pub fn covers(granted: &str, asked: &str) -> bool {
+    asked.split_ascii_whitespace().all(|scope| granted.split_ascii_whitespace().any(|g| g == scope))
+}
+
 impl Tokens {
     /// The reply to a request sent at `sent`: no reply is generated before it, so an expiry
     /// counted from it comes no later than the issuer's.

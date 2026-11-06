@@ -38,7 +38,26 @@ pub fn take(dir: &Dir, returned: &Returned, now: Timestamp) -> Result<Result<Pkc
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct Tokens {
-    pub refresh: Option<Secret>,
+    pub signed_in: Option<SignedIn>,
+}
+
+impl Tokens {
+    /// The sign-in, unless there is none or it asked for less than `needs`.
+    pub fn signed_in_for(self, needs: &str) -> Result<SignedIn, String> {
+        let unsigned = match self.signed_in {
+            Some(s) if oidc::covers(&s.scope, needs) => return Ok(s),
+            Some(s) => format!("the sign-in asked for `{}`, not `{needs}`", s.scope),
+            None => "not signed in".into(),
+        };
+        Err(format!("{unsigned}; run `outlook-sync login`"))
+    }
+}
+
+/// A refresh token, and the scope its sign-in asked for: every refresh of it asks for no more.
+#[derive(Serialize, Deserialize)]
+pub struct SignedIn {
+    pub refresh: Secret,
+    pub scope: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
