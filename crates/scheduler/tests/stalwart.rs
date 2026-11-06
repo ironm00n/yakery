@@ -7,7 +7,6 @@ use crate::policy::tests::fixture;
 
 #[test]
 fn creates_read_as_stalwart_0_16_26_answers_them() {
-    // recorded by scheduler/proto/vm/stalwart.nix
     let created = json!({"accountId": "b", "created": {"b": {"id": "u"}}, "newState": "sba", "oldState": "saq"});
     let again = json!({"accountId": "b", "newState": "sba", "notCreated": {"b": {
         "description": "An event with UID 00…@schedule.example.test already exists.", "properties": ["uid"], "type": "invalidProperties"}}});

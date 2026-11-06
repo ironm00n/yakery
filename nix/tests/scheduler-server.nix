@@ -37,7 +37,7 @@ rec {
         readers = [ "owen@${domain}" ];
       };
       bundles.stalwart.programAccounts = with permissions; {
-        # Q1's other answer: creates, and no invitations
+        # creates events, and may not send their invitations
         schedule-nosend.permissions = [
           authenticate
           jmapCalendarGet
