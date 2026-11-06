@@ -40,6 +40,7 @@ dependencies = [
  "libc",
  "lol_html",
  "mail-parser",
+ "oidc",
  "private",
  "reqwest",
  "ring",

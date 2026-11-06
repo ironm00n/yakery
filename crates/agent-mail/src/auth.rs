@@ -1,4 +1,5 @@
 use lol_html::{RewriteStrSettings, element, rewrite_str};
+use oidc::{Device, ErrorCode, Failed, Grant, OAuthError};
 use private::{Secret, now};
 use reqwest::Method;
 
@@ -149,48 +150,52 @@ impl<Z: Zitadel> Auth<Z> {
 
 pub struct Http(pub Web);
 
-/// A body that does not parse is quoted only on failure statuses, since success bodies carry codes and tokens.
-fn json<T: DeserializeOwned>(reply: Page) -> Result<T> {
-    serde_json::from_str(&reply.text).map_err(|e| match reply.status.is_success() {
-        true => anyhow!("{}: HTTP {}: unreadable body: {e}", reply.url.path(), reply.status),
-        false => anyhow!("{}: HTTP {}: {}", reply.url.path(), reply.status, reply.text),
-    })
+const TOKEN: &str = "/oauth/v2/token";
+
+fn client() -> oidc::Client {
+    oidc::Client { id: CLIENT_ID.into(), auth: oidc::Auth::Public }
+}
+
+fn token() -> http::Uri {
+    Origin::Auth.url(TOKEN).as_str().parse().expect("a pinned URL is a URI")
+}
+
+/// A reply that does not parse is quoted only on failure statuses, since success bodies carry codes and tokens.
+fn unread(reply: &Page, failed: Failed) -> anyhow::Error {
+    let (path, status) = (reply.url.path(), reply.status);
+    match status.is_success() {
+        true => anyhow!("{path}: HTTP {status}: {failed}"),
+        false => anyhow!("{path}: HTTP {status}: {}", reply.text),
+    }
 }
 
 impl Http {
-    async fn post<T: DeserializeOwned>(&self, path: &str, form: &[(&str, &str)]) -> Result<T> {
-        let form: Vec<(String, String)> = form.iter().map(|&(k, v)| (k.into(), v.into())).collect();
-        json(self.0.send(Method::POST, Origin::Auth.url(path), Body::Form(&form), None).await?)
+    async fn post(&self, path: &str, form: Vec<(&'static str, String)>) -> Result<Page> {
+        let form: Vec<(String, String)> = form.into_iter().map(|(k, v)| (k.into(), v)).collect();
+        self.0.send(Method::POST, Origin::Auth.url(path), Body::Form(&form), None).await
     }
 
-    async fn token(&self, form: &[(&str, &str)]) -> Result<Result<Tokens, String>> {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Reply {
-            Granted { access_token: Secret, refresh_token: Option<Secret>, expires_in: i64 },
-            Refused { error: String },
-        }
-        Ok(match self.post("/oauth/v2/token", form).await? {
-            Reply::Granted { access_token: token, refresh_token: refresh, expires_in } => {
+    async fn token(&self, grant: Grant<'_>) -> Result<Result<Tokens, OAuthError>> {
+        let reply = self.post(TOKEN, grant.form(&client(), None, &token(), now())?).await?;
+        match oidc::Tokens::read(reply.status, reply.text.as_bytes()) {
+            Ok(granted) => {
+                let expires_in = granted.expires_in.context("zitadel named no expiry")?;
                 let expires_at = now().checked_add(expires_in).context("token expiry overflows")?;
-                Ok(Tokens { access: Some(Access { token, expires_at }), refresh })
+                let access = Access { token: granted.access, expires_at };
+                Ok(Ok(Tokens { access: Some(access), refresh: granted.refresh }))
             }
-            Reply::Refused { error } => Err(error),
-        })
+            Err(Failed::Refused(error)) => Ok(Err(error)),
+            Err(failed) => Err(unread(&reply, failed)),
+        }
     }
 }
 
 impl Zitadel for Http {
     async fn device_flow(&self, login: &Login, password: &Secret, scope: &str) -> Result<Tokens> {
-        #[derive(Deserialize)]
-        struct Device {
-            device_code: String,
-            user_code: String,
-            verification_uri: String,
-        }
-        let device: Device = self
-            .post("/oauth/v2/device_authorization", &[("client_id", CLIENT_ID), ("scope", scope)])
-            .await?;
+        let asking = Device::form(&client(), scope, &token(), now())?;
+        let reply = self.post("/oauth/v2/device_authorization", asking).await?;
+        let device =
+            Device::read(reply.status, reply.text.as_bytes()).map_err(|f| unread(&reply, f))?;
         let login = login.to_string();
         let answers = [
             ("user_code", device.user_code.as_str()),
@@ -211,16 +216,14 @@ impl Zitadel for Http {
                 break;
             }
         }
-        let grant = [
-            ("client_id", CLIENT_ID),
-            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ("device_code", &device.device_code),
-        ];
         for _ in 0..10 {
-            match self.token(&grant).await? {
+            match self.token(Grant::Device(&device.device_code)).await? {
                 Ok(tokens) => return Ok(tokens),
-                Err(error) if error == "authorization_pending" || error == "slow_down" => {}
-                Err(error) => bail!("token: {error}"),
+                Err(OAuthError {
+                    code: ErrorCode::AuthorizationPending | ErrorCode::SlowDown,
+                    ..
+                }) => {}
+                Err(error) => bail!("token: {}", error.code),
             }
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
@@ -228,13 +231,9 @@ impl Zitadel for Http {
     }
 
     async fn refresh(&self, refresh: &Secret) -> Result<Option<Tokens>> {
-        let form = [
-            ("client_id", CLIENT_ID),
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh.expose()),
-        ];
-        let refused = |e| note!("zitadel refused the refresh token ({e}); signing in");
-        Ok(self.token(&form).await?.map_err(refused).ok())
+        let refused =
+            |e: OAuthError| note!("zitadel refused the refresh token ({}); signing in", e.code);
+        Ok(self.token(Grant::Refresh(refresh)).await?.map_err(refused).ok())
     }
 
     async fn change_password(&self, token: &Secret, old: &Secret, new: &Secret) -> Result<()> {

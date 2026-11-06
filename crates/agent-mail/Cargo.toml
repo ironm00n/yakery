@@ -21,7 +21,9 @@ invitation.workspace = true
 jiff.workspace = true
 libc.workspace = true
 lol_html.workspace = true
+http.workspace = true
 mail-parser.workspace = true
+oidc.workspace = true
 private.workspace = true
 ring.workspace = true
 reqwest.workspace = true
@@ -34,7 +36,6 @@ tokio = { workspace = true, features = ["macros", "rt", "time"] }
 yakery-log.workspace = true
 
 [dev-dependencies]
-http.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
