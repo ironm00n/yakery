@@ -206,7 +206,7 @@ pub async fn run(policy: &'static Policy, mut sockets: Sockets) -> Result<()> {
     let listener = TcpListener::from_std(listener)?;
     let answering = Arc::new(Semaphore::new(ANSWERING));
     loop {
-        let (stream, _) = listener.accept().await?;
+        let (stream, _) = yakery_serve::accept(async || listener.accept().await).await;
         let permit = answering.clone().acquire_owned().await?;
         tokio::task::spawn_local(async move {
             let front = Front { core };

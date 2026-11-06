@@ -143,16 +143,25 @@ where
     F: Future<Output = B>,
 {
     loop {
-        let Ok((mut stream, _)) = listener.accept().await else { continue };
+        let (mut stream, _) = yakery_serve::accept(async || listener.accept().await).await;
         let answer = answer.clone();
         tokio::task::spawn_local(async move {
             let mut question = vec![];
-            if (&mut stream).take(MOST_ASKED).read_to_end(&mut question).await.is_err() {
+            if let Err(e) = (&mut stream).take(MOST_ASKED).read_to_end(&mut question).await {
+                yakery_log::warn!("reading a question: {e}");
                 return;
             }
-            let Ok(question) = serde_json::from_slice(&question) else { return };
+            let question = match serde_json::from_slice(&question) {
+                Ok(question) => question,
+                Err(e) => {
+                    yakery_log::warn!("an unreadable question: {e}");
+                    return;
+                }
+            };
             let reply = serde_json::to_vec(&answer(question).await).expect("answers serialize");
-            let _ = stream.write_all(&reply).await;
+            if let Err(e) = stream.write_all(&reply).await {
+                yakery_log::warn!("answering: {e}");
+            }
         });
     }
 }

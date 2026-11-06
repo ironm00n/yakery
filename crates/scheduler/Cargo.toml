@@ -25,6 +25,7 @@ maud.workspace = true
 private.workspace = true
 ring.workspace = true
 yakery-log.workspace = true
+yakery-serve.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 text.workspace = true
