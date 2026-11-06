@@ -62,14 +62,14 @@ impl Sync {
                     reply(StatusCode::FORBIDDEN, "text/plain", "no subscription is being made")
                 }
                 None => {
-                    if let Ok(Ok(body)) = tokio::time::timeout(
-                        WITHIN,
-                        Limited::new(request.into_body(), MOST_BODY).collect(),
-                    )
-                    .await
-                        && let Ok(notices) = serde_json::from_slice::<Notices>(&body.to_bytes())
-                    {
-                        self.noticed(notices, feed);
+                    let body = Limited::new(request.into_body(), MOST_BODY).collect();
+                    match tokio::time::timeout(WITHIN, body).await {
+                        Ok(Ok(body)) => match serde_json::from_slice(&body.to_bytes()) {
+                            Ok(notices) => self.noticed(notices, feed),
+                            Err(e) => yakery_log::warn!("an unreadable notice: {e}"),
+                        },
+                        Ok(Err(e)) => yakery_log::warn!("a notice's body: {e}"),
+                        Err(_) => yakery_log::warn!("a notice's body took past {WITHIN:?}"),
                     }
                     reply(StatusCode::ACCEPTED, "text/plain", "")
                 }
@@ -157,7 +157,7 @@ impl Sync {
 
 pub async fn serve(sync: &'static Sync, listener: TcpListener) {
     loop {
-        let Ok((stream, _)) = listener.accept().await else { continue };
+        let (stream, _) = yakery_serve::accept(async || listener.accept().await).await;
         tokio::task::spawn_local(async move {
             let service = service_fn(move |request| async move {
                 Ok::<_, Infallible>(sync.answer(request).await)

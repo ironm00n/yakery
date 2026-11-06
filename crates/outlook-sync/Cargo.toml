@@ -29,6 +29,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
 yakery-log.workspace = true
+yakery-serve.workspace = true
 
 [lints]
 workspace = true

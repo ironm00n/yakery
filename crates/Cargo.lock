@@ -1425,6 +1425,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "yakery-log",
+ "yakery-serve",
 ]
 
 [[package]]
