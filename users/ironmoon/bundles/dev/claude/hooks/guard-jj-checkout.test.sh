@@ -53,6 +53,21 @@ check DENY "$e" "sh -c 'cd ~/workspace/redox && jj st'"
 check PASS "$r" "sh -c 'cd ~/tmp/worktree/x && jj st'"
 
 check PASS "$r" 'jj --ignore-working-copy st'
+check PASS "$r" 'jj --version'
+check PASS "$r" 'jj -h'
+check PASS "$r" 'jj help describe'
+check PASS "$r" 'readlink -f "$(command -v jj)"'
+check DENY "$r" 'command jj st'
+check DENY "$r" 'jj log -r help'
+check DENY "$r" 'jj log --help'
+check DENY "$r" 'jj signoff -h @-'
+check DENY "$r" 'jj push -b -h'
+check DENY "$r" "env -S'jj st' jj help"
+check DENY "$r" 'echo st | xargs -I help jj help'
+check DENY "$r" 'sudo jj --version'
+check DENY "$r" 'jj st ${UNSET+ -h }'
+check DENY "$r" 'env -u command -v jj st'
+check DENY "$r" 'sudo command -v jj st'
 check PASS "$e" 'jj -R ~/workspace/redox --ignore-working-copy log'
 check PASS "$e" 'cd ~/workspace/redox && jj file show -r @ README.md --ignore-working-copy'
 check PASS "$r" 'jj -R ~/tmp/worktree/x log'

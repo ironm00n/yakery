@@ -19,6 +19,8 @@ me="$dir/mine"
 check DENY "$me" 'pkill -f definitely-nothing-zz'
 check DENY "$me" 'killall -9 sleep'
 check DENY "$me" 'sudo pkill sleep'
+check DENY "$me" 'env -u command -v pkill -f definitely-nothing-zz'
+check PASS "$me" 'command -v pkill && echo found'
 check DENY "$me" '/run/current-system/sw/bin/pkill sleep'
 check DENY "$me" "bash -c 'pkill sleep'"
 check DENY "$me" 'kill $(pgrep -f "measure.py|cargo test --workspace")'

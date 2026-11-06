@@ -38,6 +38,9 @@ deny() {
 check_jj() {
   [[ ${w[0]##*/} == jj ]] || return
   set -- "${w[@]:1}"
+  # jj prints these without loading a repo, typed as the segment's own first words; after any other word an alias
+  # such as `util exec --` may take them, and behind a wrapper (env -S, xargs -I) the words jj gets aren't these
+  [[ -z $stripped && (${1-} == help || ($# == 1 && $1 == @(--version|-V|--help|-h))) ]] && return
   local a i r=$here repo c d
   for ((i = 1; i <= $#; i++)); do
     a=${!i}

@@ -107,11 +107,14 @@ each_command() {
   done <<<"$lines"
 }
 
-# Drops the words before the command proper (sudo, env, timeout, VAR=x, if, ...) from the array `w`.
-# After xargs, words up to the first one named by the extglob $1 go too, and `fed` is set; an
-# `env -C` directory lands in `chdir`.
+# Drops the words before the command proper (sudo, env, timeout, VAR=x, if, ...) from the array `w`,
+# and all of them for a segment opening `command -v`, which only looks a name up. After xargs, words
+# up to the first one named by the extglob $1 go too, and `fed` is set; an `env -C` directory lands
+# in `chdir`; `stripped` is set when any word went.
 command_word() {
-  fed= chdir=
+  fed= chdir= stripped=
+  local words=${#w[@]}
+  [[ ${w[0]-} == command && ${w[1]-} == -[vV] ]] && w=()
   while ((${#w[@]})); do
     case ${w[0]} in
       sudo | command | builtin | exec | nohup | setsid | nice | time | env | if | elif | while | until | then | do | else | '!' | '{') w=("${w[@]:1}") ;;
@@ -123,4 +126,5 @@ command_word() {
       *) [[ -n $fed && ${w[0]##*/} != @($1) ]] && w=("${w[@]:1}") || break ;;
     esac
   done
+  ((${#w[@]} == words)) || stripped=1
 }
