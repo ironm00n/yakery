@@ -13,14 +13,15 @@ use crate::{
     web::Web,
 };
 
-fn page(html: &'static str) -> http::Response<reqwest::Body> {
-    http::Response::builder().header("content-type", "text/html").body(html.into()).unwrap()
+fn page(html: impl Into<String>) -> http::Response<reqwest::Body> {
+    let page = http::Response::builder().header("content-type", "text/html");
+    page.body(html.into().into()).unwrap()
 }
 
 /// ZITADEL's device flow over its recorded login pages, the password's post answered with
 /// `after_password`, and the token endpoint answering `polls` in turn, then pending; each poll
 /// is logged at its second since the start.
-fn zitadel(after_password: &'static str, polls: &[&'static str]) -> (Wired, Rc<RefCell<Vec<u64>>>) {
+fn zitadel(after_password: String, polls: &[&'static str]) -> (Wired, Rc<RefCell<Vec<u64>>>) {
     let (start, polled) = (Instant::now(), Rc::new(RefCell::new(vec![])));
     let (log, mut polls) = (polled.clone(), polls.iter().copied().collect::<VecDeque<_>>());
     let device = json!({ "device_code": "dc", "user_code": "ABCD-EFGH", "expires_in": 300,
@@ -30,7 +31,7 @@ fn zitadel(after_password: &'static str, polls: &[&'static str]) -> (Wired, Rc<R
         ("GET", "/ui/login/device") => page(include_str!("zitadel/1-user-code.html")),
         ("POST", "/ui/login/device") => page(include_str!("zitadel/2-loginname.html")),
         ("POST", "/ui/login/loginname") => page(include_str!("zitadel/3-password.html")),
-        ("POST", "/ui/login/password") => page(after_password),
+        ("POST", "/ui/login/password") => page(after_password.clone()),
         ("POST", "/ui/login/mfa/prompt") => moved(302, "/ui/login/device/consent"),
         ("GET", "/ui/login/device/consent") => page(include_str!("zitadel/5-consent.html")),
         ("POST", "/ui/login/device/allowed") => page(include_str!("zitadel/6-done.html")),
@@ -51,19 +52,56 @@ async fn signed_in() -> Result<Tokens> {
     http.device_flow(&login("agent@example.org"), &Secret::new("pw"), SCOPE).await
 }
 
-const PASSED: &str = include_str!("zitadel/4-mfa-prompt.html");
+const PASSWORD: &str = include_str!("zitadel/3-password.html");
+
+fn passed() -> String {
+    include_str!("zitadel/4-mfa-prompt.html").into()
+}
+
+/// `page` as ZITADEL renders it for an error `id`: its error-message template inside the form.
+fn erred(page: &str, id: &str) -> String {
+    let error = format!(
+        r#"<div class="lgn-error dialog_content" title="{id}">
+    <i class="lgn-icon-exclamation-circle-solid lgn-warn"></i>
+    <p class="lgn-error-message">Password is invalid</p>
+</div>
+<div id="dialog_overlay" class="dialog_overlay "></div>
+"#
+    );
+    assert_eq!(page.matches("</form>").count(), 1);
+    page.replace("</form>", &format!("{error}</form>"))
+}
+
+#[tokio::test]
+async fn only_a_wrong_password_is_a_refusal_of_it() {
+    let loginname = include_str!("zitadel/2-loginname.html");
+    for (after_password, want) in [
+        (erred(PASSWORD, "COMMAND-3M0fs"), "PasswordRefused: zitadel refused the password"),
+        (erred(loginname, "EVENT-SDe2f"), "PasswordRefused: zitadel refused the password"),
+        (
+            erred(PASSWORD, "COMMAND-JLK35"),
+            "Transient: zitadel answered the password with error COMMAND-JLK35",
+        ),
+        (PASSWORD.into(), "Transient: zitadel asked for the password again without saying why"),
+    ] {
+        let (_wire, polled) = zitadel(after_password, &[]);
+        let e = signed_in().await.map(|_| ()).unwrap_err();
+        assert_eq!(format!("{:?}: {e:#}", Failure::of(&e)), want);
+        assert!(polled.borrow().is_empty());
+    }
+}
 
 #[tokio::test(start_paused = true)]
 async fn the_grant_is_polled_at_its_interval_and_five_seconds_slower_after_slow_down() {
     let polls = ["authorization_pending", "slow_down", "authorization_pending", "granted"];
-    let (_wire, polled) = zitadel(PASSED, &polls);
+    let (_wire, polled) = zitadel(passed(), &polls);
     assert_eq!(signed_in().await.unwrap().access.unwrap().token, Secret::new("t"));
     assert_eq!(*polled.borrow(), [0, 5, 15, 25]);
 }
 
 #[tokio::test(start_paused = true)]
 async fn the_polls_end_before_the_device_code_expires_or_once_the_grant_is_denied() {
-    let (wire, polled) = zitadel(PASSED, &[]);
+    let (wire, polled) = zitadel(passed(), &[]);
     let expired = shown(signed_in().await.map(|_| ""));
     assert_eq!(
         expired,
@@ -71,7 +109,7 @@ async fn the_polls_end_before_the_device_code_expires_or_once_the_grant_is_denie
     );
     assert_eq!((polled.borrow().len(), polled.borrow().last().copied()), (60, Some(295)));
     drop(wire);
-    let (_wire, _) = zitadel(PASSED, &["authorization_pending", "access_denied"]);
+    let (_wire, _) = zitadel(passed(), &["authorization_pending", "access_denied"]);
     let denied = shown(signed_in().await.map(|_| ""));
     assert_eq!(
         denied,

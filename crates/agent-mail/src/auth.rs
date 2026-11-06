@@ -45,6 +45,18 @@ fn refusal() -> anyhow::Error {
     Failure::PasswordRefused.with("zitadel refused the password")
 }
 
+/// ZITADEL's error IDs for a wrong password: its own, and the one IgnoreUnknownUsernames gives every
+/// failed sign-in.
+const WRONG_PASSWORD: [&str; 2] = ["COMMAND-3M0fs", "EVENT-SDe2f"];
+
+/// What a login page showing error `id` after the password's post says of the password.
+fn answered(id: &str) -> anyhow::Error {
+    match WRONG_PASSWORD.contains(&id) {
+        true => refusal(),
+        false => anyhow!("zitadel answered the password with error {id}"),
+    }
+}
+
 fn access(tokens: &Tokens) -> Result<Access> {
     tokens.access.clone().context("zitadel granted no access token")
 }
@@ -208,10 +220,16 @@ impl Zitadel for Http {
         let mut page = browser.send(Method::GET, start, Body::Empty, None).await?;
         let mut password_posted = false;
         for _ in 0..8 {
-            let Some(post) = Form::read(&page.text)?.post(&answers, &page.url)? else { break };
-            if post.asks_password && std::mem::replace(&mut password_posted, true) {
-                return Err(refusal());
+            let form = Form::read(&page.text)?;
+            if password_posted && let Some(id) = &form.error {
+                return Err(answered(id));
             }
+            let Some(post) = form.post(&answers, &page.url)? else { break };
+            ensure!(
+                !(post.asks_password && password_posted),
+                "zitadel asked for the password again without saying why"
+            );
+            password_posted |= post.asks_password;
             page = browser.send(Method::POST, post.url, Body::Form(&post.fields), None).await?;
             if post.consents {
                 break;
@@ -253,7 +271,11 @@ impl Zitadel for Http {
     }
 }
 
-pub struct Form(Vec<[String; 5]>);
+pub struct Form {
+    elements: Vec<[String; 5]>,
+    /// The ID of the error the page shows.
+    pub error: Option<String>,
+}
 
 pub struct Post {
     pub url: Pinned,
@@ -270,6 +292,7 @@ pub fn set(fields: &mut Vec<(String, String)>, name: &str, value: &str) {
 
 impl Form {
     pub fn read(html: &str) -> Result<Form> {
+        let mut error = None;
         let (mut elements, mut forms) = (vec![], 0);
         let collect = element!("form, input, button", |el| {
             let attr = |name: &str| el.get_attribute(name).unwrap_or_default();
@@ -281,12 +304,19 @@ impl Form {
             }
             Ok(())
         });
-        rewrite_str(html, RewriteStrSettings::new().append_element_content_handler(collect))?;
-        Ok(Form(elements))
+        let shown = element!("div.lgn-error[title]", |el| {
+            error = el.get_attribute("title");
+            Ok(())
+        });
+        let settings = RewriteStrSettings::new().append_element_content_handler(collect);
+        rewrite_str(html, settings.append_element_content_handler(shown))?;
+        Ok(Form { elements, error })
     }
 
     pub fn post(&self, answers: &[(&str, &str)], page: &Pinned) -> Result<Option<Post>> {
-        let Some(([_, _, _, _, action], rest)) = self.0.split_first() else { return Ok(None) };
+        let Some(([_, _, _, _, action], rest)) = self.elements.split_first() else {
+            return Ok(None);
+        };
         let action = page.join(if action.is_empty() { page.as_str() } else { action })?;
         let inputs = || rest.iter().filter(|e| e[0] == "input" && !e[1].is_empty());
         let mut fields = vec![];
