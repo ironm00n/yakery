@@ -533,8 +533,9 @@ pub async fn run(args: Args) -> Result<ExitCode> {
     watch(Mail::open(), deadline, args).await
 }
 
-/// The wait on the mail `opening` opens, which gives up at `deadline` on the opening, the scans and the sign-ins
-/// between them, and every lock they wait for, but not on delivering what it claimed.
+/// The wait on the mail `opening` opens, which gives up at `deadline` on the opening, the sign-ins between scans
+/// and every lock it waits for; a sign-in a scan's call needs runs to its own bound, and what it claimed is
+/// delivered whatever the deadline.
 pub async fn watch<M: Borrow<Mail>>(
     opening: impl Future<Output = Result<M>>,
     deadline: Option<Instant>,
