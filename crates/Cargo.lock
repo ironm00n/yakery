@@ -1915,6 +1915,7 @@ dependencies = [
  "hyper-util",
  "invitation",
  "jiff",
+ "jmap",
  "maud",
  "private",
  "ring",

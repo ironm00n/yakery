@@ -3,7 +3,7 @@ use std::iter;
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use bytes::Bytes;
@@ -15,7 +15,8 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use invitation::{At, Invitation, Person};
 use jiff::Timestamp;
-use serde::Deserialize;
+use jmap::{Got, Queried, Session};
+use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use text::Address;
 
@@ -96,31 +97,31 @@ impl Stalwart {
 
         // no more than the policy's, not exactly: Stalwart 0.16's `/api/account` hides the
         // `jmapPrincipal*` permissions while directory queries are off, and v1's doesn't
-        let held: BTreeSet<String> =
-            serde_json::from_value(http.get(&login, "/api/account").await?["permissions"].take())?;
+        let held: BTreeSet<String> = serde_json::from_value(
+            http.get::<Value>(&login, "/api/account").await?["permissions"].take(),
+        )?;
         let beyond: Vec<_> = held.difference(&policy.account.permissions).collect();
         ensure!(beyond.is_empty(), "{} holds {beyond:?}, beyond the policy's", login.address);
 
-        let session = http.get(&login, "/jmap/session").await?;
-        let accounts = session["accounts"].as_object().context("a JMAP session")?;
-        let name = |a: &Value| a["name"].as_str().unwrap_or_default().to_string();
+        let session: Session = http.get(&login, "/jmap/session").await?;
         let (own, others): (Vec<_>, Vec<_>) =
-            accounts.iter().partition(|(_, a)| name(a) == login.address);
+            session.accounts.iter().partition(|(_, a)| a.name == login.address);
         let ([(own, _)], [(owner_id, owner)]) = (own.as_slice(), others.as_slice()) else {
-            let seen: Vec<String> = accounts.values().map(name).collect();
+            let seen: Vec<&String> = session.accounts.values().map(|a| &a.name).collect();
             bail!(
                 "{} must see one account besides its own, the one that shared Bookings, not {seen:?}",
                 login.address
             );
         };
         login.account = own.to_string();
-        let (owner_id, owner) = (owner_id.to_string(), name(owner));
+        let (owner_id, owner) = (owner_id.to_string(), owner.name.clone());
         let owner: Address = owner
             .parse()
             .with_context(|| format!("the account {owner:?} is named by no address"))?;
 
-        let calendars = http.call(&login, "Calendar/get", json!({"accountId": owner_id})).await?;
-        let [bookings] = calendars["list"].as_array().map(Vec::as_slice).unwrap_or_default() else {
+        let calendars: Got<Value> =
+            http.call(&login, "Calendar/get", json!({"accountId": owner_id})).await?;
+        let [bookings] = calendars.list.as_slice() else {
             bail!("{} must see exactly one calendar of {owner}'s, Bookings", login.address);
         };
         let rights = &bookings["myRights"];
@@ -137,36 +138,34 @@ impl Stalwart {
 
         let mut groups = vec![];
         for group in &policy.groups {
-            let found = http
+            let found: Queried = http
                 .call(
                     &login,
                     "Principal/query",
                     json!({"accountId": login.account, "filter": {"email": group}}),
                 )
                 .await?;
-            let [id] = found["ids"].as_array().map(Vec::as_slice).unwrap_or_default() else {
-                bail!("no account {group}");
-            };
-            groups.push(id.as_str().context("a principal id")?.into());
+            let [id] = found.ids.as_slice() else { bail!("no account {group}") };
+            groups.push(id.clone());
         }
         Ok(Stalwart { http, login, owner, owner_id, bookings, groups })
     }
 }
 
 impl Http {
-    async fn send(
+    async fn send<T: DeserializeOwned>(
         &self,
         login: &Login,
         method: Method,
         path: &str,
-        body: Option<Value>,
-    ) -> Result<Value> {
+        body: Vec<u8>,
+    ) -> Result<T> {
         let request = Request::builder()
             .method(method)
             .uri(format!("{}{path}", self.origin))
             .header(AUTHORIZATION, &login.auth)
             .header(CONTENT_TYPE, "application/json")
-            .body(Full::new(body.map(|b| Bytes::from(b.to_string())).unwrap_or_default()))?;
+            .body(Full::new(Bytes::from(body)))?;
         let (status, bytes) = tokio::time::timeout(TIMEOUT, async {
             let response = self.client.request(request).await?;
             let status = response.status();
@@ -184,22 +183,21 @@ impl Http {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
-    async fn get(&self, login: &Login, path: &str) -> Result<Value> {
-        self.send(login, Method::GET, path, None).await
+    async fn get<T: DeserializeOwned>(&self, login: &Login, path: &str) -> Result<T> {
+        self.send(login, Method::GET, path, vec![]).await
     }
 
-    async fn call(&self, login: &Login, method: &str, args: Value) -> Result<Value> {
-        let using = [
-            "urn:ietf:params:jmap:core",
-            "urn:ietf:params:jmap:calendars",
-            "urn:ietf:params:jmap:principals",
-        ];
-        let body = json!({"using": using, "methodCalls": [[method, args, "0"]]});
-        let mut response =
-            self.send(login, Method::POST, "/jmap/", Some(body)).await?["methodResponses"][0]
-                .take();
-        ensure!(response[0] == method, "{method} for {} failed: {}", login.address, response[1]);
-        Ok(response[1].take())
+    async fn call<T: DeserializeOwned>(
+        &self,
+        login: &Login,
+        method: &'static str,
+        args: Value,
+    ) -> Result<T> {
+        let mut request = jmap::Request::new(&[jmap::CORE, jmap::CALENDARS, jmap::PRINCIPALS]);
+        let call = request.call(method, args);
+        let body = serde_json::to_vec(&request)?;
+        let response: jmap::Response = self.send(login, Method::POST, "/jmap/", body).await?;
+        response.answer(call).map_err(|e| anyhow!("{method} for {} failed: {e}", login.address))
     }
 }
 
@@ -220,10 +218,9 @@ impl Calendar for Stalwart {
         for principal in iter::once(&self.owner_id).chain(&self.groups) {
             for week in weeks(period) {
                 let args = json!({"accountId": self.login.account, "id": principal, "utcStart": week.start, "utcEnd": week.end});
-                let list: Vec<Busy> = serde_json::from_value(
-                    self.http.call(&self.login, "Principal/getAvailability", args).await?["list"]
-                        .take(),
-                )?;
+                let mut answer: Value =
+                    self.http.call(&self.login, "Principal/getAvailability", args).await?;
+                let list: Vec<Busy> = serde_json::from_value(answer["list"].take())?;
                 found.extend(
                     list.into_iter().map(|b| Period { start: b.utc_start, end: b.utc_end }),
                 );
