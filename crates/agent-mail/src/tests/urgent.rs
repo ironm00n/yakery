@@ -11,8 +11,8 @@ use crate::{
     urgent::{self, Report},
 };
 
-const LOST: &str = "d0149 lost at 03:10, jobs on the hourly pool";
-const BROKE: &str = "Explorer took node d0149 back at 03:10, with four lanes' jobs on it.";
+const LOST: &str = "node7 lost at 03:10, jobs on the night queue";
+const BROKE: &str = "The cluster took node7 back at 03:10, with four jobs on it.";
 
 fn parsed(args: &[&str]) -> Result<send::Args, String> {
     let argv = [&["agent-mail", "send", "--to", HIM][..], args].concat();
@@ -54,7 +54,7 @@ fn urgent_takes_all_three_parts_and_a_subject_and_no_mime() {
     let dashes = [
         "--urgent",
         "--subject",
-        "-40% on the hourly pool",
+        "-40% on the night queue",
         "--broke",
         "- a",
         "--done",
@@ -73,49 +73,49 @@ fn urgent_takes_all_three_parts_and_a_subject_and_no_mime() {
 fn only_urgent_sends_a_subject_opening_with_an_urgent_tag() {
     let refused = |s: &str| format!("error: \"{s}\" opens with an URGENT tag. {}", urgent_advice());
     rows!(|s: &str| shown(urgent::subject(None, Some(s)).map(Option::unwrap));
-        "URGENT: d0149 lost" => refused("URGENT: d0149 lost");
-        "  urgent - d0149 lost" => refused("  urgent - d0149 lost");
+        "URGENT: node7 lost" => refused("URGENT: node7 lost");
+        "  urgent - node7 lost" => refused("  urgent - node7 lost");
         "URGENT" => refused("URGENT");
-        "[URGENT] d0149 lost" => refused("[URGENT] d0149 lost");
-        "[Urgent] d0149 lost" => refused("[Urgent] d0149 lost");
-        "Urgent: Olek's pick on c6 needed" => refused("Urgent: Olek's pick on c6 needed");
-        "*URGENT*: d0149 lost" => refused("*URGENT*: d0149 lost");
-        "🚨 URGENT: d0149 lost" => refused("🚨 URGENT: d0149 lost");
-        "!! URGENT d0149 lost" => refused("!! URGENT d0149 lost");
-        "\u{1}URGENT: d0149 lost" => refused("\u{1}URGENT: d0149 lost");
-        "(URGENT) d0149 lost" => refused("(URGENT) d0149 lost");
-        "Urgent! d0149 lost" => refused("Urgent! d0149 lost");
-        "(Urgent) d0149 lost" => refused("(Urgent) d0149 lost");
-        "**Urgent** d0149 lost" => refused("**Urgent** d0149 lost");
-        "Urgent  - d0149 lost" => refused("Urgent  - d0149 lost");
-        "[🚨 Urgent] d0149 lost" => refused("[🚨 Urgent] d0149 lost");
-        "[Urgent 🚨] d0149 lost" => refused("[Urgent 🚨] d0149 lost");
-        "[🚨 Urgent 🚨] d0149 lost" => refused("[🚨 Urgent 🚨] d0149 lost");
-        "[Urgent/ops] d0149 lost" => refused("[Urgent/ops] d0149 lost");
-        "(Urgent?) d0149 lost" => refused("(Urgent?) d0149 lost");
-        "**Urgent ** d0149 lost" => refused("**Urgent ** d0149 lost");
+        "[URGENT] node7 lost" => refused("[URGENT] node7 lost");
+        "[Urgent] node7 lost" => refused("[Urgent] node7 lost");
+        "Urgent: Ana's pick on r6 needed" => refused("Urgent: Ana's pick on r6 needed");
+        "*URGENT*: node7 lost" => refused("*URGENT*: node7 lost");
+        "🚨 URGENT: node7 lost" => refused("🚨 URGENT: node7 lost");
+        "!! URGENT node7 lost" => refused("!! URGENT node7 lost");
+        "\u{1}URGENT: node7 lost" => refused("\u{1}URGENT: node7 lost");
+        "(URGENT) node7 lost" => refused("(URGENT) node7 lost");
+        "Urgent! node7 lost" => refused("Urgent! node7 lost");
+        "(Urgent) node7 lost" => refused("(Urgent) node7 lost");
+        "**Urgent** node7 lost" => refused("**Urgent** node7 lost");
+        "Urgent  - node7 lost" => refused("Urgent  - node7 lost");
+        "[🚨 Urgent] node7 lost" => refused("[🚨 Urgent] node7 lost");
+        "[Urgent 🚨] node7 lost" => refused("[Urgent 🚨] node7 lost");
+        "[🚨 Urgent 🚨] node7 lost" => refused("[🚨 Urgent 🚨] node7 lost");
+        "[Urgent/ops] node7 lost" => refused("[Urgent/ops] node7 lost");
+        "(Urgent?) node7 lost" => refused("(Urgent?) node7 lost");
+        "**Urgent ** node7 lost" => refused("**Urgent ** node7 lost");
         "URGENT.5% of hourly jobs fail" => refused("URGENT.5% of hourly jobs fail");
-        "_URGENT_ d0149 lost" => refused("_URGENT_ d0149 lost");
-        "__URGENT__: d0149 lost" => refused("__URGENT__: d0149 lost");
+        "_URGENT_ node7 lost" => refused("_URGENT_ node7 lost");
+        "__URGENT__: node7 lost" => refused("__URGENT__: node7 lost");
         "Urgently, a pick" => "Urgently, a pick";
-        "(urgent-ish) Olek's pick on c6 needed by Friday" => "(urgent-ish) Olek's pick on c6 needed by Friday";
+        "(urgent-ish) Ana's pick on r6 needed by Friday" => "(urgent-ish) Ana's pick on r6 needed by Friday";
         "(Urgent & *important*) pick" => "(Urgent & *important*) pick";
         "**Urgent … _or not_** weekly usage" => "**Urgent … _or not_** weekly usage";
-        "(\"Urgent\") label on c6 is a false alarm" => "(\"Urgent\") label on c6 is a false alarm";
+        "(\"Urgent\") label on r6 is a false alarm" => "(\"Urgent\") label on r6 is a false alarm";
         "(urgent `_private` fix) landed" => "(urgent `_private` fix) landed";
-        "**Urgent questions** for Olek on c6, whenever he's up"
-            => "**Urgent questions** for Olek on c6, whenever he's up";
+        "**Urgent questions** for Ana on r6, whenever you're up"
+            => "**Urgent questions** for Ana on r6, whenever you're up";
         "[urgent.rs] one more pass" => "[urgent.rs] one more pass";
-        "Urgent questions for Olek, whenever he's up" => "Urgent questions for Olek, whenever he's up";
-        "Urgent? No. Just the weekly Explorer usage" => "Urgent? No. Just the weekly Explorer usage";
-        "Urgent-ish: Olek's pick on c6 by Friday" => "Urgent-ish: Olek's pick on c6 by Friday";
+        "Urgent questions for Ana, whenever you're up" => "Urgent questions for Ana, whenever you're up";
+        "Urgent? No. Just the weekly cluster usage" => "Urgent? No. Just the weekly cluster usage";
+        "Urgent-ish: Ana's pick on r6 by Friday" => "Urgent-ish: Ana's pick on r6 by Friday";
         "urgent.rs: one more pass before deploy" => "urgent.rs: one more pass before deploy";
         "URGENT_SUBJECT regex test cases" => "URGENT_SUBJECT regex test cases";
         "URGENT__SUBJECT regex test cases" => "URGENT__SUBJECT regex test cases";
-        "[ops][URGENT] d0149 lost" => "[ops][URGENT] d0149 lost";
+        "[ops][URGENT] node7 lost" => "[ops][URGENT] node7 lost";
         "2 urgent questions for when you are up" => "2 urgent questions for when you are up";
-        "Re: URGENT: d0149 lost" => "Re: URGENT: d0149 lost";
-        "NOT URGENT: a c6 question for when you are up" => "NOT URGENT: a c6 question for when you are up";
+        "Re: URGENT: node7 lost" => "Re: URGENT: node7 lost";
+        "NOT URGENT: a r6 question for when you are up" => "NOT URGENT: a r6 question for when you are up";
         "the urgent fix landed" => "the urgent fix landed";
     );
     assert_eq!(shown(urgent::subject(None, None).map(|s| format!("{s:?}"))), "None");
@@ -127,8 +127,8 @@ fn an_urgent_subject_is_the_news_as_written() {
         |given: &str| shown(urgent::subject(Some(&report(BROKE)), Some(given)).map(Option::unwrap));
     let short = |news: &str, n: usize| {
         format!(
-            "error: \"{news}\" is {n} characters, under 25: an URGENT subject has to say what happened, since he \
-             reads subjects before mail"
+            "error: \"{news}\" is {n} characters, under 25: an URGENT subject has to say what happened, since \
+             subjects are read before mail"
         )
     };
     let again = |news: &str| {
@@ -138,16 +138,16 @@ fn an_urgent_subject_is_the_news_as_written() {
     };
     rows!(subject;
         LOST, &format!("  {LOST} ") => format!("URGENT: {LOST}");
-        "-40% throughput on the hourly pool since 03:10" => "URGENT: -40% throughput on the hourly pool since 03:10";
+        "-40% throughput on the night queue since 03:10" => "URGENT: -40% throughput on the night queue since 03:10";
         "../migrate.sh failed on every host since 02:10" => "URGENT: ../migrate.sh failed on every host since 02:10";
         "[CI] main red since 02:00, nothing merges tonight" => "URGENT: [CI] main red since 02:00, nothing merges tonight";
         &format!("URGENT: {LOST}") => again(&format!("URGENT: {LOST}"));
         &format!("[ops][URGENT] {LOST}") => again(&format!("[ops][URGENT] {LOST}"));
         &format!("_Urgent_ {LOST}") => again(&format!("_Urgent_ {LOST}"));
-        "xb keeper down since 02:10, non-urgent lanes paused"
-            => again("xb keeper down since 02:10, non-urgent lanes paused");
-        "d0149 lost" => short("d0149 lost", 10);
-        &format!("d0149 lost{}", "\u{1}".repeat(15)) => short("d0149 lost", 10);
+        "build keeper down since 02:10, non-urgent lanes paused"
+            => again("build keeper down since 02:10, non-urgent lanes paused");
+        "node7 lost" => short("node7 lost", 10);
+        &format!("node7 lost{}", "\u{1}".repeat(15)) => short("node7 lost", 10);
         &"é".repeat(24) => short(&"é".repeat(24), 24);
     );
 }
@@ -229,10 +229,10 @@ async fn an_urgent_send_goes_out_as_checked_with_dispatch_copied() {
 
 #[tokio::test]
 async fn a_refused_subject_never_signs_in() {
-    let args = parsed(&["--topic", "pool", "--subject", "URGENT: d0149 lost"]).unwrap();
+    let args = parsed(&["--topic", "pool", "--subject", "URGENT: node7 lost"]).unwrap();
     let sent = send::send(&args, async { unreachable!("signed in") }, "body".into()).await;
     assert_eq!(
         shown(sent.map(|_| "sent")),
-        format!("error: \"URGENT: d0149 lost\" opens with an URGENT tag. {}", urgent_advice())
+        format!("error: \"URGENT: node7 lost\" opens with an URGENT tag. {}", urgent_advice())
     );
 }

@@ -1,6 +1,6 @@
-//! Mail about something going wrong, which Owen reads first on waking so he can change plans. He reads subjects
-//! before mail, so the subject carries the news; the body says what broke, what was done and what he might change; and
-//! dispatch's topic gets a copy.
+//! Mail about something going wrong, read first so plans can change. Subjects are read before mail, so the subject
+//! carries the news; the body says what broke, what was done and what the reader might change; and dispatch's topic
+//! gets a copy.
 
 use text::Address;
 
@@ -17,8 +17,8 @@ pub const TELL_DISPATCH: &str = "dispatch's copy waits in its inbox, but its wai
 #[derive(clap::Args)]
 pub struct Urgent {
     /// Something is going wrong: put URGENT before the subject, copy <login>+dispatch, and open the body with --broke,
-    /// --done and --change. --subject is only the news, what happened and whether he must act, as in "d0149 lost at
-    /// 03:10, jobs on the hourly pool".
+    /// --done and --change. --subject is only the news, what happened and whether the reader must act, as in "build
+    /// node lost at 03:10, its jobs wait in the queue".
     #[arg(long, requires_all = ["broke", "done", "change", "subject"], conflicts_with = "mime")]
     urgent: bool,
     /// What broke.
@@ -27,7 +27,7 @@ pub struct Urgent {
     /// What was done about it; Markdown, so a `- ` list is fine.
     #[arg(long, requires = "urgent", allow_hyphen_values = true)]
     done: Option<String>,
-    /// What he might change.
+    /// What the reader might change.
     #[arg(long, requires = "urgent", allow_hyphen_values = true)]
     change: Option<String>,
 }
@@ -105,8 +105,8 @@ pub fn subject(urgent: Option<&Report>, given: Option<&str>) -> Result<Option<St
     let chars = news.chars().count();
     ensure!(
         chars >= NEWS_CHARS,
-        "\"{news}\" is {chars} characters, under {NEWS_CHARS}: an URGENT subject has to say what happened, since he \
-         reads subjects before mail"
+        "\"{news}\" is {chars} characters, under {NEWS_CHARS}: an URGENT subject has to say what happened, since \
+         subjects are read before mail"
     );
     Ok(Some(format!("{PREFIX}{news}")))
 }
@@ -123,7 +123,7 @@ impl Layout {
     }
 }
 
-/// The Markdown sent: under --urgent, a paragraph each for what broke, what was done and what he might change, then
+/// The Markdown sent: under --urgent, a paragraph each for what broke, what was done and what the reader might change, then
 /// stdin's.
 pub fn markdown(urgent: Option<&Report>, stdin: String) -> Result<(String, Layout)> {
     let Some(u) = urgent else { return Ok((stdin, Layout(vec![("", 1, 1)]))) };
