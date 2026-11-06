@@ -57,6 +57,24 @@ impl Wake {
     }
 }
 
+impl Needs {
+    /// What a run that asked for these still owes when its subscription or mirror part failed.
+    fn left(self, subscribed: bool, mirrored: bool) -> Needs {
+        Needs {
+            graph: self.graph && !(subscribed && mirrored),
+            fresh_subscription: self.fresh_subscription && !subscribed,
+            reauthorize: self.reauthorize && !subscribed,
+            listing: self.listing && !mirrored,
+        }
+    }
+}
+
+/// A run's failure, and what of its needs a later run still owes.
+struct Unmet {
+    needs: Needs,
+    why: anyhow::Error,
+}
+
 impl std::ops::BitOr for Needs {
     type Output = Needs;
     fn bitor(self, other: Needs) -> Needs {
@@ -113,7 +131,7 @@ impl Sync {
     pub async fn run(&self, mut wakes: mpsc::UnboundedReceiver<Wake>) {
         let mut daily = tokio::time::interval(DAILY);
         let mut retry: Option<tokio::time::Instant> = None;
-        let mut pending = BTreeSet::new();
+        let mut pending = Needs::default();
         loop {
             let mut woken = BTreeSet::new();
             tokio::select! {
@@ -125,49 +143,52 @@ impl Sync {
                 woken.insert(wake);
             }
             let backing_off = retry.is_some() && woken.iter().all(|w| w.waits_out_backoff());
-            pending.extend(woken);
+            pending = pending | needs(&woken);
             if backing_off {
                 continue;
             }
-            retry = match self.handle(needs(&pending)).await {
+            retry = match self.handle(pending).await {
                 Ok(()) => {
-                    pending.clear();
+                    pending = Needs::default();
                     None
                 }
-                Err(e) => {
+                Err(Unmet { needs, why }) => {
                     yakery_log::warn!(
-                        "{pending:?}: {e:#}; trying again in {} minutes",
+                        "{pending:?}: {why:#}; trying again in {} minutes",
                         RETRY.as_secs() / 60
                     );
+                    pending = needs;
                     Some(tokio::time::Instant::now() + RETRY)
                 }
             };
         }
     }
 
-    async fn handle(&self, needs: Needs) -> Result<()> {
-        let Tokens { refresh } = self.state.load(state::TOKENS)?;
+    async fn handle(&self, needs: Needs) -> Result<(), Unmet> {
+        let whole = |why| Unmet { needs, why };
+        let Tokens { refresh } = self.state.load(state::TOKENS).map_err(whole)?;
         if refresh.is_none() {
             yakery_log::warn!("not signed in; run `outlook-sync login`");
             return Ok(());
         }
-        let mut ledger = Ledger::open(&self.mirror, &self.state)?;
+        let mut ledger = Ledger::open(&self.mirror, &self.state).map_err(whole)?;
         // a listing first records Outlook's files, so the owner's edits of them are told from the sync's
         let listed = self.policy.write && !ledger.looked();
         if listed {
-            self.mirror(&mut ledger, true).await?;
+            self.mirror(&mut ledger, true).await.map_err(whole)?;
         }
         let edited = match self.policy.write {
             true => self.edits(&mut ledger).await,
             false => Ok(()),
         };
         if !needs.graph {
-            return edited;
+            return edited.map_err(whole);
         }
         let fresh = needs.fresh_subscription || self.shared.subscription.borrow().is_none();
         let subscribed = self.subscription(fresh, needs.reauthorize).await;
         let mirrored = self.mirror(&mut ledger, needs.listing && !listed).await;
-        every([edited, subscribed, mirrored])
+        let left = needs.left(subscribed.is_ok(), mirrored.is_ok());
+        every([edited, subscribed, mirrored]).map_err(|why| Unmet { needs: left, why })
     }
 
     /// A created event's local file goes once sent, so the delta brings it back under its Graph id.

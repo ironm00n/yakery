@@ -22,3 +22,13 @@ fn each_wake_asks_for_its_own_part_of_a_run() {
         assert_eq!(needs(&[Wake::Changed, wake]), listing, "{wake:?}");
     }
 }
+
+#[test]
+fn a_run_whose_mirror_failed_owes_the_listing_and_not_the_subscription_it_made() {
+    let removed = needs(&[Wake::Removed]);
+    let graph = Needs { graph: true, ..Needs::default() };
+    assert_eq!(removed.left(true, false), Needs { listing: true, ..graph });
+    assert_eq!(removed.left(false, true), Needs { fresh_subscription: true, ..graph });
+    assert_eq!(removed.left(true, true), Needs::default());
+    assert_eq!(needs(&[Wake::Edited]).left(false, false), Needs::default());
+}
