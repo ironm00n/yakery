@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fs::File, ops::ControlFlow};
+use std::{cell::RefCell, ops::ControlFlow};
 
 use ::jmap::{
     Changed, Event, Events, Failed, Got, Limits, Queried, Request, Session, Set, Urls, View,
@@ -12,7 +12,7 @@ use crate::{
     jmap::{Call, Cap, MAIL, jmap_id, keywords},
     policy::Login,
     prelude::*,
-    store::Config,
+    store::{Config, Lock},
     web::{self, Origin, Pinned, TIMEOUT, Web},
 };
 
@@ -533,7 +533,7 @@ impl Mail {
     }
 
     /// Takes up the token other sessions have since signed in for first, so nothing signs in under the lock.
-    pub async fn exclusive(&self) -> Result<File> {
+    pub async fn exclusive(&self) -> Result<Lock> {
         *self.conn.token.borrow_mut() = self.conn.auth.access().await?.token;
         self.conn.auth.store.lock("claims.lock").await
     }

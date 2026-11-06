@@ -79,6 +79,14 @@ fn no_poll_is_made_once_the_device_code_would_expire_first() {
 }
 
 #[test]
+fn the_device_code_expires_its_lifetime_after_it_was_asked_for() {
+    let asked = Instant::now();
+    assert_eq!(answered(ANSWER).polling(asked).expiry(), Some(at(asked, 1800)));
+    let forever = ANSWER.replace(r#""expires_in":1800"#, &format!(r#""expires_in":{}"#, u64::MAX));
+    assert_eq!(answered(&forever).polling(asked).expiry(), None);
+}
+
+#[test]
 fn a_denied_or_expired_grant_ends_the_polls() {
     let asked = Instant::now();
     for code in [ErrorCode::AccessDenied, ErrorCode::ExpiredToken] {

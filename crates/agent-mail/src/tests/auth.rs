@@ -5,7 +5,7 @@ use private::{Secret, now};
 use super::*;
 use crate::{
     auth::{ADMIN_SCOPE, Auth, Form, SCOPE, Zitadel},
-    store::{PasswordFile, Store, Tokens},
+    store::{Held, PasswordFile, Tokens},
     web::Origin,
 };
 
@@ -97,7 +97,13 @@ fn granted(token: &str, refresh: Option<&str>) -> Tokens {
 }
 
 impl Zitadel for Fake {
-    async fn device_flow(&self, _: &Login, password: &Secret, scope: &str) -> Result<Tokens> {
+    async fn device_flow(
+        &self,
+        _: &Login,
+        password: &Secret,
+        scope: &str,
+        _: &Held,
+    ) -> Result<Tokens> {
         self.calls.borrow_mut().push(format!("sign in {} {scope}", password.expose()));
         ensure!(
             password.expose() == *self.password.borrow(),
@@ -126,10 +132,13 @@ impl Zitadel for Fake {
 }
 
 fn auth(dir: &Scratch, zitadel: Fake) -> Auth<Fake> {
-    let login = login("ada@agent.example.org");
-    let store =
-        Store { state: dir.0.join("state"), locks: dir.0.join("locks"), login: login.clone() };
-    Auth { zitadel, store, login, password: PasswordFile(dir.0.join("password")) }
+    let store = dir.store("ada@agent.example.org");
+    Auth {
+        zitadel,
+        login: store.login.clone(),
+        store,
+        password: PasswordFile(dir.0.join("password")),
+    }
 }
 
 fn fixture(name: &str, file: &str, zitadel: Fake) -> (Scratch, Auth<Fake>) {

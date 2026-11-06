@@ -9,6 +9,7 @@ use crate::{
     out::{Asked, is_receipt},
     policy::Login,
     prelude::*,
+    web::TIMEOUT,
 };
 
 #[derive(Default)]
@@ -99,8 +100,8 @@ async fn taken(server: &Mail, login: &Login, claimed: Claimed) -> Vec<Email> {
 }
 
 async fn locked(server: &Mail, login: &Login, ids: &[Current]) -> Result<Option<Claimed>> {
-    let _held = server.exclusive().await?;
-    let snapshot = server.snapshot(ids).await?.into_iter();
+    let held = server.exclusive().await?;
+    let snapshot = held.within(TIMEOUT, server.snapshot(ids)).await?.into_iter();
     let fresh: Claimed = snapshot
         .filter(|m| open(login, m) && !m.has(Keyword::Seen))
         .filter_map(|m| {
@@ -113,7 +114,7 @@ async fn locked(server: &Mail, login: &Login, ids: &[Current]) -> Result<Option<
         let marks: Vec<Mark> =
             chunk.iter().map(|(_, id)| (id.clone(), &[Keyword::Seen][..])).collect();
         let (mut unknown, mut why) = (vec![], None);
-        match server.each(true, &marks).await {
+        match held.within(TIMEOUT, server.each(true, &marks)).await {
             Ok(wrote) => {
                 for (mail, wrote) in chunk.iter().zip(wrote) {
                     match wrote {
@@ -134,7 +135,7 @@ async fn locked(server: &Mail, login: &Login, ids: &[Current]) -> Result<Option<
         }
         let Some(e) = why else { continue };
         let ids: Vec<Current> = unknown.iter().map(|(_, id)| id.clone()).collect();
-        let now = server.snapshot(&ids).await.unwrap_or_default();
+        let now = held.within(TIMEOUT, server.snapshot(&ids)).await.unwrap_or_default();
         let seen = |m: &Email| now.iter().any(|n| n.id == m.id && n.has(Keyword::Seen));
         let landed: Claimed = unknown.into_iter().filter(|(m, _)| seen(m)).cloned().collect();
         if landed.is_empty() {

@@ -48,8 +48,9 @@ fn zitadel(after_password: String, polls: &[&'static str]) -> (Wired, Rc<RefCell
 }
 
 async fn signed_in() -> Result<Tokens> {
-    let http = Http(Web::new(false).unwrap());
-    http.device_flow(&login("agent@example.org"), &Secret::new("pw"), SCOPE).await
+    let (dir, http) = (Scratch::new("device-flow"), Http(Web::new(false).unwrap()));
+    let held = dir.store("agent@example.org").held().await?;
+    http.device_flow(&login("agent@example.org"), &Secret::new("pw"), SCOPE, &held).await
 }
 
 const PASSWORD: &str = include_str!("zitadel/3-password.html");

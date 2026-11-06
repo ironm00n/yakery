@@ -14,7 +14,7 @@ pub use wire::wire;
 
 use ::text::Address;
 
-use crate::{policy::Login, prelude::*};
+use crate::{policy::Login, prelude::*, store::Store};
 
 /// `rows!(f; a, b => x; c => y)`: `f(a)` and `f(b)` must give `x`, and `f(c)` must give `y`.
 macro_rules! rows {
@@ -86,6 +86,20 @@ impl Scratch {
 
     pub fn file(&self, name: &str) -> Option<String> {
         fs::read_to_string(self.0.join(name)).ok()
+    }
+
+    /// The store of `who`, its state and locks here.
+    pub fn store(&self, who: &str) -> Store {
+        Store { state: self.0.join("state"), locks: self.0.join("locks"), login: login(who) }
+    }
+
+    pub fn lock(&self, name: &str) -> PathBuf {
+        self.0.join("locks/agent-mail/locks").join(name)
+    }
+
+    /// Writes the lease process `pid` holding lock `name` gave.
+    pub fn lease(&self, name: &str, pid: u32, until: i64) {
+        fs::write(self.lock(name), json!({ "pid": pid, "until": until }).to_string()).unwrap();
     }
 }
 

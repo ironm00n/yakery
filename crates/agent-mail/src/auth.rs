@@ -1,5 +1,5 @@
 use lol_html::{RewriteStrSettings, element, rewrite_str};
-use oidc::{Access, Device, ErrorCode, Failed, Grant, OAuthError};
+use oidc::{Access, Device, ErrorCode, Failed, Grant, OAuthError, Polling};
 use private::{Secret, now};
 use reqwest::Method;
 use tokio::time::{Instant, sleep};
@@ -17,7 +17,14 @@ pub const ADMIN_SCOPE: &str =
     "openid email profile offline_access urn:zitadel:iam:org:project:id:zitadel:aud";
 
 pub trait Zitadel {
-    async fn device_flow(&self, login: &Login, password: &Secret, scope: &str) -> Result<Tokens>;
+    /// Leases `held` for each of its steps.
+    async fn device_flow(
+        &self,
+        login: &Login,
+        password: &Secret,
+        scope: &str,
+        held: &Held,
+    ) -> Result<Tokens>;
     /// `None` when the refresh token is dead, so that only a sign-in gets tokens.
     async fn refresh(&self, refresh: &Secret) -> Result<Option<Tokens>>;
     async fn change_password(&self, token: &Secret, old: &Secret, new: &Secret) -> Result<()>;
@@ -69,9 +76,8 @@ impl<Z: Zitadel> Auth<Z> {
             return Ok(cached);
         }
         let refreshed = match refresh {
-            Some(old) => self
-                .zitadel
-                .refresh(&old)
+            Some(old) => held
+                .within(TIMEOUT, self.zitadel.refresh(&old))
                 .await?
                 .map(|t| Tokens { refresh: t.refresh.or(Some(old)), ..t }),
             None => None,
@@ -103,7 +109,7 @@ impl<Z: Zitadel> Auth<Z> {
                 "the password in {path} was refused for {login} before; not posting it again until the file changes"
             )));
         }
-        let posted = self.zitadel.device_flow(&self.login, &password, scope).await;
+        let posted = self.zitadel.device_flow(&self.login, &password, scope, held).await;
         if refused(&posted) {
             self.store.refuse(&file, held)?;
         }
@@ -125,7 +131,9 @@ impl<Z: Zitadel> Auth<Z> {
         let (admin, old) = self.sign_in(ADMIN_SCOPE, &held).await?;
         let new = Secret::password(40)?;
         self.password.stage(&new, &held)?;
-        if let Err(put) = self.zitadel.change_password(&access(&admin)?.token, &old, &new).await {
+        let token = access(&admin)?.token;
+        let put = self.zitadel.change_password(&token, &old, &new);
+        if let Err(put) = held.within(TIMEOUT, put).await {
             return self.settle(put, &held).await;
         }
         self.password.promote(&new, &held)?;
@@ -202,13 +210,15 @@ impl Http {
     }
 }
 
-impl Zitadel for Http {
-    async fn device_flow(&self, login: &Login, password: &Secret, scope: &str) -> Result<Tokens> {
-        let (asking, asked) = (Device::form(&client(), scope, &token(), now())?, Instant::now());
-        let reply = self.post("/oauth/v2/device_authorization", asking).await?;
-        let device =
-            Device::read(reply.status, reply.text.as_bytes()).map_err(|f| unread(&reply, f))?;
-        let mut polling = device.polling(asked.into_std());
+impl Http {
+    /// Walks ZITADEL's login pages for `device`, then polls for its grant.
+    async fn granted(
+        &self,
+        device: &Device,
+        mut polling: Polling,
+        login: &Login,
+        password: &Secret,
+    ) -> Result<Tokens> {
         let login = login.to_string();
         let answers = [
             ("user_code", device.user_code.as_str()),
@@ -243,6 +253,27 @@ impl Zitadel for Http {
             let ended = |failed| anyhow!("device flow: {failed}; last page {}", page.url.path());
             sleep(polling.next(error, Instant::now().into_std()).map_err(ended)?).await;
         }
+    }
+}
+
+impl Zitadel for Http {
+    async fn device_flow(
+        &self,
+        login: &Login,
+        password: &Secret,
+        scope: &str,
+        held: &Held,
+    ) -> Result<Tokens> {
+        let (asking, asked) = (Device::form(&client(), scope, &token(), now())?, Instant::now());
+        let reply =
+            held.within(TIMEOUT, self.post("/oauth/v2/device_authorization", asking)).await?;
+        let device =
+            Device::read(reply.status, reply.text.as_bytes()).map_err(|f| unread(&reply, f))?;
+        let polling = device.polling(asked.into_std());
+        // The last poll goes out before the code expires, and its answer takes up to a request's time.
+        let deadline = polling.expiry().and_then(|e| Instant::from_std(e).checked_add(TIMEOUT));
+        let deadline = deadline.context("the device code outlasts the clock")?;
+        held.until(deadline, self.granted(&device, polling, login, password)).await
     }
 
     async fn refresh(&self, refresh: &Secret) -> Result<Option<Tokens>> {

@@ -3,17 +3,24 @@ use std::{
     ffi::{CStr, OsStr},
     fs::{File, TryLockError},
     io::ErrorKind,
-    os::unix::{ffi::OsStrExt, fs::MetadataExt},
+    ops::Deref,
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{FileExt, MetadataExt},
+    },
 };
 
 use oidc::Access;
-use private::{Dir, Mode, Replace, Secret};
+use private::{Dir, Mode, Replace, Secret, now};
+use tokio::time::Instant;
 
 use crate::{
     address::{SessionId, Topic},
     listeners::Listeners,
     policy::Login,
     prelude::*,
+    show::utc,
+    web::TIMEOUT,
 };
 
 pub fn home() -> Result<PathBuf> {
@@ -170,8 +177,57 @@ impl PasswordFile {
     }
 }
 
-pub struct Held {
-    _file: File,
+/// A lock this process holds. Its file holds its lease: until when the holder says it is busy, which is as long as
+/// a waiter waits for it.
+pub struct Lock {
+    file: File,
+    path: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Lease {
+    pid: u32,
+    until: i64,
+}
+
+impl Lock {
+    fn lease(&self, until: Instant) -> Result<()> {
+        let left = until.saturating_duration_since(Instant::now()).as_secs_f64().ceil() as i64;
+        let lease = serde_json::to_vec(&Lease { pid: std::process::id(), until: now() + left })?;
+        let file = &self.file;
+        let written = file.write_all_at(&lease, 0).and_then(|()| file.set_len(lease.len() as u64));
+        written.with_context(|| format!("leasing {}", self.path))
+    }
+
+    /// `work` with the lock leased until `deadline`, given up there.
+    pub async fn until<T>(
+        &self,
+        deadline: Instant,
+        work: impl Future<Output = Result<T>>,
+    ) -> Result<T> {
+        self.lease(deadline)?;
+        let done = tokio::time::timeout_at(deadline, work).await;
+        done.map_err(|_| anyhow!("gave up at the end of the lease on {}", self.path))?
+    }
+
+    pub async fn within<T>(
+        &self,
+        bound: Duration,
+        work: impl Future<Output = Result<T>>,
+    ) -> Result<T> {
+        self.until(Instant::now() + bound, work).await
+    }
+}
+
+/// The auth lock, held.
+pub struct Held(Lock);
+
+impl Deref for Held {
+    type Target = Lock;
+
+    fn deref(&self) -> &Lock {
+        &self.0
+    }
 }
 
 /// What each Claude Code session watches, as its sends and subscribes recorded it, beside the locks, so
@@ -271,23 +327,40 @@ impl Store {
         self.login.to_string().to_lowercase()
     }
 
-    /// Waits for as long as another process holds the lock: whatever a holder sends has a deadline.
-    pub async fn lock(&self, name: &str) -> Result<File> {
+    /// Waits while another process holds the lock under a lease, and fails naming it once two polls find the same
+    /// lease ended, or none: one poll may come between a holder taking the lock and leasing it. A holder gets one
+    /// request's time before its first lease.
+    pub async fn lock(&self, name: &str) -> Result<Lock> {
         let dir = self.dir(true)?;
-        let path = dir.path(name).display().to_string();
-        let file = dir.file(name)?;
-        let held = || match file.try_lock() {
-            Ok(()) => Ok(false),
-            Err(TryLockError::WouldBlock) => Ok(true),
-            Err(TryLockError::Error(e)) => Err(e).context(format!("locking {path}")),
-        };
-        if held()? {
-            note!("another agent-mail holds {path}; waiting for it");
-            while held()? {
-                tokio::time::sleep(Duration::from_millis(200)).await;
+        let (file, path) = (dir.file(name)?, dir.path(name).display().to_string());
+        let mut seen = None;
+        loop {
+            match file.try_lock() {
+                Ok(()) => break,
+                Err(TryLockError::WouldBlock) => {}
+                Err(TryLockError::Error(e)) => return Err(e).context(format!("locking {path}")),
             }
+            let said = dir.read(name)?.unwrap_or_default();
+            let lease = serde_json::from_slice::<Lease>(&said).ok();
+            if seen.as_ref() == Some(&said) && lease.as_ref().is_none_or(|l| l.until < now()) {
+                bail!(match lease {
+                    Some(l) => format!(
+                        "{path} is held by pid {}, past its lease until {}",
+                        l.pid,
+                        utc(l.until)
+                    ),
+                    None => format!("{path} is held with no lease"),
+                });
+            }
+            if seen.is_none() {
+                note!("another agent-mail holds {path}; waiting for it");
+            }
+            seen = Some(said);
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        Ok(file)
+        let lock = Lock { file, path };
+        lock.lease(Instant::now() + TIMEOUT)?;
+        Ok(lock)
     }
 
     pub fn records(&self) -> Result<Records> {
@@ -299,7 +372,7 @@ impl Store {
     }
 
     pub async fn held(&self) -> Result<Held> {
-        Ok(Held { _file: self.lock("auth.lock").await? })
+        Ok(Held(self.lock("auth.lock").await?))
     }
 
     pub fn tokens(&self, _: &Held) -> Result<Tokens> {

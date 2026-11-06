@@ -1,4 +1,4 @@
-use std::process::ExitCode;
+use std::{borrow::Borrow, process::ExitCode};
 
 use clap::ArgGroup;
 use tokio::time::Instant;
@@ -23,6 +23,8 @@ use crate::{
     show::{Answering, message, out, reminder, utc},
     store::{Config, Records, Store, Watched},
 };
+
+const UNSCANNED: &str = "the wait timed out before any scan finished";
 
 macro_rules! exits {
     (timeout $timeout:literal, deferred $deferred:literal) => {
@@ -480,7 +482,7 @@ impl Watch<'_> {
             if !self.pause(pause).await {
                 return match self.scanned {
                     Some(_) => Ok(None),
-                    None => Err(e.context("the wait timed out before any scan finished")),
+                    None => Err(e.context(UNSCANNED)),
                 };
             }
             if reconnect {
@@ -505,14 +507,26 @@ pub async fn run(args: Args) -> Result<ExitCode> {
         out(&line)?;
         return Ok(ExitCode::from(DEFERRED));
     }
-    watch(&Mail::open().await?, args).await
+    watch(Mail::open(), args).await
 }
 
-pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
+/// The wait on the mail `opening` opens, whose deadline covers the opening: signing in, and the auth lock.
+pub async fn watch<M: Borrow<Mail>>(
+    opening: impl Future<Output = Result<M>>,
+    args: Args,
+) -> Result<ExitCode> {
     let deadline =
         args.timeout.map(|t| Instant::now().checked_add(t).context("timeout too far ahead"));
-    let (inbox, sent) = (mail.mailbox("inbox")?, mail.mailbox("sent")?);
     let (deadline, cursor) = (deadline.transpose()?, Cursor::default());
+    let wall = args.timeout.map(|t| now().saturating_add(t.as_secs() as i64));
+    let opened = match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline, opening)
+            .await
+            .map_err(|_| anyhow!("opening the mail took all of --timeout").context(UNSCANNED))?,
+        None => opening.await,
+    }?;
+    let mail = opened.borrow();
+    let (inbox, sent) = (mail.mailbox("inbox")?, mail.mailbox("sent")?);
     let store = &mail.conn.auth.store;
     let listening = args.session.clone().filter(|_| args.json);
     let _leave =
@@ -549,7 +563,6 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
     let threads = watch.starts.iter().map(|t| format!("the thread of {t}"));
     let recorded = watch.session.iter().map(|(_, s)| format!("what session {s} records"));
     note!("waiting for {}", topics.chain(threads).chain(recorded).collect::<Vec<_>>().join(", "));
-    let wall = args.timeout.map(|t| now().saturating_add(t.as_secs() as i64));
     loop {
         let Some((mut claimed, mut ready)) = watch.until_due().await? else {
             note!("no mail by {}", utc(wall.unwrap_or_else(now)));

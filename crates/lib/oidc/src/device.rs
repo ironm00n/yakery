@@ -31,6 +31,11 @@ pub struct Polling {
 }
 
 impl Polling {
+    /// When the device code expires, counted from when it was asked for; `None` past the clock's range.
+    pub fn expiry(&self) -> Option<Instant> {
+        self.asked.checked_add(self.lasts)
+    }
+
     /// How long to wait, at `now`, before polling again after the issuer answered `error`.
     pub fn next(&mut self, error: OAuthError, now: Instant) -> Result<Duration, Failed> {
         match error.code {
