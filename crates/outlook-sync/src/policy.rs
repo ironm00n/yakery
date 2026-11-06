@@ -89,8 +89,8 @@ impl Public {
 }
 
 impl Policy {
-    pub fn authority(&self, path: &str) -> String {
-        format!("https://login.microsoftonline.com/{}/oauth2/v2.0/{path}", self.tenant)
+    pub fn endpoints(&self) -> anyhow::Result<oidc::Endpoints> {
+        oidc::entra::endpoints(oidc::entra::MICROSOFT, &self.tenant)
     }
 }
 

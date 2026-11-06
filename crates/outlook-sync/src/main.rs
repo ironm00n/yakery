@@ -23,13 +23,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::STANDARD;
 use clap::Parser;
 use jiff::{Timestamp, ToSpan};
-use private::{Dir, Secret};
-use ring::digest::{SHA256, digest};
+use oidc::Pkce;
+use private::Dir;
 
-use crate::assertion::Credential;
 use crate::policy::{POLICY, Route};
 use crate::state::Login;
 use crate::sync::{Shared, Sync};
@@ -62,7 +61,7 @@ fn run() -> Result<()> {
     let state = state_dir()?;
     match command {
         Command::Certificate => {
-            println!("{}", Credential::read(&state)?.certificate);
+            println!("{}", STANDARD.encode(assertion::read(&state)?.certificate()));
             Ok(())
         }
         Command::Login => login(&state),
@@ -86,7 +85,7 @@ async fn daemon(state: Rc<Dir>, http: std::os::fd::OwnedFd) -> Result<()> {
     let account: &'static stalwart::Account =
         Box::leak(Box::new(stalwart::Account::read(&POLICY, &Dir::open(&credentials, &[])?)?));
     let mirror = ledger::Mirror::new(&POLICY, account)?;
-    let graph = graph::Graph::new(&POLICY, Credential::read(&state)?, state.clone())?;
+    let graph = graph::Graph::new(&POLICY, assertion::read(&state)?, state.clone())?;
     let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
     if POLICY.write {
         tokio::task::spawn_local(push::listen(&POLICY, account, wake.clone()));
@@ -110,30 +109,15 @@ async fn daemon(state: Rc<Dir>, http: std::os::fd::OwnedFd) -> Result<()> {
 }
 
 fn login(state: &Dir) -> Result<()> {
-    let mut drawn = [0; 32];
-    private::random::fill(&mut drawn)?;
-    let verifier = Secret::new(URL_SAFE_NO_PAD.encode(drawn));
-    let challenge = URL_SAFE_NO_PAD.encode(digest(&SHA256, verifier.expose().as_bytes()));
-    let login_state = private::random::token(32)?;
+    let pkce = Pkce::random()?;
     let until = Timestamp::now() + LOGIN_MINUTES.minutes();
-    let pending = Login::Pending { state: login_state.clone(), verifier, until };
-    state.save(state::LOGIN, &Some(pending))?;
-    let mut query = form_urlencoded::Serializer::new(String::new());
-    query.extend_pairs([
-        ("client_id", POLICY.client_id.as_str()),
-        ("response_type", "code"),
-        ("redirect_uri", POLICY.public.url(Route::Callback).as_str()),
-        ("response_mode", "query"),
-        ("scope", graph::scope(&POLICY)),
-        ("state", login_state.expose()),
-        ("code_challenge", challenge.as_str()),
-        ("code_challenge_method", "S256"),
-    ]);
-    println!(
-        "Open this link and sign in; it works once, for {LOGIN_MINUTES} minutes:\n\n{}?{}\n",
-        POLICY.authority("authorize"),
-        query.finish()
-    );
+    let (login_state, verifier) = (pkce.state().clone(), pkce.verifier().clone());
+    state.save(state::LOGIN, &Some(Login::Pending { state: login_state, verifier, until }))?;
+    let (redirect, scope) = (POLICY.public.url(Route::Callback), graph::scope(&POLICY));
+    let endpoints = POLICY.endpoints()?;
+    let asked = pkce.authorization(&endpoints, &POLICY.client_id, &redirect, scope);
+    let url = asked.response_mode("query").url();
+    println!("Open this link and sign in; it works once, for {LOGIN_MINUTES} minutes:\n\n{url}\n");
     while Timestamp::now() < until {
         std::thread::sleep(Duration::from_secs(1));
         match state.load::<Option<Login>>(state::LOGIN)? {

@@ -1,17 +1,17 @@
 use std::cell::RefCell;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use jiff::{Timestamp, ToSpan};
+use oidc::{Assertion, Auth, Code, Endpoints, Failed, Grant, OAuthError, Tokens};
 use private::{Dir, Secret};
 use reqwest::{Client, Method, StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::assertion::Credential;
 use crate::event::Change;
 use crate::local::Owned;
 use crate::policy::{Feed, Policy, Route};
-use crate::state::{self, Subscription, Tokens};
+use crate::state::{self, Subscription};
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
 pub fn scope(policy: &Policy) -> &'static str {
@@ -25,17 +25,11 @@ const LIFETIME: i64 = 10_000;
 
 pub struct Graph {
     client: Client,
-    credential: Credential,
+    entra: oidc::Client,
+    endpoints: Endpoints,
     policy: &'static Policy,
     state: std::rc::Rc<Dir>,
     access: RefCell<Option<(Secret, Timestamp)>>,
-}
-
-#[derive(Deserialize)]
-struct Granted {
-    access_token: Secret,
-    refresh_token: Option<Secret>,
-    expires_in: i64,
 }
 
 pub struct Page {
@@ -65,51 +59,42 @@ pub type Sent = std::result::Result<(), Refused>;
 impl Graph {
     pub fn new(
         policy: &'static Policy,
-        credential: Credential,
+        assertion: Assertion,
         state: std::rc::Rc<Dir>,
     ) -> Result<Graph> {
         let client = Client::builder()
             .https_only(true)
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
-        Ok(Graph { client, credential, policy, state, access: RefCell::default() })
+        let entra = oidc::Client {
+            id: policy.client_id.clone(),
+            auth: Auth::Assertion(Box::new(assertion)),
+        };
+        let (endpoints, access) = (policy.endpoints()?, RefCell::default());
+        Ok(Graph { client, entra, endpoints, policy, state, access })
     }
 
-    async fn grant(&self, form: &[(&str, &str)]) -> Result<Granted> {
-        let audience = self.policy.authority("token");
-        let assertion =
-            self.credential.assertion(&self.policy.client_id, &audience, Timestamp::now())?;
-        let mut fields = vec![
-            ("client_id", self.policy.client_id.as_str()),
-            ("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"),
-            ("client_assertion", assertion.as_str()),
-            ("scope", scope(self.policy)),
-        ];
-        fields.extend_from_slice(form);
-        let reply = self.client.post(&audience).form(&fields).send().await.context("entra")?;
+    async fn grant(&self, grant: Grant<'_>) -> Result<Tokens> {
+        let scope = Some(scope(self.policy));
+        let at = &self.endpoints.token;
+        let form = grant.form(&self.entra, scope, at, Timestamp::now().as_second())?;
+        let reply = self.client.post(at.to_string()).form(&form).send().await.context("entra")?;
         let status = reply.status();
-        let text = reply.text().await?;
-        anyhow::ensure!(status.is_success(), "entra token: HTTP {status}: {}", refusal(&text));
-        let granted: Granted =
-            serde_json::from_str(&text).context("entra token: unreadable reply")?;
-        let expires = Timestamp::now() + (granted.expires_in - 60).seconds();
-        *self.access.borrow_mut() = Some((granted.access_token.clone(), expires));
-        if let Some(refresh) = &granted.refresh_token {
-            self.state.save(state::TOKENS, &Tokens { refresh: Some(refresh.clone()) })?;
+        let tokens = Tokens::read(status, &reply.bytes().await?)
+            .map_err(|failed| anyhow!("entra token: HTTP {status}: {}", said(&failed)))?;
+        let expires_in = tokens.expires_in.context("entra token: no expires_in")?;
+        let expires = Timestamp::now() + (expires_in - 60).seconds();
+        *self.access.borrow_mut() = Some((tokens.access.clone(), expires));
+        if let Some(refresh) = &tokens.refresh {
+            self.state.save(state::TOKENS, &state::Tokens { refresh: Some(refresh.clone()) })?;
         }
-        Ok(granted)
+        Ok(tokens)
     }
 
-    pub async fn redeem(&self, code: &str, verifier: &Secret) -> Result<()> {
+    pub async fn redeem(&self, code: &Code<'_>) -> Result<()> {
         let redirect = self.policy.public.url(Route::Callback);
-        let form = [
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", redirect.as_str()),
-            ("code_verifier", verifier.expose()),
-        ];
-        let granted = self.grant(&form).await?;
-        anyhow::ensure!(granted.refresh_token.is_some(), "entra granted no refresh token");
+        let tokens = self.grant(Grant::Code { code, redirect: &redirect }).await?;
+        anyhow::ensure!(tokens.refresh.is_some(), "entra granted no refresh token");
         Ok(())
     }
 
@@ -119,10 +104,9 @@ impl Graph {
         {
             return Ok(token);
         }
-        let Tokens { refresh } = self.state.load(state::TOKENS)?;
+        let state::Tokens { refresh } = self.state.load(state::TOKENS)?;
         let refresh = refresh.context("not signed in: run `outlook-sync login`")?;
-        let form = [("grant_type", "refresh_token"), ("refresh_token", refresh.expose())];
-        Ok(self.grant(&form).await?.access_token)
+        Ok(self.grant(Grant::Refresh(&refresh)).await?.access)
     }
 
     async fn call(
@@ -258,13 +242,21 @@ fn urlencode(id: &str) -> String {
     form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>().replace('+', "%20")
 }
 
-/// An error reply's code and description, never a token-bearing body.
+/// A Graph error reply's code and message, never a token-bearing body.
 fn refusal(text: &str) -> String {
     let reply: Value = serde_json::from_str(text).unwrap_or_default();
-    let error = &reply["error"];
-    match (error.as_str(), error["code"].as_str()) {
-        (Some(code), _) => format!("{code}: {}", reply["error_description"].as_str().unwrap_or("")),
-        (_, Some(code)) => format!("{code}: {}", error["message"].as_str().unwrap_or("")),
-        _ => "unreadable error".into(),
+    match reply["error"]["code"].as_str() {
+        Some(code) => format!("{code}: {}", reply["error"]["message"].as_str().unwrap_or("")),
+        None => "unreadable error".into(),
+    }
+}
+
+/// A failed token request, with the description Entra's errors carry their AADSTS code in.
+fn said(failed: &Failed) -> String {
+    match failed {
+        Failed::Refused(OAuthError { code, description }) => {
+            format!("{code}: {}", description.as_deref().unwrap_or(""))
+        }
+        other => other.to_string(),
     }
 }

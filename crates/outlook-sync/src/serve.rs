@@ -9,6 +9,7 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use jiff::Timestamp;
+use oidc::{Denied, Pkce, Returned};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 
@@ -75,7 +76,7 @@ impl Sync {
                 }
             },
             (Method::GET, Some(Route::Callback)) => {
-                self.callback(field("state"), field("code"), field("error")).await
+                self.callback(Returned::read(request.uri().query().unwrap_or_default())).await
             }
             _ => reply(StatusCode::NOT_FOUND, "text/plain", "not found"),
         }
@@ -101,12 +102,7 @@ impl Sync {
         }
     }
 
-    async fn callback(
-        &self,
-        given: Option<String>,
-        code: Option<String>,
-        error: Option<String>,
-    ) -> Response<Full<Bytes>> {
+    async fn callback(&self, returned: Returned) -> Response<Full<Bytes>> {
         let page = |status, text: &str| {
             let html = format!(
                 "<!doctype html><meta charset=utf-8><title>outlook-sync</title><p>{text}</p>"
@@ -121,18 +117,22 @@ impl Sync {
                 "No sign-in is waiting. Run outlook-sync login first.",
             );
         };
-        if given.as_deref().map(private::Secret::new) != Some(state) || Timestamp::now() > until {
+        let pkce = Pkce::kept(state, verifier);
+        let code = returned.code(&pkce);
+        if matches!(code, Err(Denied::Mismatched)) || Timestamp::now() > until {
             return page(
                 StatusCode::FORBIDDEN,
                 "This sign-in link is not the one waiting, or it has expired.",
             );
         }
-        let outcome = match (code, error) {
-            (Some(code), _) => {
-                self.graph.redeem(&code, &verifier).await.map_err(|e| format!("{e:#}"))
-            }
-            (None, error) => {
-                Err(format!("Microsoft answered without a code: {}", error.unwrap_or_default()))
+        let outcome = match code {
+            Ok(code) => self.graph.redeem(&code).await.map_err(|e| format!("{e:#}")),
+            Err(denied) => {
+                let error = match denied {
+                    Denied::Error { error, .. } => error,
+                    Denied::Mismatched | Denied::Codeless => String::new(),
+                };
+                Err(format!("Microsoft answered without a code: {error}"))
             }
         };
         let done = Login::Done(outcome.clone());
