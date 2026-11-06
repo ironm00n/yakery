@@ -132,20 +132,22 @@ impl Sync {
             return Ok(());
         }
         let mut ledger = Ledger::open(&self.mirror, &self.state)?;
-        // a listing first records Outlook's files, so his edits of them are told from the sync's
+        // a listing first records Outlook's files, so the owner's edits of them are told from the sync's
         let listed = self.policy.write && !ledger.looked();
         if listed {
             self.mirror(&mut ledger, true).await?;
         }
-        if self.policy.write {
-            self.edits(&mut ledger).await?;
-        }
+        let edited = match self.policy.write {
+            true => self.edits(&mut ledger).await,
+            false => Ok(()),
+        };
         if !needs.graph {
-            return Ok(());
+            return edited;
         }
         let fresh = needs.fresh_subscription || self.shared.subscription.borrow().is_none();
-        self.subscription(fresh, needs.reauthorize).await?;
-        self.mirror(&mut ledger, needs.listing && !listed).await
+        let subscribed = self.subscription(fresh, needs.reauthorize).await;
+        let mirrored = self.mirror(&mut ledger, needs.listing && !listed).await;
+        every([edited, subscribed, mirrored])
     }
 
     /// A created event's local file goes once sent, so the delta brings it back under its Graph id.
@@ -279,6 +281,14 @@ fn sort(changes: Vec<Change>, now: Timestamp) -> Result<(Vec<Put>, Vec<FileName>
         }
     }
     Ok((puts, gone))
+}
+
+/// Each part's failure, so one part's can't keep the others from running.
+fn every<const N: usize>(parts: [Result<()>; N]) -> Result<()> {
+    let failed: Vec<String> =
+        parts.into_iter().filter_map(Result::err).map(|e| format!("{e:#}")).collect();
+    anyhow::ensure!(failed.is_empty(), "{}", failed.join("; "));
+    Ok(())
 }
 
 fn days(n: i64) -> SignedDuration {
