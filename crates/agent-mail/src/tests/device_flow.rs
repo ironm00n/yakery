@@ -136,6 +136,40 @@ async fn once_zitadel_took_the_password_a_later_page_says_nothing_of_it() {
     );
 }
 
+fn loginname() -> Html {
+    page(include_str!("zitadel/2-loginname.html"))
+}
+
+fn unknown() -> Html {
+    page("<p>Something happened.</p>")
+}
+
+fn restarted() -> Html {
+    moved(302, "/ui/login/device")
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_grant_is_polled_for_only_once_the_login_pages_approve_the_device() {
+    let ended =
+        |path: &str| format!("the login pages ended at {path} without approving the device");
+    let transient = |path| format!("Transient: {}", ended(path));
+    let refused = format!("PasswordRefused: {}; taken as a refusal", ended("/ui/login/password"));
+    let rows: [(&[Detour], Html, String); 4] = [
+        (&[("/ui/login/loginname", loginname)], passed(), transient("/ui/login/loginname")),
+        (&[], unknown(), refused),
+        (&[("/ui/login/device/consent", unknown)], passed(), transient("/ui/login/device/consent")),
+        (&[("/ui/login/device/allowed", restarted)], passed(), transient("/ui/login/device")),
+    ];
+    let (mut got, mut want) = (vec![], vec![]);
+    for (detours, after_password, wanted) in rows {
+        let (_wire, polled) = zitadel(detours, after_password, &[]);
+        let e = signed_in().await.map(|_| ()).unwrap_err();
+        got.push((format!("{:?}: {e:#}", Failure::of(&e)), polled.borrow().len()));
+        want.push((wanted, 0));
+    }
+    assert_eq!(got, want);
+}
+
 #[tokio::test(start_paused = true)]
 async fn the_grant_is_polled_at_its_interval_and_five_seconds_slower_after_slow_down() {
     let polls = ["authorization_pending", "slow_down", "authorization_pending", "granted"];
@@ -148,16 +182,10 @@ async fn the_grant_is_polled_at_its_interval_and_five_seconds_slower_after_slow_
 async fn the_polls_end_before_the_device_code_expires_or_once_the_grant_is_denied() {
     let (wire, polled) = zitadel(&[], passed(), &[]);
     let expired = shown(signed_in().await.map(|_| ""));
-    assert_eq!(
-        expired,
-        "error: device flow: the device code expires before its next poll; last page /ui/login/device/allowed"
-    );
+    assert_eq!(expired, "error: device flow: the device code expires before its next poll");
     assert_eq!((polled.borrow().len(), polled.borrow().last().copied()), (60, Some(295)));
     drop(wire);
     let (_wire, _) = zitadel(&[], passed(), &["authorization_pending", "access_denied"]);
     let denied = shown(signed_in().await.map(|_| ""));
-    assert_eq!(
-        denied,
-        "error: device flow: the issuer refused it: access_denied; last page /ui/login/device/allowed"
-    );
+    assert_eq!(denied, "error: device flow: the issuer refused it: access_denied");
 }

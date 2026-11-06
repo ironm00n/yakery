@@ -49,9 +49,11 @@ fn a_pending_grant_is_polled_at_the_named_interval_or_five_seconds() {
     let asked = Instant::now();
     let mut named = answered(&ANSWER.replace(r#""interval":5"#, r#""interval":7"#)).polling(asked);
     let mut unnamed = answered(&ANSWER.replace(r#","interval":5"#, "")).polling(asked);
+    let mut zero = answered(&ANSWER.replace(r#""interval":5"#, r#""interval":0"#)).polling(asked);
     let pending = || said(ErrorCode::AuthorizationPending);
     assert_eq!(named.next(pending(), asked), Ok(Duration::from_secs(7)));
     assert_eq!(unnamed.next(pending(), asked), Ok(Duration::from_secs(5)));
+    assert_eq!(zero.next(pending(), asked), Ok(Duration::from_secs(5)));
 }
 
 #[test]

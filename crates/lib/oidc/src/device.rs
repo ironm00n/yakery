@@ -18,7 +18,7 @@ pub struct Device {
     interval: Option<u64>,
 }
 
-/// The wait between polls when the issuer names none (RFC 8628 3.2).
+/// The wait between polls when the issuer names none, or names no wait (RFC 8628 3.2).
 const INTERVAL: Duration = Duration::from_secs(5);
 /// How much longer every later wait is after a `slow_down` (RFC 8628 3.5).
 const SLOWER: Duration = Duration::from_secs(5);
@@ -70,7 +70,7 @@ impl Device {
     /// The polls for a code asked for at `asked`: its lifetime counts from the reply, which comes
     /// no earlier.
     pub fn polling(&self, asked: Instant) -> Polling {
-        let every = self.interval.map_or(INTERVAL, Duration::from_secs);
+        let every = self.interval.filter(|&s| s > 0).map_or(INTERVAL, Duration::from_secs);
         Polling { every, asked, lasts: Duration::from_secs(self.expires_in) }
     }
 

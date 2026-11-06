@@ -56,6 +56,9 @@ fn refusal() -> anyhow::Error {
 /// failed check could count toward a lockout: reading the login policy failed.
 const UNCHECKED: [&str; 1] = ["COMMAND-Edf3g"];
 
+/// The device action ZITADEL's consent page approves with, which its done page's path ends in.
+const ALLOWED: &str = "allowed";
+
 /// Where the walk through the login pages is with the password.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Password {
@@ -290,12 +293,17 @@ impl Http {
                 break;
             }
         }
+        let path = page.url.path();
+        if !path.ends_with(ALLOWED) {
+            let ended = anyhow!("the login pages ended at {path} without approving the device");
+            return Err(password.refusing(ended));
+        }
         loop {
             let error = match self.token(Grant::Device(&device.device_code)).await? {
                 Ok(tokens) => return Ok(tokens),
                 Err(error) => error,
             };
-            let ended = |failed| anyhow!("device flow: {failed}; last page {}", page.url.path());
+            let ended = |failed| anyhow!("device flow: {failed}");
             sleep(polling.next(error, Instant::now().into_std()).map_err(ended)?).await;
         }
     }
@@ -408,7 +416,7 @@ impl Form {
         }
         let asks_password = inputs().any(|e| e[3] != "hidden" && e[1] == "password");
         let buttons = || rest.iter().filter(|e| e[0] == "button");
-        if let Some([.., allow]) = buttons().find(|b| b[4].ends_with("allowed")) {
+        if let Some([.., allow]) = buttons().find(|b| b[4].ends_with(ALLOWED)) {
             let url = page.join(allow)?;
             return Ok(Some(Post { url, fields, asks_password, consents: true }));
         }
