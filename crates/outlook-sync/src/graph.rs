@@ -1,8 +1,9 @@
 use std::cell::RefCell;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use jiff::{Timestamp, ToSpan};
-use oidc::{Assertion, Auth, Code, Endpoints, Failed, Grant, OAuthError, Tokens};
+use oidc::{Access, Assertion, Auth, Code, Endpoints, Failed, Grant, OAuthError, Tokens};
 use private::{Dir, Secret};
 use reqwest::{Client, Method, StatusCode};
 use serde::Deserialize;
@@ -22,6 +23,8 @@ pub fn scope(policy: &Policy) -> &'static str {
 }
 /// Graph's longest lifetime for an Outlook event subscription is 10,080 minutes; this stays under it.
 const LIFETIME: i64 = 10_000;
+/// How long a request to Graph or Entra may take, so how long before its expiry a token is let go.
+const WITHIN: Duration = Duration::from_secs(30);
 
 pub struct Graph {
     client: Client,
@@ -29,7 +32,7 @@ pub struct Graph {
     endpoints: Endpoints,
     policy: &'static Policy,
     state: std::rc::Rc<Dir>,
-    access: RefCell<Option<(Secret, Timestamp)>>,
+    access: RefCell<Option<Access>>,
 }
 
 pub struct Page {
@@ -62,10 +65,7 @@ impl Graph {
         assertion: Assertion,
         state: std::rc::Rc<Dir>,
     ) -> Result<Graph> {
-        let client = Client::builder()
-            .https_only(true)
-            .timeout(std::time::Duration::from_secs(30))
-            .build()?;
+        let client = Client::builder().https_only(true).timeout(WITHIN).build()?;
         let entra = oidc::Client {
             id: policy.client_id.clone(),
             auth: Auth::Assertion(Box::new(assertion)),
@@ -76,15 +76,13 @@ impl Graph {
 
     async fn grant(&self, grant: Grant<'_>) -> Result<Tokens> {
         let scope = Some(scope(self.policy));
-        let at = &self.endpoints.token;
-        let form = grant.form(&self.entra, scope, at, Timestamp::now().as_second())?;
+        let (at, sent) = (&self.endpoints.token, Timestamp::now().as_second());
+        let form = grant.form(&self.entra, scope, at, sent)?;
         let reply = self.client.post(at.to_string()).form(&form).send().await.context("entra")?;
         let status = reply.status();
-        let tokens = Tokens::read(status, &reply.bytes().await?)
+        let tokens = Tokens::read(status, &reply.bytes().await?, sent)
             .map_err(|failed| anyhow!("entra token: HTTP {status}: {}", said(&failed)))?;
-        let expires_in = tokens.expires_in.context("entra token: no expires_in")?;
-        let expires = Timestamp::now() + (expires_in - 60).seconds();
-        *self.access.borrow_mut() = Some((tokens.access.clone(), expires));
+        *self.access.borrow_mut() = Some(tokens.access.clone());
         if let Some(refresh) = &tokens.refresh {
             self.state.save(state::TOKENS, &state::Tokens { refresh: Some(refresh.clone()) })?;
         }
@@ -99,14 +97,14 @@ impl Graph {
     }
 
     async fn token(&self) -> Result<Secret> {
-        if let Some((token, until)) = self.access.borrow().clone()
-            && Timestamp::now() < until
+        if let Some(access) = self.access.borrow().clone()
+            && access.fresh(Timestamp::now().as_second(), WITHIN)
         {
-            return Ok(token);
+            return Ok(access.token);
         }
         let state::Tokens { refresh } = self.state.load(state::TOKENS)?;
         let refresh = refresh.context("not signed in: run `outlook-sync login`")?;
-        Ok(self.grant(Grant::Refresh(&refresh)).await?.access)
+        Ok(self.grant(Grant::Refresh(&refresh)).await?.access.token)
     }
 
     async fn call(

@@ -489,7 +489,9 @@ pub async fn done(args: Many) -> Result<ExitCode> {
 pub async fn login(_: Nothing) -> Result<ExitCode> {
     let auth = Auth::new(Config::load()?)?;
     let access = auth.access().await?;
-    succeed!("signed in as {}; the access token expires at {}", auth.login, utc(access.expires_at))
+    let expiry =
+        access.expires_at.map_or("names no expiry".into(), |at| format!("expires at {}", utc(at)));
+    succeed!("signed in as {}; the access token {expiry}", auth.login)
 }
 
 pub async fn rotate(_: Password) -> Result<ExitCode> {

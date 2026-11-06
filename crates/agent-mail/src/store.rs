@@ -6,6 +6,7 @@ use std::{
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
 };
 
+use oidc::Access;
 use private::{Dir, Mode, Replace, Secret};
 
 use crate::{
@@ -222,18 +223,6 @@ impl Records {
         let mut watched: Watched = self.0.load(&name)?;
         edit(&mut watched);
         self.0.save(&name, &watched)
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Access {
-    pub token: Secret,
-    pub expires_at: i64,
-}
-
-impl Access {
-    pub fn fresh(&self, now: i64) -> bool {
-        now + 60 < self.expires_at
     }
 }
 

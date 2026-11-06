@@ -16,7 +16,7 @@ pub use self::client::{Assertion, Auth, Client};
 pub use self::device::Device;
 pub use self::endpoints::Endpoints;
 pub use self::pkce::{Authorization, Pkce};
-pub use self::token::{Grant, Tokens};
+pub use self::token::{Access, Grant, Tokens};
 
 /// Why an exchange with the issuer came to nothing, in this crate's words or a fixed vocabulary,
 /// never with a code or a token; an OAuth error's description, the issuer's text, is kept apart.

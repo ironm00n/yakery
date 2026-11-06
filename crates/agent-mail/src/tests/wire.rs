@@ -26,7 +26,7 @@ use crate::{
     mail::{BUSY_FOR, Conn, Current, Email, Keyword, Mail},
     out::{Leftover, Outbox},
     policy::Recipients,
-    store::{Access, PasswordFile, Store, Tokens},
+    store::{PasswordFile, Store, Tokens},
     web::{Body, Origin, Web},
 };
 
@@ -533,7 +533,7 @@ pub async fn mail(dir: &Scratch, stalwart: Stalwart) -> (Wired, Shared, Result<M
     let login = login("agent@example.org");
     let store =
         Store { state: dir.0.join("state"), locks: dir.0.join("locks"), login: login.clone() };
-    let access = Access { token: Secret::new("t1"), expires_at: now() + 3600 };
+    let access = oidc::Access { token: Secret::new("t1"), expires_at: Some(now() + 3600) };
     let tokens = Tokens { access: Some(access), refresh: Some(Secret::new("r1")) };
     store.save(tokens, &store.held().await.unwrap()).unwrap();
     let password = PasswordFile(dir.0.join("password"));

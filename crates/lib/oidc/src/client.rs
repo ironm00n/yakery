@@ -7,7 +7,8 @@ use webpki::EndEntityCert;
 
 use crate::{Failed, base64url, sha256};
 
-/// How long a client assertion is good for: Microsoft takes at most 10 minutes past its `nbf`.
+/// How long a client assertion is good for: Microsoft asks for 5 to 10 minutes past its `nbf` at
+/// most, and enforces no bound.
 const ASSERTION_FOR: i64 = 5 * 60;
 
 pub struct Client {

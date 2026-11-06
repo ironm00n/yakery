@@ -1,8 +1,10 @@
 //! The token endpoint (RFC 6749 3.2): a grant's request, and the tokens or refusal it answers.
 
+use std::time::Duration;
+
 use http::{StatusCode, Uri};
 use private::Secret;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{Client, Code, Failed, failure};
 
@@ -50,11 +52,26 @@ impl Grant<'_> {
 
 /// What a token reply grants (RFC 6749 5.1), had only from [`Tokens::read`].
 pub struct Tokens {
-    pub access: Secret,
+    pub access: Access,
     /// Required by RFC 6749, and left out by stand-ins that answer only what their callers read.
     pub token_type: Option<String>,
     pub refresh: Option<Secret>,
-    pub expires_in: Option<i64>,
+}
+
+/// An access token, and when it expires if its issuer said: RFC 6749 5.1 only recommends saying.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Access {
+    pub token: Secret,
+    /// In seconds since the epoch.
+    pub expires_at: Option<i64>,
+}
+
+impl Access {
+    /// Whether a request sent at `now` still carries a live token when it reaches its server,
+    /// as it does within `reach`. A token of no stated expiry is live until a server refuses it.
+    pub fn fresh(&self, now: i64, reach: Duration) -> bool {
+        self.expires_at.is_none_or(|at| now.saturating_add_unsigned(reach.as_secs()) < at)
+    }
 }
 
 #[derive(Deserialize)]
@@ -66,17 +83,19 @@ struct Reply {
 }
 
 impl Tokens {
-    pub fn read(status: StatusCode, body: &[u8]) -> Result<Tokens, Failed> {
+    /// The reply to a request sent at `sent`: no reply is generated before it, so an expiry
+    /// counted from it comes no later than the issuer's.
+    pub fn read(status: StatusCode, body: &[u8], sent: i64) -> Result<Tokens, Failed> {
         if status != StatusCode::OK {
             return Err(failure("token endpoint", status, body));
         }
         let shape = || Failed::Unacceptable("the token reply isn't of the shape it takes".into());
         let reply: Reply = serde_json::from_slice(body).map_err(|_| shape())?;
+        let expires_at = reply.expires_in.map(|s| sent.checked_add(s).ok_or_else(shape));
         Ok(Tokens {
-            access: reply.access_token,
+            access: Access { token: reply.access_token, expires_at: expires_at.transpose()? },
             token_type: reply.token_type,
             refresh: reply.refresh_token,
-            expires_in: reply.expires_in,
         })
     }
 }

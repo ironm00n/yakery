@@ -1,5 +1,5 @@
 use lol_html::{RewriteStrSettings, element, rewrite_str};
-use oidc::{Device, ErrorCode, Failed, Grant, OAuthError};
+use oidc::{Access, Device, ErrorCode, Failed, Grant, OAuthError};
 use private::{Secret, now};
 use reqwest::Method;
 
@@ -7,8 +7,8 @@ use crate::{
     CLIENT_ID,
     policy::Login,
     prelude::*,
-    store::{Access, Config, Held, PasswordFile, Store, Tokens},
-    web::{Body, Origin, Page, Pinned, Web},
+    store::{Config, Held, PasswordFile, Store, Tokens},
+    web::{Body, Origin, Page, Pinned, TIMEOUT, Web},
 };
 
 pub const SCOPE: &str = "openid email profile offline_access";
@@ -51,7 +51,7 @@ impl<Z: Zitadel> Auth<Z> {
     pub async fn access(&self) -> Result<Access> {
         let held = self.store.held().await?;
         let Tokens { access: cached, refresh } = self.store.tokens(&held)?;
-        if let Some(cached) = cached.filter(|a| a.fresh(now())) {
+        if let Some(cached) = cached.filter(|a| a.fresh(now(), TIMEOUT)) {
             return Ok(cached);
         }
         let refreshed = match refresh {
@@ -176,13 +176,11 @@ impl Http {
     }
 
     async fn token(&self, grant: Grant<'_>) -> Result<Result<Tokens, OAuthError>> {
-        let reply = self.post(TOKEN, grant.form(&client(), None, &token(), now())?).await?;
-        match oidc::Tokens::read(reply.status, reply.text.as_bytes()) {
+        let sent = now();
+        let reply = self.post(TOKEN, grant.form(&client(), None, &token(), sent)?).await?;
+        match oidc::Tokens::read(reply.status, reply.text.as_bytes(), sent) {
             Ok(granted) => {
-                let expires_in = granted.expires_in.context("zitadel named no expiry")?;
-                let expires_at = now().checked_add(expires_in).context("token expiry overflows")?;
-                let access = Access { token: granted.access, expires_at };
-                Ok(Ok(Tokens { access: Some(access), refresh: granted.refresh }))
+                Ok(Ok(Tokens { access: Some(granted.access), refresh: granted.refresh }))
             }
             Err(Failed::Refused(error)) => Ok(Err(error)),
             Err(failed) => Err(unread(&reply, failed)),

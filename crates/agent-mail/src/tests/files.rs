@@ -8,7 +8,7 @@ use crate::{
     address::SessionId,
     cmd::{read::folder, wait},
     listeners::Heartbeat,
-    store::{Access, PasswordFile, Store, Tokens, Watched},
+    store::{PasswordFile, Store, Tokens, Watched},
 };
 
 fn mode(path: &Path) -> u32 {
@@ -54,8 +54,21 @@ fn store(dir: &Scratch, login: &str) -> Store {
 }
 
 fn tokens(access: &str) -> Tokens {
-    let access = Access { token: Secret::new(access), expires_at: 5 };
+    let access = oidc::Access { token: Secret::new(access), expires_at: Some(5) };
     Tokens { access: Some(access), refresh: Some(Secret::new("r")) }
+}
+
+#[tokio::test]
+async fn tokens_saved_while_every_one_named_its_expiry_still_load() {
+    let dir = Scratch::new("tokens-shape");
+    let agents = store(&dir, "agent@example.org");
+    let held = agents.held().await.unwrap();
+    agents.save(Tokens::default(), &held).unwrap();
+    let saved =
+        r#"{"login":"agent@example.org","access":{"token":"a","expires_at":5},"refresh":"r"}"#;
+    fs::write(dir.0.join("state/agent-mail/tokens.json"), saved).unwrap();
+    let access = agents.tokens(&held).unwrap().access.unwrap();
+    assert_eq!((access.token, access.expires_at), (Secret::new("a"), Some(5)));
 }
 
 #[tokio::test]

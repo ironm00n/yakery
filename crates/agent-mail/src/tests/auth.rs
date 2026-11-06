@@ -5,7 +5,7 @@ use private::{Secret, now};
 use super::*;
 use crate::{
     auth::{ADMIN_SCOPE, Auth, Form, SCOPE, Zitadel},
-    store::{Access, PasswordFile, Store, Tokens},
+    store::{PasswordFile, Store, Tokens},
     web::Origin,
 };
 
@@ -83,7 +83,7 @@ struct Fake {
 }
 
 fn granted(token: &str, refresh: Option<&str>) -> Tokens {
-    let access = Access { token: Secret::new(token), expires_at: now() + 3600 };
+    let access = oidc::Access { token: Secret::new(token), expires_at: Some(now() + 3600) };
     Tokens { access: Some(access), refresh: refresh.map(Secret::new) }
 }
 
