@@ -93,3 +93,12 @@ fn the_week_marks_busy_half_hours_in_the_viewers_zone() {
     assert!(page.contains("<th>14:00</th>") && page.contains("<th>21:30</th>"));
     assert!(!page.contains("<th>22:00</th>") && !page.contains("<th>13:30</th>"));
 }
+
+#[test]
+fn the_owners_sunday_has_a_column_west_of_the_owner() {
+    let sunday = Period { start: at("2026-11-01T15:00:00Z"), end: at("2026-11-01T17:00:00Z") };
+    let la = Viewer::new(Some("America/Los_Angeles"));
+    let page = week(&la, 1, "2026-10-26".parse().unwrap(), &[], &[sunday], true).into_string();
+    assert!(page.contains("<th>Sun 1 Nov</th>"), "{page}");
+    assert_eq!(page.matches("<td></td>").count(), 4, "{page}");
+}

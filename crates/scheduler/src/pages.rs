@@ -116,9 +116,10 @@ pub fn week(
         .flat_map(|p| starts(*p))
         .filter_map(|t| viewer.local(t).time().round(row).ok())
         .collect();
-    let midnight = |day: Date| days(&POLICY, day, day).start;
+    let week = days(&POLICY, monday, monday + 6.days());
+    let last = viewer.local(week.end - SignedDuration::from_nanos(1)).date();
     let days: Vec<Date> =
-        (0..7).map(|d| viewer.local(midnight(monday + d.days())).date()).collect();
+        viewer.local(week.start).date().series(1.day()).take_while(|d| *d <= last).collect();
     let cell = |day: Date, row: Time| {
         Some(Period::starting(viewer.zone.to_timestamp(day.to_datetime(row)).ok()?, half))
     };
