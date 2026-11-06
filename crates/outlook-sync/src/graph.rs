@@ -51,6 +51,14 @@ pub enum Delta {
 
 pub struct Refused(pub String);
 
+/// A subscription as Graph answers a subscribe or a renewal with it.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Made {
+    id: String,
+    expiration_date_time: Timestamp,
+}
+
 /// Refused when Graph won't take the event as it is; a failure a retry may fix is the outer error.
 pub type Sent = std::result::Result<(), Refused>;
 
@@ -157,12 +165,6 @@ impl Graph {
             "graph subscribe: HTTP {status}: {}",
             refusal(&text)
         );
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Made {
-            id: String,
-            expiration_date_time: Timestamp,
-        }
         let made: Made =
             serde_json::from_str(&text).context("graph subscribe: unreadable reply")?;
         Ok(Subscription {
@@ -181,7 +183,9 @@ impl Graph {
         match status {
             StatusCode::NOT_FOUND => Ok(false),
             s if s.is_success() => {
-                subscription.expires = expires;
+                let made: Made =
+                    serde_json::from_str(&text).context("graph renew: unreadable reply")?;
+                subscription.expires = made.expiration_date_time;
                 Ok(true)
             }
             s => bail!("graph renew: HTTP {s}: {}", refusal(&text)),

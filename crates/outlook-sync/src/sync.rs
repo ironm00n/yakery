@@ -75,6 +75,8 @@ pub fn needs<'a>(wakes: impl IntoIterator<Item = &'a Wake>) -> Needs {
 
 const DAILY: Duration = Duration::from_secs(24 * 60 * 60);
 const RETRY: Duration = Duration::from_secs(5 * 60);
+/// A subscription is renewed at the first run this close to its end: a daily run, retried, lands in it.
+const RENEWAL: SignedDuration = SignedDuration::from_secs(2 * DAILY.as_secs() as i64);
 
 pub struct Shared {
     pub subscription: RefCell<Option<Subscription>>,
@@ -84,6 +86,13 @@ pub struct Shared {
 }
 
 impl Shared {
+    async fn validating<T>(&self, subscribe: impl Future<Output = T>) -> T {
+        self.validating.set(true);
+        let made = subscribe.await;
+        self.validating.set(false);
+        made
+    }
+
     pub fn ours(&self, id: &str, client_state: &str) -> bool {
         self.subscription
             .borrow()
@@ -222,7 +231,7 @@ impl Sync {
         let held = self.shared.subscription.borrow().clone();
         let kept = match held {
             Some(mut s) if !fresh => {
-                let due = s.expires < Timestamp::now() + days(2) || reauthorize;
+                let due = s.expires < Timestamp::now() + RENEWAL || reauthorize;
                 let alive = !reauthorize || self.graph.reauthorize(&s).await?;
                 match alive && (!due || self.graph.renew(&mut s).await?) {
                     true => Some(s),
@@ -234,10 +243,8 @@ impl Sync {
         let subscription = match kept {
             Some(s) => s,
             None => {
-                self.shared.validating.set(true);
-                let made = self.graph.subscribe(&private::random::token(32)?).await;
-                self.shared.validating.set(false);
-                made?
+                let client_state = private::random::token(32)?;
+                self.shared.validating(self.graph.subscribe(&client_state)).await?
             }
         };
         self.state.save(state::SUBSCRIPTION, &Some(&subscription))?;
