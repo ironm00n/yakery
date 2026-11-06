@@ -1,0 +1,20 @@
+[package]
+name = "yakery-serve"
+version = "0.1.0"
+description = "What the tokio servers share"
+edition.workspace = true
+rust-version.workspace = true
+autotests = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true, features = ["time"] }
+yakery-log.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
+
+[lints]
+workspace = true

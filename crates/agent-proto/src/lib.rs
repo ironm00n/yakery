@@ -13,7 +13,6 @@ use tokio::io::{
     Lines, ReadHalf,
 };
 use tokio_vsock::{VsockAddr, VsockStream};
-use yakery_log::warn;
 
 pub const HOST_CID: u32 = 2;
 pub const CONTROL_PORT: u32 = 6000;
@@ -25,7 +24,6 @@ pub const WAKE: &str = "wake";
 pub const CA: &str = "ca";
 const MAX_PROOF: usize = "uid 4294967295 ".len() + 2 * blake3::OUT_LEN + 1;
 const HANDSHAKE: Duration = Duration::from_secs(10);
-const ACCEPT_PAUSE: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug)]
 pub enum Service {
@@ -120,20 +118,6 @@ pub async fn challenge(
         Ok(claim.to_owned())
     };
     tokio::time::timeout(HANDSHAKE, handshake).await.context("the handshake timed out")?
-}
-
-/// The next connection `accepting` takes; the pause after an error, such as running out of descriptors, keeps it
-/// from spinning.
-pub async fn accept<T>(mut accepting: impl AsyncFnMut() -> std::io::Result<T>) -> T {
-    loop {
-        match accepting().await {
-            Ok(accepted) => return accepted,
-            Err(e) => {
-                warn!("accept: {e}");
-                tokio::time::sleep(ACCEPT_PAUSE).await;
-            }
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

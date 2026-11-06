@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_host::Vm;
-use agent_proto::{Key, Request, accept, read_agents};
+use agent_proto::{Key, Request, read_agents};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
@@ -154,7 +154,7 @@ async fn serve(args: Args) -> Result<()> {
     });
     let listener = TcpListener::bind(args.listen).await?;
     loop {
-        let (stream, peer) = accept(async || listener.accept().await).await;
+        let (stream, peer) = yakery_serve::accept(async || listener.accept().await).await;
         if !args.allow_from.contains(&peer.ip().to_canonical()) {
             warn!("refused a connection from {peer}");
             continue;

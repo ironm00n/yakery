@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent_proto::{
-    CA, CONTROL_PORT, HOST_CID, Key, Reply, Request, Service, WAKE, accept, challenge, prove,
-    read_agents, read_key,
+    CA, CONTROL_PORT, HOST_CID, Key, Reply, Request, Service, WAKE, challenge, prove, read_agents,
+    read_key,
 };
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
@@ -313,7 +313,7 @@ fn proc_net_address(field: &str) -> Option<SocketAddrV4> {
 
 async fn relay<L: Local>(listener: L, state: Arc<State>) {
     loop {
-        let client = accept(async || listener.next().await).await;
+        let client = yakery_serve::accept(async || listener.next().await).await;
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(e) = tunnel::<L>(client, &state).await {
@@ -337,7 +337,7 @@ async fn tunnel<L: Local>(mut client: L::Stream, state: &State) -> Result<()> {
 
 async fn serve(listener: VsockListener, state: Arc<State>) {
     loop {
-        let (stream, peer) = accept(async || listener.accept().await).await;
+        let (stream, peer) = yakery_serve::accept(async || listener.accept().await).await;
         if peer.cid() != HOST_CID {
             continue;
         }

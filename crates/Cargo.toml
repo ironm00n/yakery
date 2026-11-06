@@ -6,6 +6,7 @@ members = [
     "scheduler",
     "outlook-sync",
     "agent-proto",
+    "serve",
     "agentd",
     "agent-host",
     "agent-slack",
@@ -72,3 +73,4 @@ invitation = { path = "invitation" }
 private = { path = "lib/private" }
 submission-signature = { path = "submission-signature" }
 yakery-log = { path = "lib/log" }
+yakery-serve = { path = "serve" }
