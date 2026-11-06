@@ -71,7 +71,11 @@ let
 
   # every way the node departs from cx33-1
   overrides =
-    { tlsHosts, stalwartS3Endpoint }:
+    {
+      tlsHosts,
+      stalwartS3Endpoint,
+      ips,
+    }:
     { config, ... }:
     let
       blobStore = s3 config;
@@ -108,11 +112,13 @@ let
             borg.stalwart = "/dev/null";
           };
           # the host's addresses are the VM's
-          data.ips.${hostName} = {
-            ipv4.address = config.networking.primaryIPAddress;
-            ipv6 = {
-              prefix = "2001:db8:1";
-              prefixLength = 64;
+          data.ips = ips // {
+            ${hostName} = {
+              ipv4.address = config.networking.primaryIPAddress;
+              ipv6 = {
+                prefix = "2001:db8:1";
+                prefixLength = 64;
+              };
             };
           };
         };
@@ -210,19 +216,21 @@ in
 
   # `users` are made in the bundle's domain with the role it gives a user; `tlsHosts` are vhosts a
   # test adds outside bundles.reverse-proxy; `stalwartS3Endpoint` puts something between Stalwart
-  # and the switch, which stays at `(s3 config).endpoint`
+  # and the switch, which stays at `(s3 config).endpoint`; `ips` are other hosts' addresses, as the
+  # secrets repo's `data.ips` lists them
   node =
     {
       users ? [ ],
       tlsHosts ? [ ],
       stalwartS3Endpoint ? null,
+      ips ? { },
     }:
     {
       imports = [
         ../../bundles/stalwart
         ../../bundles/reverse-proxy.nix
         ../../bundles/backup.nix
-        (overrides { inherit tlsHosts stalwartS3Endpoint; })
+        (overrides { inherit tlsHosts stalwartS3Endpoint ips; })
       ];
 
       networking.hostName = hostName;

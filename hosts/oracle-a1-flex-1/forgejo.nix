@@ -22,6 +22,7 @@ let
       }
       [
         "client_secret"
+        "smtp_password"
       ];
   get-forgejo-secret = forgejo-secrets.get-path;
 in
@@ -54,6 +55,15 @@ in
         ALLOW_ONLY_EXTERNAL_REGISTRATION = true;
         ENABLE_BASIC_AUTHENTICATION = false;
         ENABLE_INTERNAL_SIGNIN = false;
+        ENABLE_NOTIFY_MAIL = true;
+      };
+
+      mailer = {
+        ENABLED = true;
+        PROTOCOL = "smtp+starttls";
+        SMTP_ADDR = my-lib.ironmoon.mail.host;
+        SMTP_PORT = 587;
+        USER = "forgejo@${my-lib.ironmoon.domain}";
       };
 
       admin = {
@@ -84,6 +94,8 @@ in
         ENABLED = true;
       };
     };
+
+    secrets.mailer.PASSWD = get-forgejo-secret "smtp_password";
 
     database = {
       createDatabase = false;
