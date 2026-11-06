@@ -163,3 +163,29 @@ fn a_description_he_removes_goes_out_as_an_empty_body() {
         json!({"body": {"contentType": "text", "content": ""}})
     );
 }
+
+#[test]
+fn dates_a_series_adds_or_drops_have_no_graph_pattern() {
+    assert!(graph(&ios("RRULE:FREQ=WEEKLY")).is_ok());
+    for dates in ["EXDATE;TZID=America/New_York:20261112T100000", "RDATE:20261113T150000Z"] {
+        let series = ios(&format!("RRULE:FREQ=WEEKLY\r\n{dates}"));
+        assert!(graph(&series).is_err(), "{dates}");
+    }
+    assert!(graph(&ios("RECURRENCE-ID;TZID=America/New_York:20261112T100000")).is_err());
+}
+
+#[test]
+fn a_file_of_more_than_one_event_is_refused() {
+    let event = ios("");
+    let vevent = &event[event.find("BEGIN:VEVENT").unwrap()..event.find("END:VCALENDAR").unwrap()];
+    assert!(graph(&event.replace(vevent, &vevent.repeat(2))).is_err());
+}
+
+#[test]
+fn an_alarms_text_is_not_the_events() {
+    let alarmed = ios(
+        "BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT15M\r\nEND:VALARM",
+    )
+    .replace("DESCRIPTION:line one\\nline\r\n  two\r\n", "");
+    assert_eq!(graph(&alarmed).unwrap()["body"]["content"], "");
+}

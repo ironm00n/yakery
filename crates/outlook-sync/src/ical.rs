@@ -1,6 +1,6 @@
 //! RFC 5545 content lines both ways: what the mirror's files are written as, and read back by.
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow};
 
 pub const DATE: &str = "%Y%m%d";
 pub const DATE_TIME: &str = "%Y%m%dT%H%M%S";
@@ -53,13 +53,22 @@ pub struct Line {
     pub value: String,
 }
 
+/// `at` where it separates, outside a quoted parameter value (RFC 5545 §3.2).
+fn unquoted(at: char) -> impl FnMut(char) -> bool {
+    let mut quoted = false;
+    move |c| {
+        quoted ^= c == '"';
+        c == at && !quoted
+    }
+}
+
 pub fn lines(ics: &str) -> Vec<Line> {
     let unfolded = ics.replace("\r\n ", "").replace("\r\n\t", "").replace("\n ", "");
     unfolded
         .lines()
         .filter_map(|l| {
-            let (head, value) = l.split_once(':')?;
-            let mut parts = head.split(';');
+            let (head, value) = l.split_once(unquoted(':'))?;
+            let mut parts = head.split(unquoted(';'));
             let name = parts.next()?.to_ascii_uppercase();
             let params = parts
                 .filter_map(|p| {
@@ -72,18 +81,30 @@ pub fn lines(ics: &str) -> Vec<Line> {
         .collect()
 }
 
+/// The file's one VEVENT's own lines, none of a VALARM's in it.
 pub fn vevent(ics: &str) -> Result<Vec<Line>> {
-    let mut inside = false;
-    let mut out = vec![];
+    let (mut events, mut open): (Vec<Vec<Line>>, Vec<String>) = (vec![], vec![]);
     for line in lines(ics) {
-        match (line.name.as_str(), line.value.as_str()) {
-            ("BEGIN", "VEVENT") => inside = true,
-            ("END", "VEVENT") if inside => return Ok(out),
-            _ if inside => out.push(line),
-            _ => {}
+        match line.name.as_str() {
+            "BEGIN" => {
+                if line.value == "VEVENT" {
+                    events.push(vec![]);
+                }
+                open.push(line.value);
+            }
+            "END" => drop(open.pop()),
+            _ => {
+                if let (Some("VEVENT"), Some(event)) =
+                    (open.last().map(String::as_str), events.last_mut())
+                {
+                    event.push(line);
+                }
+            }
         }
     }
-    bail!("no VEVENT")
+    let [event] =
+        <[_; 1]>::try_from(events).map_err(|e| anyhow!("{} VEVENTs, not one", e.len()))?;
+    Ok(event)
 }
 
 pub fn unescape(text: &str) -> String {

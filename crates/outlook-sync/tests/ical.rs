@@ -29,3 +29,16 @@ fn transp_reads_back_as_free_or_busy() {
     }
     assert!(!free(None));
 }
+
+#[test]
+fn a_quoted_parameter_value_keeps_its_colon() {
+    // RFC 5545 §3.2's example
+    let read = lines(
+        "DESCRIPTION;ALTREP=\"cid:part1.0001@example.org\":The Fall'98 Wild\r\n  Wizards Conference - - Las Vegas\\, NV\\, USA\r\n",
+    );
+    assert_eq!(read[0].params, [("ALTREP".to_string(), "cid:part1.0001@example.org".to_string())]);
+    assert_eq!(
+        unescape(&read[0].value),
+        "The Fall'98 Wild Wizards Conference - - Las Vegas, NV, USA"
+    );
+}

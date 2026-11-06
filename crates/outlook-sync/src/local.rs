@@ -98,6 +98,9 @@ pub fn moved(event: &Value, from: &Fields) -> Map<String, Value> {
 pub fn graph(ics: &str) -> Result<Value> {
     let lines = vevent(ics)?;
     let get = |name: &str| lines.iter().find(|l| l.name == name);
+    if let Some(dates) = ["EXDATE", "RDATE", "RECURRENCE-ID"].into_iter().find_map(get) {
+        bail!("{} has no Graph pattern", dates.name);
+    }
     let start = at(get("DTSTART").context("no DTSTART")?)?;
     let end = match (get("DTEND"), get("DURATION")) {
         (Some(line), _) => at(line)?,
