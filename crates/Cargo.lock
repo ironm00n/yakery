@@ -1390,6 +1390,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "oidc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.23.1",
+ "form_urlencoded",
+ "http",
+ "private",
+ "rcgen",
+ "ring",
+ "rustls-pemfile",
+ "rustls-pki-types",
+ "rustls-webpki",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

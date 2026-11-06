@@ -1,0 +1,29 @@
+[package]
+name = "oidc"
+version = "0.1.0"
+description = "OAuth 2.0 and OpenID Connect as a client: what to send an issuer, and what its answers say"
+edition.workspace = true
+rust-version.workspace = true
+autotests = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+form_urlencoded.workspace = true
+http.workspace = true
+private.workspace = true
+ring.workspace = true
+rustls-pki-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+webpki.workspace = true
+
+[dev-dependencies]
+rcgen.workspace = true
+rustls-pemfile.workspace = true
+
+[lints]
+workspace = true

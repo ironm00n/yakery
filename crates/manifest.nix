@@ -15,13 +15,19 @@ let
   libAllowed = [
     "anyhow"
     "base16ct"
+    "base64"
+    "form_urlencoded"
     "getrandom"
+    "http"
+    "ring"
     "rustix"
+    "rustls-pki-types"
     "serde"
     "serde_json"
     "subtle"
     "text"
     "private"
+    "webpki"
     "yakery-log"
   ];
   # every package's build reads every member manifest but only its own closure's sources, so this one holds for all members
