@@ -134,6 +134,25 @@ fn trickle(n: usize, gap: u64) -> Reply {
     http::Response::new(reqwest::Body::wrap(Trickle(n, gap, Box::pin(tokio::time::sleep(gap)))))
 }
 
+/// A reply whose connection drops before its body.
+struct Cut;
+
+impl http_body::Body for Cut {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Waker<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
+        Poll::Ready(Some(Err(std::io::ErrorKind::ConnectionReset.into())))
+    }
+}
+
+fn cut() -> Reply {
+    http::Response::new(reqwest::Body::wrap(Cut))
+}
+
 /// How a request looked: its method and path, the JMAP method it calls, its body otherwise, and its token.
 fn seen(r: &Request) -> String {
     let body = r.body().and_then(|b| b.as_bytes()).map(String::from_utf8_lossy).unwrap_or_default();
@@ -584,17 +603,29 @@ async fn a_redirect_is_followed_only_on_the_requests_origin() {
 }
 
 #[tokio::test]
-async fn only_a_dead_refresh_token_leaves_a_sign_in_to_get_tokens() {
-    for (code, want) in [
-        ("invalid_grant", "sign in"),
-        ("invalid_request", "sign in"),
-        ("unauthorized_client", "error: zitadel refused the refresh token: unauthorized_client"),
-    ] {
-        let stalwart = Stalwart { refresh_refused: Some(code), ..Stalwart::new(vec![]) };
-        let (_wire, _) = stalwart.wire();
+async fn any_oauth_refusal_of_a_refresh_signs_in_and_any_other_answer_is_transient() {
+    let unanswered = |status| format!("Transient: /oauth/v2/token: HTTP {status}: ");
+    let (server_error, html) = (r#"{"error":"server_error"}"#, "<html>blocked</html>");
+    let rows = [
+        (Some((400, r#"{"error":"invalid_grant"}"#)), "sign in".into()),
+        (Some((400, r#"{"error":"invalid_request"}"#)), "sign in".into()),
+        (Some((400, r#"{"error":"unauthorized_client"}"#)), "sign in".into()),
+        (Some((401, r#"{"error":"invalid_client"}"#)), "sign in".into()),
+        (Some((400, r#"{"error":"session_ended"}"#)), "sign in".into()),
+        (Some((500, server_error)), unanswered("500 Internal Server Error") + server_error),
+        (Some((503, "")), unanswered("503 Service Unavailable")),
+        (Some((403, html)), unanswered("403 Forbidden") + html),
+        (Some((200, "{}")), unanswered("200 OK") + "the token reply isn't of the shape it takes"),
+        (None, "Transient: reading the reply".into()),
+    ];
+    for (answer, want) in rows {
+        let _wire = wired(move |_| answer.map_or_else(cut, |(status, body)| reply(status, body)));
         let refreshed = Http(Web::new(false).unwrap()).refresh(&Secret::new("r1")).await;
-        let got = shown(refreshed.map(|t| if t.is_some() { "refreshed" } else { "sign in" }));
-        assert_eq!(got, want, "{code}");
+        let got = refreshed.map_or_else(
+            |e| format!("{:?}: {e}", Failure::of(&e)),
+            |t| if t.is_some() { "refreshed" } else { "sign in" }.into(),
+        );
+        assert_eq!(got, want, "{answer:?}");
     }
 }
 
