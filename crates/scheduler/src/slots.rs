@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use jiff::civil::{Date, DateTime, DateTimeRound, Time};
 use jiff::{RoundMode, SignedDuration, Timestamp, ToSpan, Unit};
 use serde::{Deserialize, Serialize};
@@ -91,10 +93,11 @@ pub fn slots(
             .all(|b| !b.overlaps(slot))
     };
     let hours = if limits.hours.is_empty() { &policy.hours } else { &limits.hours };
-    windows(hours, limits.from, limits.until)
+    let ordered: BTreeSet<Timestamp> = windows(hours, limits.from, limits.until)
         .flat_map(|window| starts(policy, window, length))
         .filter(|&start| start >= now + policy.notice && clear(Period::starting(start, length)))
-        .collect()
+        .collect();
+    ordered.into_iter().collect()
 }
 
 fn midnight(policy: &Policy, day: Date) -> Timestamp {

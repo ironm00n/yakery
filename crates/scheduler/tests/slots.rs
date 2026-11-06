@@ -131,3 +131,10 @@ fn a_booking_ends_inside_its_window_in_real_time() {
         .collect();
     assert_eq!(starts, ["00:00", "00:15", "00:30"], "00:45 would end at 03:15 EDT");
 }
+
+#[test]
+fn slots_come_in_order_and_once_whatever_order_the_hours_are_listed_in() {
+    let hours = ["mon 14:00-15:00", "mon 10:00-11:00", "mon 10:00-11:00"];
+    let listed = limits(MONDAY, MONDAY, 60, 5, &hours);
+    assert_eq!(free(&listed, &[], &[]), [at("2026-10-26T10:00"), at("2026-10-26T14:00")]);
+}
