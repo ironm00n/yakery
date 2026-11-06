@@ -5,3 +5,20 @@
 --when.environments = ["CLAUDECODE"]
 [--scope.git]
 private-commits = "working_copies()"
+
+# default.nix reads this scope again to give git the same identity in the same repos
+[[--scope]]
+--when.environments = ["CLAUDECODE"]
+--when.repositories = [
+  "~/workspace/autograder",
+  "~/workspace/claude",
+  "~/workspace/codex",
+  "~/workspace/common",
+  "~/workspace/health",
+  "~/workspace/redox",
+  "~/workspace/richwasm",
+  "~/workspace/sandbox",
+  "~/workspace/spytial",
+]
+[--scope.user]
+email = "agent@ironmoon.dev"

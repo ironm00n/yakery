@@ -42,6 +42,16 @@ let
     + lib.concatMapStrings (path: "/${lib.removePrefix ".claude/" path}\n") (lib.attrNames skills)
     + "!stignore\n#include stignore\n"
   );
+  agentEmail = "${ironmoon.mail.agents.sharedLocalPart}@${ironmoon.domain}";
+  # jj.toml's agent identity scope is the one list of repos; git gets the same identity in the same repos
+  agentIdentity =
+    let
+      scope = lib.findFirst (s: s ? user) (throw "jj.toml has no identity scope") (
+        builtins.fromTOML (builtins.readFile ./jj.toml)
+      )."--scope";
+    in
+    assert lib.assertMsg (scope.user.email == agentEmail) "jj.toml's agent email isn't ${agentEmail}";
+    scope;
 in
 {
   options.bundles.dev.claude = {
@@ -55,10 +65,16 @@ in
     ];
 
     xdg.configFile."agent-mail/config.json".text = builtins.toJSON {
-      login = "${ironmoon.mail.agents.sharedLocalPart}@${ironmoon.domain}";
+      login = agentEmail;
       password-file = "~/.claude/secrets/agent-ironmoon-dev-password";
     };
     xdg.configFile."jj/conf.d/claude.toml".source = symlink ./jj.toml;
+    # included only from Claude sessions, by settings.json's GIT_CONFIG_* env
+    xdg.configFile."git/claude-identity".text = lib.concatMapStrings (repo: ''
+      [includeIf "gitdir:${repo}/"]
+      	path = claude-identity.user
+    '') agentIdentity."--when".repositories;
+    xdg.configFile."git/claude-identity.user".text = lib.generators.toGitINI { inherit (agentIdentity) user; };
     # a push from a Claude Code session keeps its commit messages within the width rule (hooks/lib/widths.sh): jj
     # pushes go through jj-push.sh, and plain git ones run this beside the repo's own pre-push hook, which passes
     # everything outside a session
