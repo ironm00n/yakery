@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # `jj git push` given as jj's own arguments (`jj-push.sh [-R REPO] git push [OPTIONS]`), after the
-# repo's pre-push hook has passed on what the push would send, fed to it as `git push` feeds it.
-# guard-jj-push.sh refuses a bare `jj git push` wherever such a hook exists. The push runs on the
-# dry run's snapshot of the working copy, so a hook run here checks the commits that get pushed.
+# commits it would send that aren't on the remote yet have passed the commit width rule (lib/widths.sh)
+# and the repo's pre-push hook, if it has one, has passed on what the push would send, fed to it as
+# `git push` feeds it. guard-jj-push.sh refuses a bare `jj git push` in a Claude Code session. The
+# push runs on the dry run's snapshot of the working copy, so what is checked here is what gets pushed.
 #
 # Nothing builds on desktop (Owen 11-05 21:53), so per clone `git config xb.prePushShell DIR` runs
 # the hook as an xb job on the worktree's snapshot, in DIR's flake dev shell (empty: none), with
@@ -15,6 +16,7 @@
 
 set -euo pipefail
 . "${BASH_SOURCE[0]%/*}/lib/jj.sh"
+. "${BASH_SOURCE[0]%/*}/lib/widths.sh"
 
 repo=() own=(--ignore-working-copy)
 for ((i = 1; i <= $#; i++)); do
@@ -30,13 +32,26 @@ jjr() { jj "${repo[@]}" --ignore-working-copy "$@"; }
 
 root=$(jjr workspace root)
 hook=$(pre_push_hook "$root") || fail "$hook, so nothing was pushed"
-[[ -n $hook ]] || exec jj "$@"
 
-plan=$(jj "$@" --dry-run 2>&1) || fail "the dry run failed: $plan" $?
+# the plan is read off the dry run's output, so a dry run made quiet by `--quiet` would read as nothing to push; one
+# quiet by config fails below, as an empty plan that doesn't say nothing changed (a second --config would drop the
+# caller's, as jj 0.46 reads them)
+loud=()
+for a in "$@"; do [[ $a == --quiet ]] || loud+=("$a"); done
+plan=$(jj "${loud[@]}" --dry-run 2>&1) || fail "the dry run failed: $plan" $?
 zero=0000000000000000000000000000000000000000
+git_env "$root"
 full() { jjr log --no-graph -r "$1" -T commit_id; }
+# jj's plan quotes a bookmark, tag or remote name that isn't a plain revset symbol (`"pkg@1.2.3"`), escaping a `"`
+unquoted() {
+  local name=$1
+  [[ $name == \"*\" ]] || { printf '%s\n' "$name"; return; }
+  name=${name:1:-1}
+  printf '%s\n' "${name//\\\"/\"}"
+}
+declare -A sending=()
 remote= refs=() warning=0
-bookmark='^  bookmark: ([^ ]+) \[(add to ([0-9a-f]+)|move (forward|backward|sideways) from ([0-9a-f]+) to ([0-9a-f]+)|delete from ([0-9a-f]+))\]$'
+planned='^  (bookmark|tag): ([^ ]+) \[(add to ([0-9a-f]+)|move (forward|backward|sideways) from ([0-9a-f]+) to ([0-9a-f]+)|delete from ([0-9a-f]+))\]$'
 while IFS= read -r line; do
   # a warning (`Won't push bookmark b: commit c is private`) and the lines indented under it are jj's, not the plan's
   [[ $line == '  '* ]] || warning=0
@@ -45,10 +60,13 @@ while IFS= read -r line; do
   elif ((warning)); then
     :
   elif [[ $line =~ ^Changes\ to\ push\ to\ (.+):$ ]]; then
-    remote=${BASH_REMATCH[1]}
-  elif [[ $line =~ $bookmark ]]; then
-    m=("${BASH_REMATCH[@]}")
-    ref=refs/heads/${m[1]}
+    remote=$(unquoted "${BASH_REMATCH[1]}")
+  elif [[ $line =~ $planned ]]; then
+    m=("${BASH_REMATCH[@]:1}")
+    [[ -n $remote ]] || fail "jj's plan names no remote before this line: $line"
+    sending[$remote]=1
+    name=$(unquoted "${m[1]}")
+    [[ ${m[0]} == bookmark ]] && ref=refs/heads/$name || ref=refs/tags/$name
     if [[ -n ${m[3]} ]]; then refs+=("$ref $(full "${m[3]}") $ref $zero")
     elif [[ -n ${m[7]} ]]; then refs+=("(delete) $zero $ref $(full "${m[7]}")")
     else refs+=("$ref $(full "${m[6]}") $ref $(full "${m[5]}")")
@@ -57,11 +75,35 @@ while IFS= read -r line; do
     fail "can't read this line of jj's plan, so the hook can't be fed it: $line"
   fi
 done <<<"$plan"
-((${#refs[@]})) || exec jj "$@" "${own[@]}"
-[[ -n $remote ]] || fail "jj's plan names no remote: $plan"
-url=$(jjr git remote list | awk -v r="$remote" '$1 == r { print $2 }')
-
-git_env "$root"
+if ((${#refs[@]} == 0)); then
+  [[ $plan == *$'\n'"Nothing changed."* || $plan == "Nothing changed."* ]] ||
+    fail "jj's plan names nothing to push, and doesn't say nothing changed, so it can't be read: $plan"
+  exec jj "$@" "${own[@]}"
+fi
+problems=$(printf '%s\n' "${refs[@]}" | (((${#genv[@]})) && export "${genv[@]}"; cd "$root" && too_wide)) ||
+  fail "couldn't read the commits this push sends, so nothing was pushed"
+change() { jjr log --no-graph -r "$1" -T 'change_id.shortest(8)'; }
+[[ -z $problems ]] ||
+  fail "$(too_wide_reason "$problems" change "Nothing was pushed. Fix each with \`jj describe -r <change> -m '…'\`, then push again.")"
+[[ -n $hook ]] || exec jj "$@" "${own[@]}"
+((${#sending[@]} == 1)) ||
+  fail "this push sends to ${!sending[*]}, and git runs the hook once per remote with that remote's lines; push to one at a time"
+remote=${!sending[*]}
+# git feeds an annotated tag by its tag object, where jj's plan names the commit it points at; a tag git's store
+# doesn't hold is one jj made, and goes as the commit
+for i in "${!refs[@]}"; do
+  read -r lref lsha rref rsha <<<"${refs[i]}"
+  [[ $lref == refs/tags/* ]] || continue
+  object=$(env "${genv[@]}" git -C "$root" rev-parse -q --verify "$lref") || continue
+  [[ $(env "${genv[@]}" git -C "$root" rev-parse "$object^{commit}") == "$lsha" ]] ||
+    fail "git's $lref doesn't point at $lsha as jj's plan says, so the hook can't be fed it"
+  refs[i]="$lref $object $rref $rsha"
+done
+urls=$(env "${genv[@]}" git -C "$root" remote get-url --push --all -- "$remote") ||
+  fail "git has no push URL for $remote, so the hook can't be given one"
+[[ $urls != *$'\n'* ]] ||
+  fail "$remote pushes to $(wc -l <<<"$urls") URLs, and git runs the hook once per URL; push with one"
+url=$urls
 setting() { env "${genv[@]}" git -C "$root" config --local "$@"; }
 status=0
 if [[ $(setting --bool --get xb.prePushLocal || true) == true ]]; then

@@ -59,6 +59,14 @@ in
       password-file = "~/.claude/secrets/agent-ironmoon-dev-password";
     };
     xdg.configFile."jj/conf.d/claude.toml".source = symlink ./jj.toml;
+    # a push from a Claude Code session keeps its commit messages within the width rule (hooks/lib/widths.sh): jj
+    # pushes go through jj-push.sh, and plain git ones run this beside the repo's own pre-push hook, which passes
+    # everything outside a session
+    programs.git.settings."hook \"commit-width\"" = {
+      event = "pre-push";
+      # the generation's own copy, so a checkout of /etc/nixos without the script can't break every push
+      command = "${./hooks}/git-pre-push-widths.sh";
+    };
 
     home.file = {
       # no XDG: https://github.com/anthropics/claude-code/issues/1455

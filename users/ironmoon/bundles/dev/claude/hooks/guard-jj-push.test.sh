@@ -115,15 +115,22 @@ check PASS "$k" 'jj log -r push'
 check PASS "$k" 'echo jj git push'
 check PASS "$k" 'git push origin main'
 check PASS "$k" 'bash ~/.claude/hooks/jj-push.sh git push -b main'
-check PASS "$dir/plain" 'jj git push'
-check PASS "$e" 'jj git push'
-check PASS "$e" 'jj -R ~/plain git push'
-# a git that can't say where hooks live, as a broken config or a stub ahead on PATH makes it
+check DENY "$dir/plain" 'jj git push'
+check DENY "$e" 'jj git push'
+check DENY "$e" 'jj -R ~/plain git push'
+check DENY "$k" 'git push --no-verify origin main'
+check DENY "$k" 'git -C ~/hooked push origin main --no-verify'
+check DENY "$k" 'git push --no-verif origin main'
+check DENY "$k" 'git push origin --no-veri main'
+check PASS "$k" 'git push --no-ver origin main'
+check DENY "$k" 'echo main | xargs git push --no-verify origin'
+check DENY "$k" 'echo main | xargs -I git jj git push -b git'
+check PASS "$k" 'git log --no-verify-not-a-push'
+# a git that can't say where hooks live, as a broken config or a stub ahead on PATH makes it (jj-push.sh reads it)
 mkdir "$dir/failing-git"
 printf '#!/bin/sh\ncase "$*" in *--git-path*) echo "fatal: planted" >&2; exit 128 ;; esac\nexec %s "$@"\n' \
   "$(command -v git)" >"$dir/failing-git/git"
 chmod +x "$dir/failing-git/git"
-PATH=$dir/failing-git:$PATH check DENY "$dir/plain" 'jj git push'
 
 # push NAME WANT-EXIT [ARGS...]: jj-push.sh's exit, as WANT-EXIT says it should be
 push() {
@@ -147,6 +154,9 @@ change() {
   q jj -R "$dir/$1" bookmark move main --to @-
 }
 z=0000000000000000000000000000000000000000
+reason=$(jq -cn --arg c 'git push --no-verify origin main' --arg cwd "$k" '{tool_name:"Bash", tool_input:{command:$c}, cwd:$cwd}' |
+  HOME="$dir" bash "$h" | jq -r .hookSpecificOutput.permissionDecisionReason)
+same "a git push's refusal gives git's fix, not jj-push.sh" "$(grep -c jj-push <<<"$reason") $(grep -c 'Push without it' <<<"$reason")" "0 1"
 
 change hooked b
 old=$(at hooked main) new=$(id hooked main)
@@ -182,6 +192,19 @@ push hooked 0 git push -b main
 : >"$dir/stdin"
 push hooked 0 git push -b main
 same "nothing to push runs no hook" "$(cat "$dir/stdin")" ""
+GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git -C "$k" tag -a v2 -m v2 "$(id hooked main)"
+q jj -R "$k" git import
+push hooked 0 git push -t v2
+same "an annotated tag reaches the hook by its tag object, as git feeds it" "$(cat "$dir/stdin")" \
+  "refs/tags/v2 $(git -C "$k" rev-parse refs/tags/v2) refs/tags/v2 $z"
+GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git -C "$k" tag -a pkg@2 -m pkg "$(id hooked main)"
+q jj -R "$k" git import
+push hooked 0 git push -t 'exact:"pkg@2"'
+same "a name jj's plan quotes reaches the hook as git names it" "$(cat "$dir/stdin")" \
+  "refs/tags/pkg@2 $(git -C "$k" rev-parse refs/tags/pkg@2) refs/tags/pkg@2 $z"
+q jj -R "$k" bookmark create -r main '"-n"'
+push hooked 0 git push -b 'exact:"-n"'
+same "even one that reads as echo's flag" "$(cat "$dir/stdin")" "refs/heads/-n $(id hooked main) refs/heads/-n $z"
 
 q jj -R "$k" new
 echo wc >"$k/wc"
@@ -195,12 +218,94 @@ same "and the hook is fed only what is sent" "$(cut -d' ' -f1 "$dir/stdin")" ref
 change plain b
 push plain 0 git push -b main
 same "a repo with no hook pushes as jj does" "$(at plain main)" "$(id plain main)"
+# the width rule: a commit not on the remote yet with a long first line is refused, named by its change, an old one
+# on the remote isn't read, and a reworded one goes through
+over="x: $(printf 'a%.0s' {1..70})"
+q jj -R "$dir/plain" describe -r main -m "$over" --ignore-immutable
+q jj -R "$dir/plain" git push -b main
+change plain wide
+q jj -R "$dir/plain" describe -r main -m "$over"
+before=$(at plain main)
+push plain 1 git push -b main
+wide=$(jj -R "$dir/plain" --ignore-working-copy log --no-graph -r main -T 'change_id.shortest(8)')
+same "a long first line not on the remote is refused, by change" \
+  "$(at plain main) $(grep -c "  $wide: its first line is 73 characters" "$dir/out") $(grep -c "jj describe -r <change>" "$dir/out")" \
+  "$before 1 1"
+push plain 1 --quiet git push -b main
+same "a quiet push is read all the same" "$(at plain main) $(grep -c "  $wide: its first line" "$dir/out")" "$before 1"
+push plain 1 --config ui.quiet=true git push -b main
+same "one quiet by config is refused unread" "$(at plain main) $(grep -c "doesn't say nothing changed" "$dir/out")" "$before 1"
+q jj -R "$dir/plain" describe -r main -m 'x: short'
+push plain 0 git push -b main
+same "the reworded one goes through, the old long one on the remote unread" "$(at plain main)" "$(id plain main)"
+git -C "$dir/plain" tag v1 "$(id plain main)"
+q jj -R "$dir/plain" git import
+push plain 0 git push -t v1
+same "a tag goes through the same check" "$(git -C "$dir/plain.git" rev-parse -q --verify refs/tags/v1)" "$(id plain main)"
+git -C "$dir/plain" tag pkg@1.2.3 "$(id plain main)"
+q jj -R "$dir/plain" git import
+push plain 0 git push -t 'exact:"pkg@1.2.3"'
+same "so does one jj's plan quotes" "$(git -C "$dir/plain.git" rev-parse -q --verify refs/tags/pkg@1.2.3)" "$(id plain main)"
 change plain c
 before=$(at plain main)
 PATH=$dir/failing-git:$PATH push plain 1 git push -b main
 same "but not when git can't say whether it has one, and git's words are given" \
   "$(at plain main) $(grep -c "git can't say where .* keeps its hooks: fatal: planted, so nothing was pushed" "$dir/out")" \
   "$before 1"
+
+repo twice ships
+git -C "$dir/twice" config xb.prePushShell ""
+git init -q --bare "$dir/fork.git"
+q jj -R "$dir/twice" git remote add fork "$dir/fork.git"
+q jj -R "$dir/twice" bookmark track main@fork
+change twice b
+before=$(at twice main)
+push twice 1 git push --remote origin --remote fork -b main
+same "a hooked push to two remotes is refused, since git runs the hook once per remote" \
+  "$(at twice main) $(grep -c 'push to one at a time' "$dir/out")" "$before 1"
+push twice 0 git push --remote fork -b main
+# jj 0.46 itself then fails, running `git push fork` with nothing to send ("You are not currently on a branch")
+push twice 1 git push --remote origin --remote fork -b main
+same "a remote with nothing to send doesn't count, and the hook gets the other's lines" \
+  "$(grep -c 'one at a time' "$dir/out") $(cat "$dir/stdin")" "0 refs/heads/main $(id twice main) refs/heads/main $before"
+
+git init -q --bare "$dir/é-fork.git"
+q jj git init "$dir/accent"
+q jj -R "$dir/accent" git remote add é-fork "$dir/é-fork.git"
+git -C "$dir/accent" config xb.prePushShell ""
+ships "$dir/accent"
+q jj -R "$dir/accent" commit -m a
+q jj -R "$dir/accent" bookmark create main -r @-
+push accent 0 git push --remote é-fork -b main
+same "a remote jj's plan quotes reaches the hook as git names it, with its push url" "$(cat "$dir/args")" \
+  "é-fork $dir/é-fork.git"
+git init -q --bare "$dir/dash.git"
+q jj git init "$dir/dash"
+q jj -R "$dir/dash" git remote add -- -x "$dir/dash.git"
+git -C "$dir/dash" config xb.prePushShell ""
+ships "$dir/dash"
+q jj -R "$dir/dash" commit -m a
+q jj -R "$dir/dash" bookmark create main -r @-
+push dash 0 git push --remote='exact:"-x"' -b main
+same "so does one named like an option" "$(cat "$dir/args")" "-x $dir/dash.git"
+
+repo mirrored ships
+git -C "$dir/mirrored" config xb.prePushShell ""
+git init -q --bare "$dir/mirror.git"
+git -C "$dir/mirrored" remote set-url --add --push origin "$dir/mirrored.git"
+git -C "$dir/mirrored" remote set-url --add --push origin "$dir/mirror.git"
+change mirrored b
+before=$(at mirrored main)
+push mirrored 1 git push -b main
+same "a remote with two push URLs is refused, since git runs the hook once per URL" \
+  "$(at mirrored main) $(grep -c 'pushes to 2 URLs' "$dir/out")" "$before 1"
+
+init=--no-colocate repo apart ships
+GIT_DIR=$(jj -R "$dir/apart" --ignore-working-copy git root) git config xb.prePushShell ""
+q jj -R "$dir/apart" tag set t1 -r main
+push apart 0 git push -t t1
+same "a tag jj made, which git's store doesn't hold, reaches the hook as its commit" "$(cat "$dir/stdin")" \
+  "refs/tags/t1 $(id apart main) refs/tags/t1 $z"
 
 change hooked d
 push hooked 0 git push -b main
