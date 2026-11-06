@@ -3,8 +3,9 @@
 # fails, so a jj run in one of Owen's own checkouts writes whatever sits on disk there into his @.
 # On 11-04 a subagent's cwd reset to ~/workspace/redox and a `jj file show -r <another workspace's
 # change>` amended his @ with 65 files (friction 98). A jj whose repo is one of his checkouts passes
-# only with --ignore-working-copy. The one exception is the foreground main session started in
-# ~/workspace/claude (dispatch), on that checkout, for its rebases onto master.
+# only with --ignore-working-copy. The one exception is the main session started in
+# ~/workspace/claude, in the foreground or as the job named dispatch, on that checkout for its rebases onto master and on /etc/nixos for
+# the moves before his switch (his 10-18 and 10-29 rules).
 
 set -uo pipefail
 . "${BASH_SOURCE[0]%/*}/lib/shell-line.sh"
@@ -19,10 +20,13 @@ cmd=$(field .tool_input.command)
 [[ $cmd == *jj* ]] || exit 0
 
 mapfile -t checkouts < <(realpath -m "$HOME/workspace/redox" "$HOME/workspace/claude" /etc/nixos "$HOME"/research/*)
-dispatch=
-[[ -z $(field .agent_id) && -z ${CLAUDE_JOB_DIR-} &&
-  $(field .transcript_path) == "$HOME/.claude/projects/${HOME//[^[:alnum:]]/-}-workspace-claude/"* ]] &&
-  dispatch=$(realpath -m "$HOME/workspace/claude")
+is_dispatch() {
+  [[ -z $(field .agent_id) &&
+    $(field .transcript_path) == "$HOME/.claude/projects/${HOME//[^[:alnum:]]/-}-workspace-claude/"* ]] || return
+  [[ -z ${CLAUDE_JOB_DIR-} ]] || [[ $(jq -r .name "$CLAUDE_JOB_DIR/state.json" 2>/dev/null) == dispatch ]]
+}
+dispatch=()
+is_dispatch && mapfile -t dispatch < <(realpath -m "$HOME/workspace/claude" /etc/nixos)
 
 instead="Run it against your own jj workspace with \`-R <your workspace>\`, or add \`--ignore-working-copy\` for a read."
 deny() {
@@ -34,7 +38,7 @@ deny() {
 check_jj() {
   [[ ${w[0]##*/} == jj ]] || return
   set -- "${w[@]:1}"
-  local a i r=$here repo c
+  local a i r=$here repo c d
   for ((i = 1; i <= $#; i++)); do
     a=${!i}
     case $a in
@@ -47,8 +51,9 @@ check_jj() {
   done
   [[ -n $r ]] || deny "the hook can't read off the line which repo this \`jj\` runs in (a variable, substitution, quoted path with blanks or \`cd -\`), so it may be one of Owen's checkouts."
   repo=$(repo_of "$r") || return
+  for d in "${dispatch[@]}"; do [[ $repo == "$d" ]] && return; done
   for c in "${checkouts[@]}"; do
-    [[ $repo == "$c" && $repo != "$dispatch" ]] &&
+    [[ $repo == "$c" ]] &&
       deny "this \`jj\` runs in $repo, Owen's own checkout, and jj snapshots the files on disk into his @ before any command, even one that then fails."
   done
 }

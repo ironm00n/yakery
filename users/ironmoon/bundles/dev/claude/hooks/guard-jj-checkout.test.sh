@@ -77,8 +77,16 @@ check PASS "$c" 'jj rebase -d master' "$dispatch"
 check PASS "$e" 'jj -R ~/workspace/claude git fetch' "$dispatch"
 check DENY "$c" 'jj rebase -d master' '{"agent_id":"a1","transcript_path":"'"$projects"'-workspace-claude/s1.jsonl"}'
 check DENY "$c" 'jj rebase -d master' "$dispatch" "$dir/jobs/x"
+mkdir -p "$dir/jobs/d" && echo '{"name":"dispatch"}' >"$dir/jobs/d/state.json"
+check PASS "$c" 'jj rebase -d master' "$dispatch" "$dir/jobs/d"
+check DENY "$c" 'jj rebase -d master' '{"agent_id":"a1","transcript_path":"'"$projects"'-workspace-claude/s1.jsonl"}' "$dir/jobs/d"
 check DENY "$c" 'jj rebase -d master' "{\"transcript_path\":\"$projects-workspace-redox/s1.jsonl\"}"
 check DENY "$c" 'cd ~/workspace/redox && jj st' "$dispatch"
+if [ -d /etc/nixos/.jj ]; then
+  check PASS "$e" 'jj -R /etc/nixos new dev' "$dispatch"
+  check DENY "$e" 'jj -R /etc/nixos new dev' '{"agent_id":"a1","transcript_path":"'"$projects"'-workspace-claude/s1.jsonl"}'
+  check DENY "$e" 'jj -R /etc/nixos new dev'
+fi
 
 # a loop's variable stays unreadable: the reader doesn't unroll loops, since its line-level reading of one parts from
 # the shell's (an adversary's pass on 11-05 found seven ways, these three among them)
