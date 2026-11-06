@@ -4,19 +4,21 @@ use private::{Secret, now};
 
 use super::*;
 use crate::{
-    auth::{ADMIN_SCOPE, Auth, Form, SCOPE, Zitadel},
+    auth::{ADMIN_SCOPE, Auth, Form, SCOPE, Step, Zitadel},
     store::{Held, PasswordFile, Tokens},
     web::Origin,
 };
 
-/// Where the first form of a page at `path` posts, with which fields, and whether it consents or asks the password.
+/// Where the first form of a page at `path` posts, with which fields, and whether it consents or asks the password;
+/// or what it asks for that has no answer.
 fn post(path: &str, html: &str) -> String {
     let answers =
         [("user_code", "ABCD-EFGH"), ("loginName", "agent@example.org"), ("password", "pw")];
     let posted = Form::read(html).and_then(|f| f.post(&answers, &Origin::Auth.url(path)));
-    shown(posted.map(|post| match post {
-        None => "nothing".into(),
-        Some(p) => {
+    shown(posted.map(|step| match step {
+        Step::Ends => "nothing".into(),
+        Step::Asks(asked, to) => format!("asks for {} at {}", asked.join(", "), to.path()),
+        Step::Post(p) => {
             let short = |v: &str| {
                 v.get(..8).filter(|_| v.len() > 24).map_or(v.into(), |v| format!("{v}.."))
             };
@@ -31,13 +33,13 @@ fn post(path: &str, html: &str) -> String {
 
 #[test]
 fn a_form_posts_only_to_its_own_origin_and_never_guesses_an_answer() {
-    let change =
-        r#"<form action="/x"><input name="change-old-password"><input name="change-new-password">"#;
+    let change = r#"<form action="/ui/login/password/change"><input name="change-old-password">
+        <input name="change-new-password">"#;
     let off = r#"<form action="https://evil.com/collect"><input name="password"></form>"#;
     let consent_off = r#"<form><button formaction="https://evil.com/allowed"></button></form>"#;
     rows!(|(path, html)| post(path, html);
-        ("/ui/login/password/change", change) => "error: zitadel asks for change-old-password, \
-            change-new-password at /ui/login/password/change";
+        ("/ui/login/password", change) =>
+            "asks for change-old-password, change-new-password at /ui/login/password/change";
         ("/ui/login/password", off) =>
             "error: refusing https://evil.com/collect: it is not on https://auth.example.org";
         ("/ui/login/password", consent_off) =>
@@ -88,6 +90,8 @@ struct Fake {
     password: RefCell<String>,
     change: Change,
     refresh_valid: Option<&'static str>,
+    /// How a sign-in with the password a change set ends, in place of tokens.
+    after_change: Option<Failure>,
     calls: RefCell<Vec<String>>,
 }
 
@@ -109,6 +113,10 @@ impl Zitadel for Fake {
             password.expose() == *self.password.borrow(),
             Failure::PasswordRefused.with("refused")
         );
+        let changed = self.calls.borrow().iter().any(|c| c.starts_with("change"));
+        if let Some(failure) = self.after_change.filter(|_| changed) {
+            return Err(failure.with("past the password"));
+        }
         Ok(granted(&format!("access-{}", password.expose()), Some("refresh-1")))
     }
 
@@ -217,6 +225,19 @@ async fn rotate_changes_the_password_and_stores_tokens_for_the_new_one() {
     ];
     assert_eq!(auth.calls(), calls);
     assert_eq!(auth.token().await, Some(format!("access-{new}")));
+}
+
+#[tokio::test]
+async fn a_new_password_whose_sign_in_ends_short_of_a_refusal_is_posted_again() {
+    for failure in [Failure::Unfinished, Failure::Transient] {
+        let after_change = Some(failure);
+        let (dir, auth) = fixture("short", "old\n", Fake { after_change, ..fake("old") });
+        let ended = auth.rotate_password().await.unwrap_err();
+        auth.access().await.err().unwrap();
+        let signed_in = format!("sign in {} {SCOPE}", dir.file("password").unwrap());
+        let posted = auth.calls().iter().filter(|c| **c == signed_in).count();
+        assert_eq!((Failure::of(&ended), posted), (failure, 2));
+    }
 }
 
 #[tokio::test]

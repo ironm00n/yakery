@@ -1,4 +1,4 @@
-use lol_html::{RewriteStrSettings, element, rewrite_str};
+use lol_html::{RewriteStrSettings, element, rewrite_str, text};
 use oidc::{Access, Device, Failed, Grant, OAuthError, Polling};
 use private::{Secret, now};
 use reqwest::Method;
@@ -53,9 +53,12 @@ fn refusal() -> anyhow::Error {
     Failure::PasswordRefused.with("zitadel refused the password")
 }
 
-/// ZITADEL's error IDs for a password post it failed before checking the password, so before a
-/// failed check could count toward a lockout: reading the login policy failed.
-const UNCHECKED: [&str; 1] = ["COMMAND-Edf3g"];
+/// ZITADEL's error IDs for a password check that ran and failed, so counted toward a lockout.
+const FAILED_CHECK: [&str; 3] = ["COMMAND-3M0fs", "COMMAND-CahN2", "EVENT-SDe2f"];
+
+/// Where the forms ZITADEL answers a failed password check with post: its password page, or its
+/// login name page when it hides which login names exist.
+const CHECKING: [&str; 2] = ["/ui/login/password", "/ui/login/loginname"];
 
 /// The device action ZITADEL's consent page approves with, which its done page's path ends in.
 const ALLOWED: &str = "allowed";
@@ -89,32 +92,62 @@ impl Password {
     }
 }
 
-/// The post answering `page`, or none when it has no form.
+/// What ZITADEL says of the password with a form it answers a failed check with, by its error's ID.
+fn checked(error: Option<&Shown>, at: &str) -> anyhow::Error {
+    let Some(id) = error.map(|e| e.id.as_str()).filter(|id| !id.is_empty()) else {
+        return anyhow!("zitadel answered the password at {at} with no error ID");
+    };
+    let shown = format!("error {id:?} at {at}");
+    match FAILED_CHECK.contains(&id) {
+        true => Failure::PasswordRefused.with(format!("zitadel failed the password: {shown}")),
+        false => Failure::Transient.with(format!(
+            "zitadel answered the password with {shown}, which no failed check gives"
+        )),
+    }
+}
+
+/// A login step ZITADEL wants past the password that this walk cannot take.
+fn unfinished(step: String) -> anyhow::Error {
+    let person = "a person has to finish that step in a browser";
+    Failure::Unfinished.with(format!("{step}, past the password; {person}"))
+}
+
+/// The post answering `page`, or none when it has no form. Once the password is posted, `page` is
+/// judged by which of ZITADEL's handlers renders it.
 fn answer(page: &Page, answers: &[(&str, &str)], password: Password) -> Result<Option<Post>> {
-    let path = page.url.path();
+    let at = page.url.path();
     let read = || {
         let form = Form::read(&page.text)?;
-        if let Some(id) = form.error.as_ref().filter(|_| password == Password::Answered) {
-            let shown = format!("error {id:?} at {path}");
-            return match UNCHECKED.contains(&id.as_str()) {
-                true => Err(Failure::Transient
-                    .with(format!("zitadel failed before checking the password: {shown}"))),
-                false => bail!("zitadel answered the password with {shown}"),
-            };
-        }
-        let post = form.post(answers, &page.url)?;
-        let again =
-            password != Password::Unposted && post.as_ref().is_some_and(|p| p.asks_password);
-        ensure!(!again, "zitadel asked for the password again without saying why");
-        Ok(post)
+        let step = match form.post(answers, &page.url)? {
+            Step::Post(Post { ref url, .. }) | Step::Asks(_, ref url)
+                if password == Password::Answered && CHECKING.contains(&url.path()) =>
+            {
+                return Err(checked(form.error.as_ref(), at));
+            }
+            Step::Post(post) if password == Password::Unposted || !post.asks_password => {
+                return Ok(Some(post));
+            }
+            Step::Post(_) => bail!("zitadel asked for the password again without saying why"),
+            Step::Asks(asked, to) => {
+                format!("zitadel asks for {} at {}", asked.join(", "), to.path())
+            }
+            Step::Ends => match form.error {
+                Some(shown) => format!("zitadel shows {:?} at {at}", shown.text),
+                None => return Ok(None),
+            },
+        };
+        Err(match password {
+            Password::Unposted => anyhow!(step),
+            Password::Answered | Password::Taken => unfinished(step),
+        })
     };
     read().map_err(|e| password.refusing(e))
 }
 
-/// `page`, unless what is in front of ZITADEL failed: its login renders its own errors, internal
-/// ones too, as 200 pages, so a 5xx says nothing of the password.
+/// `page`, unless it failed: ZITADEL's login renders what it says of a password as 200 pages, so
+/// a 4xx or 5xx says nothing of it.
 fn served(page: Page) -> Result<Page> {
-    match page.status.is_server_error() {
+    match page.status.is_client_error() || page.status.is_server_error() {
         true => Err(Failure::Transient.with(format!("{}: HTTP {}", page.url.path(), page.status))),
         false => Ok(page),
     }
@@ -349,8 +382,23 @@ impl Zitadel for Http {
 
 pub struct Form {
     elements: Vec<[String; 5]>,
-    /// The ID of the error the page shows: empty on an error page, which has it only in its text.
-    pub error: Option<String>,
+    pub error: Option<Shown>,
+}
+
+/// The error a page shows.
+pub struct Shown {
+    /// Empty on an error page, which gives it only in its text.
+    pub id: String,
+    pub text: String,
+}
+
+/// What the walk does with a page's first form.
+pub enum Step {
+    /// The page has no form.
+    Ends,
+    Post(Post),
+    /// The form asks for these, which the walk has no answers to, at its action.
+    Asks(Vec<String>, Pinned),
 }
 
 pub struct Post {
@@ -368,7 +416,7 @@ pub fn set(fields: &mut Vec<(String, String)>, name: &str, value: &str) {
 
 impl Form {
     pub fn read(html: &str) -> Result<Form> {
-        let mut error = None;
+        let (mut error, mut text) = (None, String::new());
         let (mut elements, mut forms) = (vec![], 0);
         let collect = element!("form, form input, form button", |el| {
             let attr = |name: &str| el.get_attribute(name).unwrap_or_default();
@@ -384,14 +432,20 @@ impl Form {
             error = Some(el.get_attribute("title").unwrap_or_default());
             Ok(())
         });
+        let said = text!("div.lgn-error .lgn-error-message", |t| {
+            text.push_str(t.as_str());
+            Ok(())
+        });
         let settings = RewriteStrSettings::new().append_element_content_handler(collect);
-        rewrite_str(html, settings.append_element_content_handler(shown))?;
-        Ok(Form { elements, error })
+        let settings = settings.append_element_content_handler(shown);
+        rewrite_str(html, settings.append_element_content_handler(said))?;
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        Ok(Form { elements, error: error.map(|id| Shown { id, text }) })
     }
 
-    pub fn post(&self, answers: &[(&str, &str)], page: &Pinned) -> Result<Option<Post>> {
+    pub fn post(&self, answers: &[(&str, &str)], page: &Pinned) -> Result<Step> {
         let Some(([_, _, _, _, action], rest)) = self.elements.split_first() else {
-            return Ok(None);
+            return Ok(Step::Ends);
         };
         let action = page.join(if action.is_empty() { page.as_str() } else { action })?;
         let inputs = || rest.iter().filter(|e| e[0] == "input" && !e[1].is_empty());
@@ -406,18 +460,19 @@ impl Form {
                 None => unanswered.push(name),
             }
         }
+        unanswered.dedup();
         let asks_password = inputs().any(|e| e[3] != "hidden" && e[1] == "password");
         let buttons = || rest.iter().filter(|e| e[0] == "button");
         if let Some([.., allow]) = buttons().find(|b| b[4].ends_with(ALLOWED)) {
             let url = page.join(allow)?;
-            return Ok(Some(Post { url, fields, asks_password, consents: true }));
+            return Ok(Step::Post(Post { url, fields, asks_password, consents: true }));
         }
         if !unanswered.is_empty() {
             let Some([_, name, value, ..]) = buttons().find(|b| b[1] == "skip") else {
-                bail!("zitadel asks for {} at {}", unanswered.join(", "), page.path());
+                return Ok(Step::Asks(unanswered.into_iter().map(String::from).collect(), action));
             };
             set(&mut fields, name, value);
         }
-        Ok(Some(Post { url: action, fields, asks_password, consents: false }))
+        Ok(Step::Post(Post { url: action, fields, asks_password, consents: false }))
     }
 }

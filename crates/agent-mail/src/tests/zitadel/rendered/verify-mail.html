@@ -1,0 +1,48 @@
+<div class="lgn-head">
+    <h1>E-Mail Verification</h1>
+    <div class="lgn-login-profile">
+    <div class="lgn-profile-image"></div>
+    <div class="lgn-names">
+        <div class="inline-block">
+            <div class="lgn-avatar lgn-primary" loginname="agent@example.org">
+                    <span class="initials lgn-primary">A</span>
+            </div>
+        </div>
+        <div class="lgn-loginname">
+            <p>agent@example.org</p>
+        </div>
+
+    </div>
+</div>
+
+    <p>We have sent you an email to verify your address. Please enter the code in the form below.</p>
+</div>
+
+<form action="/ui/login/mail/verification" method="POST">
+
+    <input type="hidden" name="gorilla.csrf.Token" value="hQ3pKz8sVb1mXw0yRt5uLc7nJe2gFa9dOi4kMv6qYs3xBh0lNp8rTw1zUc5eGj2fAk7mDo9iSb4vXn6yQ==">
+
+    <input type="hidden" name="authRequestID" value="396425044525318236" />
+    <input type="hidden" name="userID" value="396424966725894236" />
+    <input type="hidden" name="orgID" value="396423089107304540" />
+
+    <div class="fields">
+        <label class="lgn-label" for="code">Code</label>
+        <input class="lgn-input" type="text" id="code" name="code" autocomplete="off" value="" autofocus required>
+    </div>
+
+    <div class="lgn-actions lgn-reverse-order">
+        <button type="submit" id="submit-button" name="resend" value="false"
+        class="lgn-primary lgn-raised-button">Next
+        </button>
+
+        <span class="fill-space"></span>
+
+        <button type="submit" name="resend" value="true" class="lgn-stroked-button" formnovalidate>Resend Code</button>
+
+        <a class="lgn-icon-button lgn-left-action" name="resetlinking" value="true" href="/ui/login/login"
+            formnovalidate>
+            <i class="lgn-icon-arrow-left-solid"></i>
+        </a>
+    </div>
+</form>

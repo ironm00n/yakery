@@ -1,0 +1,43 @@
+<div class="lgn-head">
+    <h1>Verify 2-Factor</h1>
+
+    <div class="lgn-login-profile">
+    <div class="lgn-profile-image"></div>
+    <div class="lgn-names">
+        <div class="inline-block">
+            <div class="lgn-avatar lgn-primary" loginname="agent@example.org">
+                    <span class="initials lgn-primary">A</span>
+            </div>
+        </div>
+        <div class="lgn-loginname">
+            <p>agent@example.org</p>
+        </div>
+
+    </div>
+</div>
+
+    <p>Verify your second factor</p>
+</div>
+
+<form action="/ui/login/mfa/verify" method="POST">
+
+    <input type="hidden" name="gorilla.csrf.Token" value="hQ3pKz8sVb1mXw0yRt5uLc7nJe2gFa9dOi4kMv6qYs3xBh0lNp8rTw1zUc5eGj2fAk7mDo9iSb4vXn6yQ==">
+
+    <input type="hidden" name="authRequestID" value="396425044525318236" />
+    <input type="hidden" name="mfaType" value="0" />
+
+    <div class="fields">
+        <label class="lgn-label" for="code">Code</label>
+        <input class="lgn-input" type="text" id="code" name="code" autocomplete="off" autofocus required>
+    </div>
+
+    <div class="lgn-actions">
+        <!-- position element in header -->
+        <a class="lgn-icon-button lgn-left-action" href="/ui/login/loginname?authRequestID=396425044525318236">
+            <i class="lgn-icon-arrow-left-solid"></i>
+        </a>
+        <span class="fill-space"></span>
+        <button class="lgn-raised-button lgn-primary" id="submit-button" type="submit">Next</button>
+    </div>
+
+</form>

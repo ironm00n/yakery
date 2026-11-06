@@ -16,7 +16,7 @@ use reqwest::{Method, Request, Response};
 use submission_signature::{HEADER, Signer, Stamp};
 use tokio::time::Instant;
 
-use super::*;
+use super::{device_flow, *};
 use crate::{
     BACKOFF, RECHECK, REOPEN,
     address::SessionId,
@@ -1133,6 +1133,26 @@ async fn a_busy_server_is_checked_again_in_30_s_and_a_config_error_ends_the_wait
         (true, Some("invalid_grant"));
     let ended = wait::watch(async { Ok(&mail) }, watching(600)).await.unwrap_err();
     assert!(Failure::of(&ended).permanent(), "{ended:#}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_sign_in_only_a_person_can_finish_ends_the_wait_and_holds_the_password_unrefused() {
+    let dir = Scratch::new("wait-unfinished");
+    fs::write(dir.0.join("password"), "pw").unwrap();
+    let (_opened, server, mail) = mail(&dir, Stalwart::new(vec![])).await;
+    let mail = mail.unwrap();
+    (server.borrow_mut().expire_on_stream, server.borrow_mut().refresh_refused) =
+        (true, Some("invalid_grant"));
+    let totp = device_flow::page(device_flow::VERIFY_TOTP);
+    let (mut pages, _) = device_flow::login_pages(&[], totp, &[]);
+    let _wire = wired(move |r| match (r.url().host_str(), r.url().path()) {
+        (Some("auth.example.org"), path) if path != "/oauth/v2/token" => pages(r),
+        _ => server.borrow_mut().answer(r),
+    });
+    let ended = wait::watch(async { Ok(&mail) }, watching(600)).await.unwrap_err();
+    let (failure, refused) =
+        (format!("{:?}", Failure::of(&ended)), dir.lock("refused.json").exists());
+    assert_eq!((failure.as_str(), refused), ("Unfinished", false), "{ended:#}");
 }
 
 /// How a wait ends, and when, with every request to the mail host failing over `down`.

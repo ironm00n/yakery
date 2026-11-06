@@ -75,6 +75,8 @@ const _: () = assert!(
 pub enum Failure {
     Config,
     PasswordRefused,
+    /// ZITADEL took the password but wants a login step that only a person can take.
+    Unfinished,
     TokenRefused,
     /// Over one of Stalwart's limits, with how long it asked us to wait.
     Busy(Option<std::time::Duration>),
@@ -110,7 +112,7 @@ impl Failure {
     }
 
     pub fn permanent(self) -> bool {
-        matches!(self, Failure::Config | Failure::PasswordRefused)
+        matches!(self, Failure::Config | Failure::PasswordRefused | Failure::Unfinished)
     }
 
     pub fn nothing_ran(self) -> bool {

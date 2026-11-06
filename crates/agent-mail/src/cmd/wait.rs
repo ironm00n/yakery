@@ -460,7 +460,7 @@ impl Watch<'_> {
             };
             let (pause, reconnect, why) = match Failure::of(&e) {
                 Failure::Idle => continue,
-                Failure::Config | Failure::PasswordRefused => return Err(e),
+                Failure::Config | Failure::PasswordRefused | Failure::Unfinished => return Err(e),
                 // Every wait on a host loses its stream when Stalwart restarts; drawn apart, their scans don't
                 // arrive together, and the spread doubles while the drops come in a row.
                 Failure::Dropped => {
