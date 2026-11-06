@@ -2,7 +2,15 @@
 # `jj git push` given as jj's own arguments (`jj-push.sh [-R REPO] git push [OPTIONS]`), after the
 # repo's pre-push hook has passed on what the push would send, fed to it as `git push` feeds it.
 # guard-jj-push.sh refuses a bare `jj git push` wherever such a hook exists. The push runs on the
-# dry run's snapshot of the working copy, so the hook checks the commits that get pushed.
+# dry run's snapshot of the working copy, so a hook run here checks the commits that get pushed.
+#
+# Nothing builds on desktop (Owen 11-05 21:53), so per clone `git config xb.prePushShell DIR` runs
+# the hook as an xb job on the worktree's snapshot, in DIR's flake dev shell (empty: none), with
+# each `xb.prePushEnv NAME` the caller's environment sets passed on. A job gets no stdin, so the ref lines go as
+# arguments, and a hook outside the tracked tree is shipped beside it. The snapshot holds none of
+# the pushed commits, so a clone opts in only once its hook is checked to refuse, not pass, a
+# commit it can't find. `xb.prePushLocal true` runs a hook that builds nothing here as before; a
+# hooked clone with neither is refused.
 
 set -euo pipefail
 . "${BASH_SOURCE[0]%/*}/lib/jj.sh"
@@ -20,7 +28,7 @@ fail() { echo "jj-push: $1" >&2; exit "${2:-1}"; }
 jjr() { jj "${repo[@]}" --ignore-working-copy "$@"; }
 
 root=$(jjr workspace root)
-hook=$(pre_push_hook "$root")
+hook=$(pre_push_hook "$root") || fail "$hook, so nothing was pushed"
 [[ -n $hook ]] || exec jj "$@"
 
 plan=$(jj "$@" --dry-run 2>&1) || fail "the dry run failed: $plan" $?
@@ -53,7 +61,41 @@ done <<<"$plan"
 url=$(jjr git remote list | awk -v r="$remote" '$1 == r { print $2 }')
 
 git_env "$root"
+setting() { env "${genv[@]}" git -C "$root" config --local "$@"; }
 status=0
-(cd "$root" && env "${genv[@]}" "$hook" "$remote" "$url" < <(printf '%s\n' "${refs[@]}")) || status=$?
-((status == 0)) || fail "$hook exited $status, so nothing was pushed" "$status"
+if [[ $(setting --bool --get xb.prePushLocal || true) == true ]]; then
+  (cd "$root" && env "${genv[@]}" "$hook" "$remote" "$url" < <(printf '%s\n' "${refs[@]}")) || status=$?
+  ((status == 0)) || fail "$hook exited $status, so nothing was pushed" "$status"
+  exec jj "$@" "${own[@]}"
+fi
+shell=$(setting --get xb.prePushShell) ||
+  fail "$hook would run here, where nothing may build: once it is checked to refuse a pushed commit it can't find, \`git config xb.prePushShell DIR\` runs it on xb, on the worktree's snapshot, in DIR's flake dev shell (empty: none); a hook that builds nothing may run here with \`git config xb.prePushLocal true\`"
+xb=$HOME/.local/state/xb/current/bin/xb
+[[ -x $xb ]] || fail "$hook runs on xb, and there is no $xb here"
+real=$(realpath "$hook")
+top=$(realpath "$root")
+store=$(env "${genv[@]}" git -C "$root" rev-parse --path-format=absolute --git-common-dir)
+snapshotted() {
+  [[ $real != "$top"/.git/* && $real != "$top"/.jj/* ]] || return 1
+  env "${genv[@]}" git -C "$root" check-ignore -q -- "$real"
+  (($? == 1))
+}
+if snapshotted; then
+  ship=() run=./${real#"$top"/}
+else
+  ! GIT_DIR=$store GIT_WORK_TREE=${real%/*} git check-ignore --no-index -q -- "$real" ||
+    fail "$hook is ignored in its own directory, so xb would ship that directory without it; \`git config xb.prePushLocal true\` runs it here if it builds nothing"
+  ship=(--with "${real%/*}=.xb-pre-push") run=./.xb-pre-push/${real##*/}
+fi
+in_shell=() pass=()
+[[ -z $shell ]] || in_shell=(nix develop "$shell" -c)
+while IFS= read -r name; do
+  [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || fail "xb.prePushEnv holds '$name', which is no variable's name"
+  mapfile -d '' -t given < <(grep -azm1 "^$name=" /proc/$$/environ)
+  pass+=("${given[@]}")
+done < <(setting --get-all xb.prePushEnv || true)
+feed='remote=$1 url=$2; shift 2; printf "%s\n" "$@" | "$0" "$remote" "$url"'
+(cd "$root" && "$xb" "${ship[@]}" env "${pass[@]}" "${in_shell[@]}" \
+  bash -c "$feed" "$run" "$remote" "$url" "${refs[@]}") || status=$?
+((status == 0)) || fail "$hook exited $status on xb (70 is also xb's own failure, in its words above), so nothing was pushed" "$status"
 exec jj "$@" "${own[@]}"

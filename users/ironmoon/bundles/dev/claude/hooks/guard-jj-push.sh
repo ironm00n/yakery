@@ -40,7 +40,7 @@ check_push() {
   [[ ${words[0]-} == git && ${words[1]-} == push ]] || return
   [[ -n $r ]] || deny "the hook can't read off the line which repo this push runs in (a variable, substitution, quoted path with blanks or \`cd -\`), so it can't tell whether the repo has a pre-push hook."
   root=$(repo_of "$r") || return
-  hook=$(pre_push_hook "$root")
+  hook=$(pre_push_hook "$root") || deny "$hook, so it can't tell whether a pre-push hook gates this push."
   [[ -z $hook ]] || deny "$root has a pre-push hook, $hook, which \`jj git push\` never runs."
 }
 
