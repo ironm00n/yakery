@@ -271,20 +271,23 @@ impl Store {
         self.login.to_string().to_lowercase()
     }
 
+    /// Waits for as long as another process holds the lock: whatever a holder sends has a deadline.
     pub async fn lock(&self, name: &str) -> Result<File> {
         let dir = self.dir(true)?;
         let path = dir.path(name).display().to_string();
         let file = dir.file(name)?;
-        for _ in 0..600 {
-            match file.try_lock() {
-                Ok(()) => return Ok(file),
-                Err(TryLockError::WouldBlock) => {
-                    tokio::time::sleep(Duration::from_millis(200)).await
-                }
-                Err(TryLockError::Error(e)) => return Err(e).context(format!("locking {path}")),
+        let held = || match file.try_lock() {
+            Ok(()) => Ok(false),
+            Err(TryLockError::WouldBlock) => Ok(true),
+            Err(TryLockError::Error(e)) => Err(e).context(format!("locking {path}")),
+        };
+        if held()? {
+            note!("another agent-mail holds {path}; waiting for it");
+            while held()? {
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
         }
-        bail!("another agent-mail has held {path} for over 120 s")
+        Ok(file)
     }
 
     pub fn records(&self) -> Result<Records> {

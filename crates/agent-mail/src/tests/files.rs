@@ -101,6 +101,17 @@ async fn tokens_are_private_and_kept_with_their_login() {
     assert!(again.tokens(&again.held().await.unwrap()).unwrap().access.is_none());
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_lock_is_waited_for_as_long_as_another_holds_it() {
+    let dir = Scratch::new("lock");
+    let agents = store(&dir, "agent@example.org");
+    let held = agents.held().await.unwrap();
+    let waiting = tokio::time::timeout(Duration::from_secs(3600), agents.held()).await;
+    assert!(waiting.is_err(), "still waiting after an hour");
+    drop(held);
+    agents.held().await.unwrap();
+}
+
 #[tokio::test]
 async fn a_password_file_keeps_one_refusal_per_login_its_latest_state() {
     let dir = Scratch::new("refused");
