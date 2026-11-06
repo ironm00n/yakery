@@ -310,15 +310,17 @@ impl Store {
         self.dir(false)?.save("tokens.json", &OnDisk { login: Some(self.key()), tokens })
     }
 
-    pub fn refused(&self, file: &Fingerprint, record: bool, _: &Held) -> Result<bool> {
-        let dir = self.dir(true)?;
+    pub fn refused(&self, file: &Fingerprint, _: &Held) -> Result<bool> {
+        let all: Vec<Refusal> = self.dir(true)?.load("refused.json")?;
+        Ok(all.contains(&Refusal { login: self.key(), file: file.clone() }))
+    }
+
+    /// Records the refusal of `file` as it is now, in place of one of its earlier states.
+    pub fn refuse(&self, file: &Fingerprint, _: &Held) -> Result<()> {
+        let (dir, refusal) = (self.dir(true)?, Refusal { login: self.key(), file: file.clone() });
         let mut all: Vec<Refusal> = dir.load("refused.json")?;
-        let refusal = Refusal { login: self.key(), file: file.clone() };
-        let known = all.contains(&refusal);
-        if record && !known {
-            all.push(refusal);
-            dir.save("refused.json", &all)?;
-        }
-        Ok(known)
+        all.retain(|r| (&r.login, &r.file.path) != (&refusal.login, &refusal.file.path));
+        all.push(refusal);
+        dir.save("refused.json", &all)
     }
 }

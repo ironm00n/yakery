@@ -83,7 +83,7 @@ impl<Z: Zitadel> Auth<Z> {
 
     async fn post(&self, staged: bool, scope: &str, held: &Held) -> Result<(Tokens, Secret)> {
         let (file, password) = (self.password.fingerprint(staged)?, self.password.read(staged)?);
-        if self.store.refused(&file, false, held)? {
+        if self.store.refused(&file, held)? {
             let (path, login) = (file.path.display(), &self.login);
             return Err(refusal().context(format!(
                 "the password in {path} was refused for {login} before; not posting it again until the file changes"
@@ -91,7 +91,7 @@ impl<Z: Zitadel> Auth<Z> {
         }
         let posted = self.zitadel.device_flow(&self.login, &password, scope).await;
         if refused(&posted) {
-            self.store.refused(&file, true, held)?;
+            self.store.refuse(&file, held)?;
         }
         Ok((posted?, password))
     }

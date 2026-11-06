@@ -102,6 +102,27 @@ async fn tokens_are_private_and_kept_with_their_login() {
 }
 
 #[tokio::test]
+async fn a_password_file_keeps_one_refusal_per_login_its_latest_state() {
+    let dir = Scratch::new("refused");
+    let file = PasswordFile(dir.0.join("pw"));
+    let (ada, bob) = (store(&dir, "ada@agent.example.org"), store(&dir, "bob@agent.example.org"));
+    let held = ada.held().await.unwrap();
+    let states = ["one", "two!", "three"].map(|password| {
+        fs::write(&file.0, password).unwrap();
+        file.fingerprint(false).unwrap()
+    });
+    bob.refuse(&states[0], &held).unwrap();
+    for state in &states {
+        ada.refuse(state, &held).unwrap();
+    }
+    assert_eq!(states.each_ref().map(|s| ada.refused(s, &held).unwrap()), [false, false, true]);
+    assert!(bob.refused(&states[0], &held).unwrap());
+    let kept: Vec<Value> =
+        serde_json::from_str(&dir.file("locks/agent-mail/locks/refused.json").unwrap()).unwrap();
+    assert_eq!(kept.len(), 2);
+}
+
+#[tokio::test]
 async fn a_password_is_staged_beside_its_file_and_promoted_once() {
     let dir = Scratch::new("staged");
     fs::write(dir.0.join("pw"), "old").unwrap();
