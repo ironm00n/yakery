@@ -59,7 +59,7 @@ index 4e249b1f..89c8b814 100644
        ? `<pre dir="auto" style="white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,monospace;margin:0;padding:8px">${escapeHtml(message.text)}</pre>`
        : "";
 diff --git a/lib/__tests__/email-sanitization.test.ts b/lib/__tests__/email-sanitization.test.ts
-index 7b660b16..e6e47b4d 100644
+index 7b660b16..e70b1d94 100644
 --- a/lib/__tests__/email-sanitization.test.ts
 +++ b/lib/__tests__/email-sanitization.test.ts
 @@ -1,4 +1,4 @@
@@ -76,7 +76,7 @@ index 7b660b16..e6e47b4d 100644
    TRANSPARENT_BLOCKED_PIXEL,
  } from '../email-sanitization';
  
-@@ -1086,6 +1087,58 @@ describe('email-sanitization', () => {
+@@ -1086,6 +1087,65 @@ describe('email-sanitization', () => {
        expect(EMAIL_SANITIZE_CONFIG.FORBID_TAGS).toEqual(expect.arrayContaining(['svg', 'style']));
        expect(EMAIL_IFRAME_SANITIZE_CONFIG.FORBID_TAGS).not.toContain('svg');
      });
@@ -127,6 +127,13 @@ index 7b660b16..e6e47b4d 100644
 +      }
 +    });
 +
++    it('renders a body of bare text and comments whose text reads as markup', () => {
++      const bodies = { 'I <3 you<!-- -->': 'I &lt;3 you', 'I &lt;3 you<!---->': 'I &lt;3 you', 'I <3 u</3>': 'I &lt;3 u' };
++      for (const block of [false, true]) {
++        for (const [html, rendered] of Object.entries(bodies)) expect(sanitizeEmailBodyForIframe(html, block).html).toBe(rendered);
++      }
++    });
++
 +    it('renders the body as text when the mutated mail has no text part', () => {
 +      vi.spyOn(DOMPurify, 'sanitize').mockReturnValueOnce(MUTATING[0]);
 +      expect(sanitizeEmailBodyForIframe('<p>one</p><p>two</p>' + MUTATING[0], true, ' ').html)
@@ -150,7 +157,7 @@ index ee000d81..cff4a4c2 100644
 +  return part?.partId && part.type?.toLowerCase() === 'text/plain' ? email.bodyValues?.[part.partId]?.value : undefined;
 +}
 diff --git a/lib/email-sanitization.ts b/lib/email-sanitization.ts
-index d8ed4e1b..8db27bb7 100644
+index d8ed4e1b..1ac899ed 100644
 --- a/lib/email-sanitization.ts
 +++ b/lib/email-sanitization.ts
 @@ -1,4 +1,5 @@
@@ -214,7 +221,7 @@ index d8ed4e1b..8db27bb7 100644
  /**
   * Sanitize email HTML for rendering inside a sandboxed iframe.
   * Preserves <style> tags so the email's own CSS is applied.
-@@ -127,11 +148,36 @@ export interface IframeBodySanitizeResult {
+@@ -127,11 +148,42 @@ export interface IframeBodySanitizeResult {
   * @param blockExternal Whether the user's policy blocks external resources for
   *   this message ('block', or 'ask' before the user allowed, and sender not
   *   trusted).
@@ -241,17 +248,23 @@ index d8ed4e1b..8db27bb7 100644
 +  return DOMPurify.removed.length === 0 && again.html === clean;
 +}
 +
-+/** `html` parsed as the srcdoc frame parses its body: in a whole no-quirks document. */
-+function frameBody(html: string): HTMLElement {
-+  return parseHtmlSafely(`<!DOCTYPE html><html><head></head><body>${html}</body></html>`).body;
++/**
++ * `html` parsed as the srcdoc frame parses its body, in a whole no-quirks document. DOMPurify gets the
++ * body's children: handed a body, it walks it as a root with no parent, and throws when it must remove it.
++ */
++function frameBody(html: string): DocumentFragment {
++  const { body } = parseHtmlSafely(`<!DOCTYPE html><html><head></head><body>${html}</body></html>`);
++  const contents = body.ownerDocument.createRange();
++  contents.selectNodeContents(body);
++  return contents.extractContents();
 +}
 +
 +/** One pass over a parsed body; `again` keeps the `data-blocked-*` stashes a first pass wrote. */
-+function purifyBodyForIframe(body: HTMLElement, blockExternal: boolean, again: boolean): IframeBodySanitizeResult {
++function purifyBodyForIframe(body: DocumentFragment, blockExternal: boolean, again: boolean): IframeBodySanitizeResult {
    const config = blockExternal
      ? {
          ...EMAIL_IFRAME_SANITIZE_CONFIG,
-@@ -139,6 +185,9 @@ export function sanitizeEmailBodyForIframe(
+@@ -139,6 +191,9 @@ export function sanitizeEmailBodyForIframe(
          FORBID_TAGS: [...EMAIL_IFRAME_SANITIZE_CONFIG.FORBID_TAGS, 'link'],
        }
      : EMAIL_IFRAME_SANITIZE_CONFIG;
@@ -261,7 +274,7 @@ index d8ed4e1b..8db27bb7 100644
  
    let blockedExternalContent = false;
    DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-@@ -155,11 +204,14 @@ export function sanitizeEmailBodyForIframe(
+@@ -155,11 +210,14 @@ export function sanitizeEmailBodyForIframe(
      applyNewTabToAnchor(node);
      // Re-apply the data:-URI allowlist DOMPurify skips on media tags.
      restrictDataUriResourcesOnNode(node);
@@ -272,12 +285,12 @@ index d8ed4e1b..8db27bb7 100644
    let clean: string;
    try {
 -    clean = DOMPurify.sanitize(html, config);
-+    // On a given body FORCE_BODY would drop its first child.
++    // On a given node FORCE_BODY would drop its first child.
 +    clean = DOMPurify.sanitize(body, { ...config, FORCE_BODY: false });
    } finally {
      DOMPurify.removeAllHooks();
    }
-@@ -172,6 +224,17 @@ export function sanitizeEmailBodyForIframe(
+@@ -172,6 +230,17 @@ export function sanitizeEmailBodyForIframe(
    return { html: clean, blockedExternalContent };
  }
  
