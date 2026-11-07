@@ -48,7 +48,14 @@ fn windows_read_and_print_alike() {
     for text in ["mon 10:00-18:00", "sat 13:00-17:30"] {
         assert_eq!(text.parse::<Window>().unwrap().to_string(), text);
     }
-    for bad in ["monday 10:00-18:00", "mon 18:00-10:00", "mon 10:00", "mon 25:00-26:00"] {
+    for bad in [
+        "monday 10:00-18:00",
+        "mon 18:00-10:00",
+        "mon 10:00",
+        "mon 25:00-26:00",
+        "sat 13:00-13:00:45",
+        "mon 09:00:30-17:00",
+    ] {
         assert!(bad.parse::<Window>().is_err(), "{bad}");
     }
 }

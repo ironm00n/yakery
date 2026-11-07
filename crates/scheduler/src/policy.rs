@@ -40,11 +40,13 @@ pub struct Window {
     pub to: Time,
 }
 
+/// Times in hours and minutes only, as a window prints.
 fn window(s: &str) -> Option<Window> {
     let (day, hours) = s.split_once(' ')?;
     let (from, to) = hours.split_once('-')?;
     let day = DAYS.iter().find(|(name, _)| *name == day)?.1;
-    Some(Window { day, from: from.parse().ok()?, to: to.parse().ok()? })
+    let time = |t: &str| Time::strptime("%H:%M", t).ok();
+    Some(Window { day, from: time(from)?, to: time(to)? })
 }
 
 text! {
