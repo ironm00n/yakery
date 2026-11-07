@@ -130,7 +130,12 @@ in
           message = "bundles.claude-agent: ownerPorts needs ${cfg.owner}'s uid fixed, for the port rule to name";
         }
         {
-          assertion = !(lib.elem cfg.name config.nix.settings.trusted-users);
+          assertion =
+            !(lib.any (lib.flip lib.elem config.nix.settings.trusted-users) [
+              cfg.name
+              "@${cfg.name}"
+              "*"
+            ]);
           message = "bundles.claude-agent: ${cfg.name} is a nix trusted user, which is root by another name";
         }
       ];
