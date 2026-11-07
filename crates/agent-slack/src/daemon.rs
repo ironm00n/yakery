@@ -97,7 +97,7 @@ impl Daemon {
         bounds: Bounds,
     ) -> Result<Arc<Daemon>> {
         let bot = slack.bot_user().await.context("asking Slack who the bot is")?;
-        let held = dir.read(INBOX)?.map(String::from_utf8).transpose()?.unwrap_or_default();
+        let held = dir.read_log(INBOX)?.map(String::from_utf8).transpose()?.unwrap_or_default();
         let inbox = Inbox::replay(&held).context("replaying the inbox")?;
         let down = Some((Instant::now(), "not connected yet".into()));
         let state = Mutex::new(State { inbox, waiter: None, down });

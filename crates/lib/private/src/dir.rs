@@ -1,7 +1,10 @@
 use std::{
     fs::{DirBuilder, File},
     io::{Read, Write},
-    os::{fd::OwnedFd, unix::fs::DirBuilderExt},
+    os::{
+        fd::OwnedFd,
+        unix::fs::{DirBuilderExt, FileExt},
+    },
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -40,6 +43,30 @@ fn caller(name: &str) -> Result<&str> {
 
 fn errno(e: &anyhow::Error) -> Option<Errno> {
     e.downcast_ref::<Errno>().copied()
+}
+
+/// The length of `log` up to its last newline, with whatever follows it cut off.
+fn whole_records(log: &File) -> std::io::Result<u64> {
+    let len = log.metadata()?.len();
+    let mut chunk = [0; 4096];
+    let mut from = len;
+    let end = loop {
+        if from == 0 {
+            break 0;
+        }
+        let start = from.saturating_sub(chunk.len() as u64);
+        let part = &mut chunk[..(from - start) as usize];
+        log.read_exact_at(part, start)?;
+        if let Some(at) = part.iter().rposition(|&b| b == b'\n') {
+            break start + at as u64 + 1;
+        }
+        from = start;
+    };
+    if end < len {
+        log.set_len(end)?;
+        log.sync_data()?;
+    }
+    Ok(end)
 }
 
 /// Mode set, bytes written and synced, and closed: NFS keeps a file unlinked while open under a .nfs name.
@@ -209,10 +236,15 @@ impl Dir {
         }
     }
 
-    /// `bytes` at the end of `name`, created private and synced with the directory if missing. Whole or not at all
-    /// for one writer at a time, since a failed write is cut back off; O_APPEND does not order writers on NFS.
-    pub fn append(&self, name: &str, bytes: &[u8]) -> Result<()> {
-        let flags = OFlags::WRONLY | OFlags::APPEND;
+    /// `record`, one line ending in its one newline, at the end of the log `name`, created private and synced with the
+    /// directory if missing. A tail an earlier write left torn, dying midway or failing to cut itself back off, is cut
+    /// off first, so each record starts a line; which is why there is one writer at a time, as there must be on NFS.
+    pub fn append(&self, name: &str, record: &[u8]) -> Result<()> {
+        let shown = || self.path(name).display().to_string();
+        let one_line =
+            record.iter().position(|&b| b == b'\n') == Some(record.len().wrapping_sub(1));
+        ensure!(one_line, "{}: a record is one line, ending in its newline", shown());
+        let flags = OFlags::RDWR | OFlags::APPEND;
         let mut file = match self.at(caller(name)?, flags | OFlags::CREATE | OFlags::EXCL) {
             Ok(file) => {
                 fchmod(&file, Mode::Private.bits())?;
@@ -222,11 +254,23 @@ impl Dir {
             Err(e) if errno(&e) == Some(Errno::EXIST) => self.at(name, flags)?,
             Err(e) => return Err(e),
         };
-        let start = file.metadata()?.len();
-        let appended = file.write_all(bytes).and_then(|()| file.sync_data());
+        let start = whole_records(&file).with_context(shown)?;
+        let appended = file.write_all(record).and_then(|()| file.sync_data());
         appended
-            .or_else(|e| file.set_len(start).and(Err(e)))
-            .with_context(|| self.path(name).display().to_string())
+            .map_err(|e| match file.set_len(start) {
+                Ok(()) => anyhow!(e),
+                Err(cut) => anyhow!(e).context(format!("and cutting it back off failed: {cut}")),
+            })
+            .with_context(shown)
+    }
+
+    /// The whole records of the log `name`; a torn tail is left for the next `append` to cut off.
+    pub fn read_log(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        let mut log = self.read(name)?;
+        if let Some(log) = &mut log {
+            log.truncate(log.iter().rposition(|&b| b == b'\n').map_or(0, |end| end + 1));
+        }
+        Ok(log)
     }
 
     /// `name`, made here private, or `None` if a directory has the name already.

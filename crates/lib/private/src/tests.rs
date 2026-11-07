@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, Permissions},
-    io::Read,
+    io::{Read, Write},
     os::unix::fs::{PermissionsExt, symlink},
     path::Path,
     time::{Duration, SystemTime},
@@ -187,7 +187,7 @@ fn a_dir_made_here_is_new_and_private_and_appends_and_opens_stay_inside_it() {
     assert_eq!(text, "{}\n[]\n");
     assert!(run.open_file("absent").is_err() && !home.path().join("run-1/absent").exists());
     symlink(&log, home.path().join("run-1/link")).unwrap();
-    assert!(run.open_file("link").is_err() && run.append("link", b"x").is_err());
+    assert!(run.open_file("link").is_err() && run.append("link", b"x\n").is_err());
     assert_eq!(fs::read_to_string(&log).unwrap(), "{}\n[]\n");
 }
 
@@ -213,7 +213,7 @@ fn partial_names_are_dirs_own_and_the_sweep_takes_only_old_partial_files() {
     let home = TempDir::new().unwrap();
     let dir = Dir::open(home.path(), &[]).unwrap();
     assert!(dir.write(".partial-x", b"", Mode::Private, Replace::No).is_err());
-    assert!(dir.append(".partial-x", b"").is_err() && dir.file(".partial-x").is_err());
+    assert!(dir.append(".partial-x", b"\n").is_err() && dir.file(".partial-x").is_err());
     assert!(dir.create_dir(".partial-x").is_err() && entries(home.path()).is_empty());
     let kept = home.path().join(".partial-dir");
     fs::create_dir(&kept).unwrap();
@@ -231,7 +231,7 @@ fn a_name_is_one_component_and_only_a_regular_file_opens() {
     symlink(home.path().join("sub"), home.path().join("link")).unwrap();
     for name in ["./.partial-x", "sub/a", "link/", "", ".", ".."] {
         assert!(dir.write(name, b"", Mode::Private, Replace::No).is_err(), "{name:?}");
-        assert!(dir.append(name, b"").is_err() && dir.read(name).is_err(), "{name:?}");
+        assert!(dir.append(name, b"\n").is_err() && dir.read(name).is_err(), "{name:?}");
         assert!(dir.subdir(name).is_err() && dir.create_dir(name).is_err(), "{name:?}");
         assert!(Dir::open(home.path(), &[name]).is_err(), "{name:?}");
     }
@@ -240,5 +240,35 @@ fn a_name_is_one_component_and_only_a_regular_file_opens() {
         .unwrap();
     let refused = format!("{:#}", dir.open_file("fifo").unwrap_err());
     assert!(refused.ends_with("fifo: not a regular file"), "{refused}");
-    assert!(dir.read("fifo").is_err() && dir.append("fifo", b"x").is_err(), "and none blocks");
+    assert!(dir.read("fifo").is_err() && dir.append("fifo", b"x\n").is_err(), "and none blocks");
+}
+
+#[test]
+fn a_log_is_read_in_whole_records_and_the_next_append_cuts_a_torn_tail_off() {
+    let home = TempDir::new().unwrap();
+    let dir = Dir::open(home.path(), &[]).unwrap();
+    let path = home.path().join("log");
+    let tear = |bytes: &[u8]| {
+        fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(bytes).unwrap()
+    };
+    assert_eq!(dir.read_log("log").unwrap(), None);
+    dir.append("log", b"b\n").unwrap();
+    tear(b"c");
+    assert_eq!(dir.read_log("log").unwrap().unwrap(), b"b\n");
+    dir.append("log", b"d\n").unwrap();
+    // longer than the 4 KiB read back at a time, and ending mid-character
+    tear(&[&[b'e'; 5000][..], &[0xE2]].concat());
+    assert_eq!(dir.read_log("log").unwrap().unwrap(), b"b\nd\n");
+    dir.append("log", b"f\n").unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"b\nd\nf\n");
+}
+
+#[test]
+fn a_record_is_one_line_ending_in_its_newline() {
+    let home = TempDir::new().unwrap();
+    let dir = Dir::open(home.path(), &[]).unwrap();
+    for record in [&b"a"[..], b"", b"a\nb\n"] {
+        assert!(dir.append("log", record).is_err(), "{record:?}");
+    }
+    assert_eq!(dir.read_log("log").unwrap(), None);
 }

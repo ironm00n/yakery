@@ -10,8 +10,8 @@ fn main() {
     let dir = Dir::open(home.path(), &["made"]).unwrap();
     dir.write("private", b"", Mode::Private, Replace::No).unwrap();
     dir.write("readable", b"", Mode::Readable, Replace::No).unwrap();
-    dir.append("log", b"a").unwrap();
-    dir.append("log", b"b").unwrap();
+    dir.append("log", b"a\n").unwrap();
+    dir.append("log", b"b\n").unwrap();
     dir.create_dir("run").unwrap().unwrap().write("a", b"", Mode::Private, Replace::No).unwrap();
     let mode = |name| fs::metadata(home.path().join(name)).unwrap().permissions().mode() & 0o777;
     let modes = ["made", "made/private", "made/readable", "made/log", "made/run"].map(mode);
