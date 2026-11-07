@@ -1,6 +1,6 @@
 # Bulwark beside cx33-1's Stalwart from stalwart-server.nix, as the host runs them, with app
 # passwords standing in for ZITADEL, and Playwright's specs run in Chromium on the node.
-{ pkgs }:
+{ pkgs, pkgs-node }:
 let
   inherit (pkgs) lib;
   stalwart = import ./stalwart-server.nix { inherit pkgs; };
@@ -45,6 +45,7 @@ in
         ../../bundles/bulwark.nix
       ];
 
+      _module.args = { inherit pkgs-node; };
       bundles.bulwark.enable = true;
       services.bulwark.oauth.enabled = lib.mkForce false;
       services.stalwart.appPasswords = lib.genAttrs (map address (lib.attrValues roles)) (_: {

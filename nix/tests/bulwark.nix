@@ -1,6 +1,6 @@
-{ pkgs }:
+{ pkgs, pkgs-node }:
 let
-  bulwark = import ./bulwark-server.nix { inherit pkgs; };
+  bulwark = import ./bulwark-server.nix { inherit pkgs pkgs-node; };
 in
 pkgs.testers.runNixOSTest {
   name = "bulwark";

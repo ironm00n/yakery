@@ -333,7 +333,10 @@
         zitadel = import ./nix/tests/zitadel.nix { pkgs = pkgs-map.${system}; };
         agent-mail = import ./nix/tests/agent-mail.nix { pkgs = pkgs-map.${system}; };
         initrd-network = import ./nix/tests/initrd-network.nix { pkgs = pkgs-map.${system}; };
-        bulwark = import ./nix/tests/bulwark.nix { pkgs = pkgs-map.${system}; };
+        bulwark = import ./nix/tests/bulwark.nix {
+          pkgs = pkgs-map.${system};
+          pkgs-node = pkgs-node-map.${system};
+        };
         scheduler-stalwart = import ./nix/tests/scheduler-stalwart.nix { pkgs = pkgs-map.${system}; };
         scheduler-booking = import ./nix/tests/scheduler-booking.nix { pkgs = pkgs-map.${system}; };
         scheduler-feeds = import ./nix/tests/scheduler-feeds.nix { pkgs = pkgs-map.${system}; };
