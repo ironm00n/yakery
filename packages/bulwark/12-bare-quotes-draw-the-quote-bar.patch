@@ -1,22 +1,122 @@
+diff --git a/components/email/email-viewer.tsx b/components/email/email-viewer.tsx
+index 08e61da6..5a6d6d6b 100644
 --- a/components/email/email-viewer.tsx
 +++ b/components/email/email-viewer.tsx
-@@ -3041,6 +3041,8 @@
+@@ -10,6 +10,7 @@ import { collectReferencedCids, isEmbeddedInBody, normalizeCid } from "@/lib/att
+ import { collapsePlainTextQuotes, setupQuoteCollapse } from "@/lib/quote-collapse";
+ import { DARK_PENDING_CLASS, applyEmailDarkMode, emailColorScheme, emailDarkModeCss, emailHasNativeDarkMode as htmlHasNativeDarkMode, resolveColorSchemeMedia } from "@/lib/email-dark-mode";
+ import { EMAIL_FRAME_FONT_FAMILY, adoptFrameLook } from "@/lib/email-frame-look";
++import { BARE_QUOTE_CSS } from "@/lib/email-frame-quotes";
+ import { fitEmailBodyWidth } from "@/lib/email-fit-width";
+ import { hasFullBleedCanvas } from "@/lib/email-full-bleed";
+ import { stripBidiControls } from "@/lib/bidi";
+@@ -3041,6 +3042,7 @@ export function EmailViewer({
       word's min-content width so columns are not collapsed to a single char. */
    td, th { overflow-wrap: break-word; }
    pre { white-space: pre-wrap; word-wrap: break-word; }
-+  /* a bare quote gets the bar Bulwark draws round its own replies; one that styles itself (Gmail's, Outlook's indents) keeps its look */
-+  blockquote:not([style]) { margin: 8px 0; padding-left: 12px; border-left: 2px solid #c5c5c5; }
++  ${BARE_QUOTE_CSS}
    ${wordHtmlCSS}
    ${darkModeCSS}
  </style></head><body dir="auto">${resolveColorSchemeMedia(effectiveEmailContent.html, isDark)}<style>html,body{height:auto!important;min-height:0!important;max-height:none!important}</style></body></html>`;
+diff --git a/components/email/thread-conversation-view.tsx b/components/email/thread-conversation-view.tsx
+index 067aaf30..43d64fca 100644
 --- a/components/email/thread-conversation-view.tsx
 +++ b/components/email/thread-conversation-view.tsx
-@@ -743,6 +743,8 @@
+@@ -12,6 +12,7 @@ import { collapsePlainTextQuotes, setupQuoteCollapse } from "@/lib/quote-collaps
+ import { fitEmailBodyWidth } from "@/lib/email-fit-width";
+ import { DARK_PENDING_CLASS, applyEmailDarkMode, emailColorScheme, emailDarkModeCss, emailHasNativeDarkMode, resolveColorSchemeMedia } from "@/lib/email-dark-mode";
+ import { EMAIL_FRAME_FONT_FAMILY, adoptFrameLook } from "@/lib/email-frame-look";
++import { BARE_QUOTE_CSS } from "@/lib/email-frame-quotes";
+ import { useThemeStore } from "@/stores/theme-store";
+ import { useShallow } from "zustand/react/shallow";
+ import { Avatar } from "@/components/ui/avatar";
+@@ -743,6 +744,7 @@ export function ConversationEmailBody({
    table { table-layout: auto; overflow-wrap: break-word; }
    td, th { word-break: break-word; padding: 0.5rem; }
    pre { white-space: pre-wrap; word-wrap: break-word; }
-+  /* a bare quote gets the bar Bulwark draws round its own replies; one that styles itself (Gmail's, Outlook's indents) keeps its look */
-+  blockquote:not([style]) { margin: 8px 0; padding-left: 12px; border-left: 2px solid #c5c5c5; }
++  ${BARE_QUOTE_CSS}
    ${isDark ? emailDarkModeCss() : ''}
  </style></head><body dir="auto">${resolveColorSchemeMedia(emailContent.html, isDark)}</body></html>`;
    }, [emailContent.isHtml, emailContent.html, allowExternal, isDark, colorScheme]);
+diff --git a/lib/__tests__/email-frame-quotes.test.ts b/lib/__tests__/email-frame-quotes.test.ts
+new file mode 100644
+index 00000000..1fb8db23
+--- /dev/null
++++ b/lib/__tests__/email-frame-quotes.test.ts
+@@ -0,0 +1,34 @@
++import { afterEach, describe, expect, it } from 'vitest';
++import { sanitizeEmailBodyForIframe } from '@/lib/email-sanitization';
++import { BARE_QUOTE_CSS } from '@/lib/email-frame-quotes';
++
++function frameQuotes(html: string): HTMLElement[] {
++  const sheet = document.createElement('style');
++  sheet.textContent = BARE_QUOTE_CSS;
++  const body = document.createElement('div');
++  body.innerHTML = sanitizeEmailBodyForIframe(html, true).html;
++  document.head.append(sheet);
++  document.body.append(body);
++  return [...body.querySelectorAll('blockquote')] as HTMLElement[];
++}
++const bar = (quote: Element) => getComputedStyle(quote).getPropertyValue('border-inline-start');
++
++afterEach(() => {
++  document.head.innerHTML = '';
++  document.body.innerHTML = '';
++});
++
++describe('quotes in a mail frame', () => {
++  it('keep the bar on a bare quote after the quote collapse and the dark pass write inline styles', () => {
++    const [quote] = frameQuotes('<p>On Friday, Carol wrote:</p><blockquote type="cite">a bare quote</blockquote>');
++    quote.style.display = 'none';
++    quote.style.display = '';
++    quote.style.setProperty('border-left-color', 'rgb(44, 44, 44)', 'important');
++    expect(bar(quote)).toBe('2px solid #c5c5c5');
++  });
++
++  it("go by the sender's style, not by a marker the sender wrote", () => {
++    const quotes = frameQuotes('<blockquote style="margin:0" class="bulwark-bare-quote">styled</blockquote><blockquote>bare</blockquote>');
++    expect(quotes.map(bar)).toEqual(['', '2px solid #c5c5c5']);
++  });
++});
+diff --git a/lib/email-frame-quotes.ts b/lib/email-frame-quotes.ts
+new file mode 100644
+index 00000000..81cb7297
+--- /dev/null
++++ b/lib/email-frame-quotes.ts
+@@ -0,0 +1,18 @@
++/**
++ * Quotes in a mail frame. Bulwark's own reply quote carries an inline style
++ * (a bar and an indent), so a bare `<blockquote>` (Thunderbird's
++ * `type="cite"`, a Markdown mail's `>`) gets the same bar here. A quote that
++ * styles itself, like Gmail's or Outlook's, keeps its own look. The bar is on
++ * the inline start, so a right-to-left mail has it on the right.
++ *
++ * Whether a quote came with a style is read while sanitizing, because the
++ * frame's dark pass and quote collapse write inline styles of their own later.
++ */
++const BARE_QUOTE_CLASS = 'bulwark-bare-quote';
++
++export function markBareQuoteOnNode(node: Element): void {
++  if (node.localName === 'blockquote') node.classList.toggle(BARE_QUOTE_CLASS, !node.hasAttribute('style'));
++}
++
++export const BARE_QUOTE_CSS =
++  `blockquote.${BARE_QUOTE_CLASS} { margin-block: 8px; margin-inline: 0; padding-inline-start: 12px; border-inline-start: 2px solid #c5c5c5; }`;
+diff --git a/lib/email-sanitization.ts b/lib/email-sanitization.ts
+index 1ac899ed..28142616 100644
+--- a/lib/email-sanitization.ts
++++ b/lib/email-sanitization.ts
+@@ -1,4 +1,5 @@
+ import DOMPurify, { type Config } from 'dompurify';
++import { markBareQuoteOnNode } from '@/lib/email-frame-quotes';
+ import { htmlToPlainText } from '@/lib/html-to-text';
+ 
+ /**
+@@ -212,6 +213,7 @@ function purifyBodyForIframe(body: DocumentFragment, blockExternal: boolean, aga
+     restrictDataUriResourcesOnNode(node);
+     keepMathStaticOnNode(node);
+     keepLeadingNewline(node);
++    markBareQuoteOnNode(node);
+   });
+ 
+   let clean: string;

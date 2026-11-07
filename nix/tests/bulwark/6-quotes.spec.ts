@@ -17,3 +17,25 @@ test('a bare quote inside a reply draws the bar its reply quote draws', async ({
   await expect(body.locator('blockquote')).toHaveCSS('border-left-width', '2px');
   await shot(page, 'nested-quotes');
 });
+
+// a reply as Thunderbird writes one: an attribution, then the quoted mail in a bare cite quote, which the reader folds
+const thunderbird = (body: string) =>
+  `<p>${body}</p><div class="moz-cite-prefix">On Friday, the sender wrote:<br></div>` +
+  `<blockquote type="cite"><p>the first mail</p></blockquote>`;
+
+test('in dark mode a bare quote keeps its bar once the reader unfolds it', async ({ page }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem('theme-storage', JSON.stringify({ state: { theme: 'dark', themeChosen: true }, version: 1 })),
+  );
+  const thread = await Thread.of(2, thunderbird);
+  await thread.markRead(1);
+  await signIn(page);
+
+  await row(page, thread).click();
+  const body = viewer(page).frameLocator('iframe').first();
+  await body.locator('[data-quote-toggle]').click();
+  await expect(body.getByText('the first mail')).toBeVisible();
+  await expect(body.locator('blockquote')).toHaveCSS('border-left-style', 'solid');
+  await expect(body.locator('blockquote')).toHaveCSS('border-left-width', '2px');
+  await shot(page, 'dark-unfolded-quote');
+});
