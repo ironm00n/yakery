@@ -19,7 +19,7 @@ use agent_proto::{
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::Parser;
-use private::{Dir, Mode, Replace, listen_fds, now};
+use private::{Dir, Mode, Replace, listen_fds};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use tokio::io::{
@@ -226,6 +226,8 @@ struct State {
     key: Key,
     agents: HashMap<String, Agent>,
     slots: Arc<Semaphore>,
+    /// The next session's id. Ids count on from the run's start in nanoseconds, so a run's sessions take none an
+    /// earlier run's took.
     started: AtomicU64,
 }
 
@@ -240,7 +242,7 @@ impl State {
             api,
             key,
             agents: agents.collect(),
-            started: AtomicU64::default(),
+            started: AtomicU64::new(nanos_since_epoch()),
         }
     }
 
@@ -301,8 +303,8 @@ impl State {
     ) -> Result<Woken> {
         ensure!(has_quota(&self.args.quota_device, agent.uid)?, "{name} has no home quota");
         self.refresh_ca().await.context("fetch the gateway's CA")?;
-        let mut child = self.spawn(name, agent.uid)?;
         let id = self.started.fetch_add(1, Ordering::Relaxed);
+        let mut child = self.spawn(name, agent.uid, id)?;
         let mut session = Session::new(id, child.stdin.take().expect("piped"));
         session.send(message)?;
         agent.set(&mut run, Run::Running(session));
@@ -324,7 +326,7 @@ impl State {
         dir.write("ca.pem", &pem, Mode::Readable, Replace::Yes).map(drop)
     }
 
-    fn spawn(&self, agent: &str, uid: u32) -> Result<Child> {
+    fn spawn(&self, agent: &str, uid: u32, id: u64) -> Result<Child> {
         let home = Path::new("/home").join(agent);
         let config = home.join(".claude");
         let tmp = home.join(".cache").join("tmp");
@@ -342,10 +344,9 @@ impl State {
             ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1".into()),
             ("TMPDIR", tmp.display().to_string()),
         ];
-        let stamp = now();
         Command::new("systemd-run")
             .args(["--quiet", "--pipe", "--wait", "--collect"])
-            .arg(format!("--unit=agent-{agent}-{stamp}"))
+            .arg(format!("--unit={}", unit(agent, id)))
             .arg(format!("--slice=agent-{agent}.slice"))
             .arg(format!("--uid={uid}"))
             .arg(format!("--working-directory={}", home.display()))
@@ -424,6 +425,15 @@ impl State {
         note!("{agent}: session exited with {code:?}");
         let _ = tx.send(Reply::Exited { code });
     }
+}
+
+fn unit(agent: &str, id: u64) -> String {
+    format!("agent-{agent}-{id}")
+}
+
+fn nanos_since_epoch() -> u64 {
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    since.map_or(0, |since| since.as_nanos() as u64)
 }
 
 #[allow(unsafe_code)]

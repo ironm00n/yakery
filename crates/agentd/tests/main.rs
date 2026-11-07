@@ -350,3 +350,13 @@ fn a_loopback_owner_lookup_holds_its_turn_until_its_read_ends() {
         assert_eq!(turns.available_permits(), 1);
     });
 }
+
+/// Two runs, one after the other, each naming sessions as `start` does.
+#[test]
+fn a_later_run_names_no_session_as_an_earlier_run_did() {
+    let name = |state: &State| unit("alpha", state.started.fetch_add(1, Ordering::Relaxed));
+    let earlier = state(&[("alpha", 2001)]);
+    let named = [name(&earlier), name(&earlier)];
+    assert_ne!(named[0], named[1]);
+    assert!(!named.contains(&name(&state(&[("alpha", 2001)]))));
+}
