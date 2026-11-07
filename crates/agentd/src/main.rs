@@ -21,7 +21,7 @@ use private::{Dir, Mode, Replace, listen_fds, now};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use tokio::io::{
-    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
     copy_bidirectional,
 };
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
@@ -35,6 +35,10 @@ use yakery_log::{note, warn};
 const QUIET: Duration = Duration::from_secs(5);
 
 const MAX_REQUEST: u64 = 1 << 20;
+
+/// The longest stdout line relayed as a session's event: the API's limit on one Messages request, which no event in
+/// the conversation can exceed.
+const MAX_EVENT: usize = 128 << 20;
 
 #[derive(Parser)]
 struct Args {
@@ -86,6 +90,54 @@ impl Session {
 enum Woken {
     Started(mpsc::UnboundedReceiver<Reply>),
     Injected,
+}
+
+/// Lines of at most `max` bytes, the last with or without its newline: a longer one is skipped whole, so no writer
+/// makes the reader hold more.
+struct Lines<R> {
+    reader: R,
+    max: usize,
+    line: Vec<u8>,
+    over: bool,
+}
+
+enum Line {
+    Whole(Vec<u8>),
+    Over,
+}
+
+impl<R: AsyncBufRead + Unpin> Lines<R> {
+    fn new(reader: R, max: usize) -> Self {
+        Lines { reader, max, line: Vec::new(), over: false }
+    }
+
+    /// Cancel safe: a partly read line waits in `line`.
+    async fn next(&mut self) -> std::io::Result<Option<Line>> {
+        loop {
+            let buf = self.reader.fill_buf().await?;
+            if buf.is_empty() {
+                return Ok((self.over || !self.line.is_empty()).then(|| self.finish()));
+            }
+            let end = buf.iter().position(|&b| b == b'\n');
+            let chunk = &buf[..end.unwrap_or(buf.len())];
+            self.over |= self.line.len() + chunk.len() > self.max;
+            if self.over {
+                self.line.clear();
+            } else {
+                self.line.extend_from_slice(chunk);
+            }
+            let read = end.map_or(buf.len(), |end| end + 1);
+            self.reader.consume(read);
+            if end.is_some() {
+                return Ok(Some(self.finish()));
+            }
+        }
+    }
+
+    fn finish(&mut self) -> Line {
+        let line = std::mem::take(&mut self.line);
+        if std::mem::take(&mut self.over) { Line::Over } else { Line::Whole(line) }
+    }
 }
 
 struct State {
@@ -200,7 +252,7 @@ impl State {
         struct Kind {
             r#type: String,
         }
-        let mut lines = BufReader::new(stdout).lines();
+        let mut lines = Lines::new(BufReader::new(stdout), MAX_EVENT);
         let mut ended: Option<Instant> = None;
         loop {
             let quiet = async {
@@ -210,14 +262,19 @@ impl State {
                 }
             };
             tokio::select! {
-                line = lines.next_line() => match line {
-                    Ok(Some(line)) => {
-                        let finished = serde_json::from_str::<Kind>(&line)
+                line = lines.next() => match line {
+                    Ok(Some(Line::Whole(line))) => {
+                        let finished = serde_json::from_slice::<Kind>(&line)
                             .is_ok_and(|kind| kind.r#type == "result");
                         ended = finished.then(Instant::now);
-                        if let Ok(event) = RawValue::from_string(line) {
+                        let event = String::from_utf8(line).ok().map(RawValue::from_string);
+                        if let Some(Ok(event)) = event {
                             let _ = tx.send(Reply::Event(event));
                         }
+                    }
+                    Ok(Some(Line::Over)) => {
+                        ended = None;
+                        warn!("{agent}: dropped an event over {MAX_EVENT} bytes");
                     }
                     _ => break,
                 },
