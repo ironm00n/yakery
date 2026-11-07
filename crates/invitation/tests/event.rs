@@ -88,6 +88,23 @@ fn a_change_sets_only_the_parts_given() {
 }
 
 #[test]
+fn a_start_in_an_hour_the_zone_repeats_is_written_in_utc_when_it_is_the_second() {
+    let start = |utc: &str| {
+        serde_json::Value::Object(
+            Details { start: Some(at(utc)), ..Details::default() }.properties(),
+        )
+    };
+    assert_eq!(
+        start("2026-11-01T05:30:00Z"),
+        json!({"start": "2026-11-01T01:30:00", "timeZone": "America/New_York"})
+    );
+    assert_eq!(
+        start("2026-11-01T06:30:00Z"),
+        json!({"start": "2026-11-01T06:30:00", "timeZone": "Etc/UTC"})
+    );
+}
+
+#[test]
 fn a_calendar_address_keeps_its_local_part_as_one_part() {
     assert_eq!(mailto("owen@example.org"), "mailto:owen@example.org");
     assert_eq!(mailto("agent+pool@example.org"), "mailto:agent+pool@example.org");

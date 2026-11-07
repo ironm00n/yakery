@@ -63,9 +63,14 @@ impl Details<'_> {
     pub fn properties(&self) -> Map<String, Value> {
         let start = self.start.map(|At { when, zone }| {
             let local = when.to_zoned(zone.time_zone()).datetime();
+            // A local time the zone repeats names its first instant (RFC 5545 §3.3.5), so the second goes in UTC.
+            let (local, zone) = match zone.to_ambiguous_timestamp(local).earlier() {
+                Ok(first) if first == when => (local, zone.name()),
+                _ => (when.to_zoned(TimeZone::UTC).datetime(), "Etc/UTC"),
+            };
             [
                 ("start", json!(local.strftime("%Y-%m-%dT%H:%M:%S").to_string())),
-                ("timeZone", json!(zone.name())),
+                ("timeZone", json!(zone)),
             ]
         });
         let parts = [
