@@ -40,7 +40,7 @@ fn every_page_is_script_free() {
             hour.start,
             SignedDuration::from_mins(30),
             &Checked::new(form).unwrap(),
-            "owen@example.test",
+            "owner@example.test",
         ),
         message(&viewer, "Not found", "No page here."),
     ]

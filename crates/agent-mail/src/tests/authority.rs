@@ -153,7 +153,7 @@ fn an_inbox_line_names_the_topics_of_the_login_its_to_and_cc_name() {
         ("agent@example.org", "") => (json!(true), json!([]));
         ("agent@example.com,agentx+pool@example.org", "") => (json!(false), json!([]));
         ("x@example.org", "Agent+Pool@example.org,agent+pool@example.org") => (json!(true), json!(["pool"]));
-        ("agent+xb@example.org", "agent+pool@example.org") => (json!(true), json!(["pool", "xb"]));
+        ("agent+tests@example.org", "agent+pool@example.org") => (json!(true), json!(["pool", "tests"]));
     );
 }
 

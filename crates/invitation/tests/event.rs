@@ -13,10 +13,10 @@ fn at(utc: &str) -> At<'static> {
 #[test]
 fn an_agents_invitation_names_it_organizer_only_and_him_invited() {
     let start = at("2026-11-06T20:00:00Z");
-    let invited = [Person { address: "owen@example.org", name: None }];
+    let invited = [Person { address: "owner@example.org", name: None }];
     let event = Invitation {
         uid: "u1@example.org",
-        title: "Review the NEU sync page",
+        title: "Review the sync page",
         description: None,
         start,
         duration: SignedDuration::from_mins(30),
@@ -31,14 +31,14 @@ fn an_agents_invitation_names_it_organizer_only_and_him_invited() {
         json!({
             "@type": "Event",
             "uid": "u1@example.org",
-            "title": "Review the NEU sync page",
+            "title": "Review the sync page",
             "start": "2026-11-06T15:00:00",
             "timeZone": "America/New_York",
             "duration": "PT30M",
             "organizerCalendarAddress": "mailto:agent+scheduler@example.org",
             "participants": {
                 "organizer": {"calendarAddress": "mailto:agent+scheduler@example.org", "roles": {"owner": true}, "participationStatus": "accepted"},
-                "invited0": {"calendarAddress": "mailto:owen@example.org", "roles": {"attendee": true}, "expectReply": true},
+                "invited0": {"calendarAddress": "mailto:owner@example.org", "roles": {"attendee": true}, "expectReply": true},
             },
         })
     );
@@ -54,8 +54,8 @@ fn a_booked_meeting_has_its_organizer_attending_and_the_invitee_named() {
         description: Some("hi"),
         start,
         duration: SignedDuration::from_mins(30),
-        location: Some("WVH 366"),
-        organizer: "owen@example.org",
+        location: Some("Room 101"),
+        organizer: "owner@example.org",
         organizer_attends: true,
         invited: &invited,
     }
@@ -66,7 +66,7 @@ fn a_booked_meeting_has_its_organizer_attending_and_the_invitee_named() {
     );
     assert_eq!(event["participants"]["invited0"]["name"], "Ada Lovelace");
     assert_eq!(event["description"], "hi");
-    assert_eq!(event["locations"], json!({"place": {"name": "WVH 366"}}));
+    assert_eq!(event["locations"], json!({"place": {"name": "Room 101"}}));
 }
 
 #[test]
@@ -79,10 +79,10 @@ fn only_a_named_zone_of_the_database_is_a_zone() {
 #[test]
 fn a_change_sets_only_the_parts_given() {
     let start = at("2026-11-06T21:30:00Z");
-    let change = Details { start: Some(start), location: Some("WVH 366"), ..Details::default() };
+    let change = Details { start: Some(start), location: Some("Room 101"), ..Details::default() };
     assert_eq!(
         serde_json::Value::Object(change.properties()),
-        json!({"start": "2026-11-06T16:30:00", "timeZone": "America/New_York", "locations": {"place": {"name": "WVH 366"}}})
+        json!({"start": "2026-11-06T16:30:00", "timeZone": "America/New_York", "locations": {"place": {"name": "Room 101"}}})
     );
     assert!(Details::default().properties().is_empty());
 }
@@ -106,7 +106,7 @@ fn a_start_in_an_hour_the_zone_repeats_is_written_in_utc_when_it_is_the_second()
 
 #[test]
 fn a_calendar_address_keeps_its_local_part_as_one_part() {
-    assert_eq!(mailto("owen@example.org"), "mailto:owen@example.org");
+    assert_eq!(mailto("owner@example.org"), "mailto:owner@example.org");
     assert_eq!(mailto("agent+pool@example.org"), "mailto:agent+pool@example.org");
     assert_eq!(mailto("x%40evil.com#@example.org"), "mailto:x%2540evil.com%23@example.org");
     assert_eq!(mailto("a=b?c@example.org"), "mailto:a%3Db%3Fc@example.org");

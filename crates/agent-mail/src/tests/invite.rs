@@ -42,7 +42,7 @@ const NEW: &[&str] = &[
     "--to",
     HIM,
     "--title",
-    "Review the NEU sync page",
+    "Review the sync page",
     "--start",
     "2026-11-06T20:00:00Z",
     "--duration",
@@ -113,14 +113,14 @@ async fn an_update_sends_only_what_changes_and_a_cancel_destroys_the_event() {
         "--start",
         "2026-11-06T21:30:00Z",
         "--location",
-        "WVH 366",
+        "Room 101",
     ]);
     assert_eq!(invite(&mail, moved).await.unwrap(), "e1");
     let (_, args) = request(&server.borrow(), "CalendarEvent/set");
     assert_eq!(args["sendSchedulingMessages"], true);
     assert_eq!(
         args["update"],
-        json!({ "e1": { "start": "2026-11-06T16:30:00", "timeZone": "America/New_York", "locations": { "place": { "name": "WVH 366" } } } })
+        json!({ "e1": { "start": "2026-11-06T16:30:00", "timeZone": "America/New_York", "locations": { "place": { "name": "Room 101" } } } })
     );
     server.borrow_mut().requests.clear();
     invite(&mail, asked(&["cancel", "e1", "--topic", "pool"])).await.unwrap();
@@ -174,7 +174,7 @@ async fn an_invitation_made_again_is_the_one_already_made() {
     );
     let renamed: Vec<&str> = NEW
         .iter()
-        .map(|w| if *w == "Review the NEU sync page" { "Another review" } else { w })
+        .map(|w| if *w == "Review the sync page" { "Another review" } else { w })
         .collect();
     assert_eq!(invite(&mail, asked(&renamed)).await.unwrap(), "e2");
 }

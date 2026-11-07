@@ -24,7 +24,7 @@ struct Fake {
 
 impl Calendar for &Fake {
     fn owner(&self) -> &str {
-        "owen@example.test"
+        "owner@example.test"
     }
 
     async fn busy(&self, period: Period) -> Result<Vec<Period>> {
