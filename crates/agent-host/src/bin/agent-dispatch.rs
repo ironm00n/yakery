@@ -69,13 +69,23 @@ struct Recipients {
 }
 
 struct Dispatch {
-    agents: BTreeSet<String>,
-    domain: String,
+    /// Each listed agent's address on the agent domain, and its name.
+    agents: Vec<(Address, String)>,
     cid: u32,
     key: Key,
 }
 
 impl Dispatch {
+    fn new(
+        names: impl IntoIterator<Item = String>,
+        domain: &str,
+        cid: u32,
+        key: Key,
+    ) -> Result<Self> {
+        let address = |name: String| Ok((format!("{name}@{domain}").parse()?, name));
+        Ok(Dispatch { agents: names.into_iter().map(address).collect::<Result<_>>()?, cid, key })
+    }
+
     fn recipients(&self, batch: &Batch) -> BTreeSet<String> {
         batch
             .events
@@ -85,10 +95,8 @@ impl Dispatch {
                 to => to.as_array().into_iter().flatten().filter_map(Value::as_str).collect(),
             })
             .filter_map(|address| address.parse::<Address>().ok())
-            .filter(|a| {
-                a.domain().eq_ignore_ascii_case(&self.domain) && self.agents.contains(a.local())
-            })
-            .map(|a| a.local().to_owned())
+            .filter_map(|to| self.agents.iter().find(|(agent, _)| *agent == to))
+            .map(|(_, name)| name.clone())
             .collect()
     }
 
@@ -150,12 +158,8 @@ fn main() -> ExitCode {
 
 #[tokio::main]
 async fn serve(args: Args) -> Result<()> {
-    let dispatch = Arc::new(Dispatch {
-        agents: read_agents(&args.agents)?.into_keys().collect(),
-        domain: args.domain,
-        cid: args.vm.cid,
-        key: args.vm.key()?,
-    });
+    let names = read_agents(&args.agents)?.into_keys();
+    let dispatch = Arc::new(Dispatch::new(names, &args.domain, args.vm.cid, args.vm.key()?)?);
     let listener = TcpListener::bind(args.listen).await?;
     loop {
         let (stream, peer) = yakery_serve::accept(async || listener.accept().await).await;

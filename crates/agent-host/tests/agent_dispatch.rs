@@ -3,12 +3,8 @@ use serde_json::{Value, json};
 use super::*;
 
 fn woken(attempts: &[Value]) -> Vec<String> {
-    let dispatch = Dispatch {
-        agents: ["alpha", "beta"].map(String::from).into(),
-        domain: "agent.ironmoon.dev".into(),
-        cid: 4,
-        key: [0; 32],
-    };
+    let names = ["alpha", "beta"].map(String::from);
+    let dispatch = Dispatch::new(names, "agent.ironmoon.dev", 4, [0; 32]).unwrap();
     let attempt = |to: &Value| json!({ "type": "delivery.attempt-end", "data": { "to": to } });
     let events: Vec<Value> = attempts.iter().map(attempt).collect();
     let batch: Batch = serde_json::from_value(json!({ "events": events })).unwrap();
@@ -44,4 +40,9 @@ fn a_to_of_another_shape_wakes_its_string_and_rejects_nothing() {
         ]),
         ["alpha", "beta"]
     );
+}
+
+#[test]
+fn an_agent_is_woken_whatever_the_case_of_its_address() {
+    assert_eq!(woken(&[json!(["Alpha@AGENT.ironmoon.dev"])]), ["alpha"]);
 }
