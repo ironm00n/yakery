@@ -220,6 +220,22 @@ async fn invites_lists_the_logins_invitations_with_each_answer() {
 }
 
 #[tokio::test]
+async fn an_invitation_listing_that_stalwart_cut_at_its_get_limit_is_refused() {
+    let dir = Scratch::new("invite-cut");
+    let mut stalwart = with_calendars(vec![]);
+    stalwart.session["capabilities"]["urn:ietf:params:jmap:core"]["maxObjectsInGet"] = json!(4);
+    let event = |n: u32| json!({ "id": format!("e{n}"), "organizerCalendarAddress": "mailto:agent+pool@example.org" });
+    stalwart.events = (1..=5).map(event).collect();
+    let (_wire, _server, mail) = mail(&dir, stalwart).await;
+    let Ok(Command::Invites(list)) = command(&["invites"]) else { panic!("not invites") };
+    let refused = invitations(&mail.unwrap(), &list).await.map_err(|e| format!("{e:#}"));
+    assert_eq!(
+        refused.unwrap_err(),
+        "stalwart answered CalendarEvent/get with 4, its whole get limit, so it may have left some out"
+    );
+}
+
+#[tokio::test]
 async fn a_session_with_no_calendars_account_refuses_an_invitation_and_mail_asks_as_before() {
     let dir = Scratch::new("invite-no-calendars");
     let (_wire, server, mail) = mail(&dir, Stalwart::new(vec![])).await;

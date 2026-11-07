@@ -354,8 +354,17 @@ impl Mail {
         Ok(found)
     }
 
+    /// Every object of `V`, from a get with no ids. Past the server's get limit Stalwart cuts such a reply short, where
+    /// RFC 8620 §5.1 asks for requestTooLarge, so a reply that fills the limit is refused.
     pub async fn all<V: View>(&self) -> Result<Vec<V>> {
-        Ok(self.got(false, Value::Null).await?.1)
+        let all = self.got(false, Value::Null).await?.1;
+        ensure!(
+            all.len() < self.limits[0],
+            "stalwart answered {} with {}, its whole get limit, so it may have left some out",
+            V::GET,
+            all.len()
+        );
+        Ok(all)
     }
 
     pub async fn state(&self) -> Result<String> {

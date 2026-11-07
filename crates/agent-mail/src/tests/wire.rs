@@ -441,7 +441,11 @@ impl Stalwart {
                 let asked = args["ids"].as_array();
                 let list =
                     self.events.iter().filter(|e| asked.is_none_or(|ids| ids.contains(&e["id"])));
-                json!({ "list": list.collect::<Vec<_>>() })
+                // with no ids, Stalwart answers up to its get limit and drops the rest
+                let limit =
+                    &self.session["capabilities"]["urn:ietf:params:jmap:core"]["maxObjectsInGet"];
+                let limit = asked.map_or(limit.as_u64().unwrap_or(u64::MAX), |_| u64::MAX) as usize;
+                json!({ "list": list.take(limit).collect::<Vec<_>>() })
             }
             "CalendarEvent/query" => {
                 let uid = &args["filter"]["uid"];
@@ -716,11 +720,13 @@ async fn the_session_must_stay_on_the_mail_origin_and_be_the_logins() {
 #[tokio::test]
 async fn gets_go_in_the_chunks_the_server_allows() {
     let dir = Scratch::new("chunks");
-    let mut stalwart = Stalwart::new((1..=5).map(|i| email(&format!("m{i}"), json!({}))).collect());
-    stalwart.session["capabilities"]["urn:ietf:params:jmap:core"]["maxObjectsInGet"] = json!(2);
+    let ids: Vec<String> = (1..=9).map(|i| format!("m{i}")).collect();
+    let mut stalwart = Stalwart::new(ids.iter().map(|id| email(id, json!({}))).collect());
+    // above the inbox's three mailboxes, which a get of every mailbox must find whole
+    stalwart.session["capabilities"]["urn:ietf:params:jmap:core"]["maxObjectsInGet"] = json!(4);
     let (_wire, server, mail) = mail(&dir, stalwart).await;
-    let got: Vec<Email> = mail.unwrap().get(&["m1", "m2", "m3", "m4", "m5"]).await.unwrap();
-    assert_eq!(got.len(), 5);
+    let got: Vec<Email> = mail.unwrap().get(&ids).await.unwrap();
+    assert_eq!(got.len(), 9);
     assert_eq!(server.borrow().log.iter().filter(|l| l.contains("Email/get")).count(), 3);
 }
 
