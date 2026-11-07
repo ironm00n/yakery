@@ -3,6 +3,7 @@
 # pool token its turns go out under is never the account's to read.
 {
   config,
+  options,
   lib,
   pkgs,
   ...
@@ -111,131 +112,146 @@ in
     };
   };
 
-  config = mkIf cfg.enable {
-    assertions =
-      map
-        (group: {
-          assertion =
-            !(lib.elem group config.users.users.${cfg.name}.extraGroups)
-            && !(lib.elem cfg.name (config.users.groups.${group}.members or [ ]));
-          message = "bundles.claude-agent: ${cfg.name} is in ${group}, which is root by another name";
-        })
-        [
-          "wheel"
-          "docker"
-        ]
-      ++ [
-        {
-          assertion = cfg.ownerPorts == [ ] || config.users.users.${cfg.owner}.uid != null;
-          message = "bundles.claude-agent: ownerPorts needs ${cfg.owner}'s uid fixed, for the port rule to name";
-        }
-        {
-          assertion =
-            !(lib.any (lib.flip lib.elem config.nix.settings.trusted-users) [
-              cfg.name
-              "@${cfg.name}"
-              "*"
-            ]);
-          message = "bundles.claude-agent: ${cfg.name} is a nix trusted user, which is root by another name";
-        }
-      ];
-
-    users.groups.${cfg.name}.gid = cfg.uid;
-    users.users.${cfg.name} = {
-      inherit (cfg) uid;
-      isNormalUser = true;
-      group = cfg.name;
-      linger = true;
-      openssh.authorizedKeys.keys = cfg.authorizedKeys;
-    };
-
-    systemd.slices."user-${toString cfg.uid}" = {
-      overrideStrategy = "asDropin";
-      sliceConfig.MemoryMax = cfg.memoryMax;
-    };
-    systemd.services."user@${toString cfg.uid}" = {
-      overrideStrategy = "asDropin";
-      environment.CLAUDE_SESSION_MEMORY_MAX = cfg.sessionMemoryMax;
-    };
-
-    security.sudo.extraRules = [
+  config = mkIf cfg.enable (
+    lib.mkMerge [
+      # on a host with home-manager, the account's Claude Code settings are Owen's module as the agent's
+      (lib.optionalAttrs (options ? home-manager) {
+        home-manager.users.${cfg.name} = {
+          imports = [ ../users/ironmoon/bundles/dev/claude ];
+          bundles.dev.claude = {
+            enable = true;
+            account = "agent";
+          };
+          home.stateVersion = config.system.stateVersion;
+        };
+      })
       {
-        users = [ cfg.owner ];
-        runAs = cfg.name;
-        commands = [
+        assertions =
+          map
+            (group: {
+              assertion =
+                !(lib.elem group config.users.users.${cfg.name}.extraGroups)
+                && !(lib.elem cfg.name (config.users.groups.${group}.members or [ ]));
+              message = "bundles.claude-agent: ${cfg.name} is in ${group}, which is root by another name";
+            })
+            [
+              "wheel"
+              "docker"
+            ]
+          ++ [
+            {
+              assertion = cfg.ownerPorts == [ ] || config.users.users.${cfg.owner}.uid != null;
+              message = "bundles.claude-agent: ownerPorts needs ${cfg.owner}'s uid fixed, for the port rule to name";
+            }
+            {
+              assertion =
+                !(lib.any (lib.flip lib.elem config.nix.settings.trusted-users) [
+                  cfg.name
+                  "@${cfg.name}"
+                  "*"
+                ]);
+              message = "bundles.claude-agent: ${cfg.name} is a nix trusted user, which is root by another name";
+            }
+          ];
+
+        users.groups.${cfg.name}.gid = cfg.uid;
+        users.users.${cfg.name} = {
+          inherit (cfg) uid;
+          isNormalUser = true;
+          group = cfg.name;
+          linger = true;
+          openssh.authorizedKeys.keys = cfg.authorizedKeys;
+        };
+
+        systemd.slices."user-${toString cfg.uid}" = {
+          overrideStrategy = "asDropin";
+          sliceConfig.MemoryMax = cfg.memoryMax;
+        };
+        systemd.services."user@${toString cfg.uid}" = {
+          overrideStrategy = "asDropin";
+          environment.CLAUDE_SESSION_MEMORY_MAX = cfg.sessionMemoryMax;
+        };
+
+        security.sudo.extraRules = [
           {
-            command = "ALL";
-            options = [ "NOPASSWD" ];
+            users = [ cfg.owner ];
+            runAs = cfg.name;
+            commands = [
+              {
+                command = "ALL";
+                options = [ "NOPASSWD" ];
+              }
+            ];
           }
         ];
+
+        # notes' claude-tap reads this to find the account's tap
+        environment.etc."anthropic-tap/${cfg.name}".text = "${tap.user}.service";
+        users.groups.${tap.user}.members = tap.watchers;
+        users.users.${tap.user} = {
+          isSystemUser = true;
+          group = tap.user;
+        };
+
+        systemd.services.${tap.user} = {
+          description = "anthropic-tap for ${cfg.name}'s sessions";
+          wantedBy = [ "multi-user.target" ];
+          after = [
+            (if config.networking.nftables.enable then "nftables.service" else "${tap.user}-port.service")
+          ];
+          requires = lib.optional (!config.networking.nftables.enable) "${tap.user}-port.service";
+          unitConfig.ConditionPathExists = "${tap.profile}/bin/anthropic-tap";
+          environment = {
+            STATE_DIR = "/var/lib/${tap.user}";
+            TAP_SOCK = "/run/${tap.user}/events.sock";
+            TAP_SOCK_MODE = "0660";
+            LISTEN_ADDR = "off";
+            LISTEN_PROXY = tap.proxy;
+          }
+          // lib.optionalAttrs (tap.poolTokenFile != null) { DISPATCH = "pool"; };
+          serviceConfig = {
+            ExecStart = "${tap.profile}/bin/anthropic-tap";
+            EnvironmentFile = "${tap.profile}/share/anthropic-tap/policy.env";
+            User = tap.user;
+            Group = tap.user;
+            StateDirectory = tap.user;
+            StateDirectoryMode = "0755";
+            RuntimeDirectory = tap.user;
+            RuntimeDirectoryMode = "0750";
+            LoadCredential = lib.optional (tap.poolTokenFile != null) "pool:${tap.poolTokenFile}";
+            Restart = "on-failure";
+          };
+        };
+
+        networking.nftables.tables.${tap.user} = mkIf config.networking.nftables.enable {
+          family = "inet";
+          content = portRule;
+        };
+        systemd.services."${tap.user}-port" = mkIf (!config.networking.nftables.enable) {
+          description = "only ${cfg.name} reaches its tap's proxy port";
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStart = "${pkgs.nftables}/bin/nft -f ${pkgs.writeText "${tap.user}.nft" "table inet ${tap.user} {\n${portRule}}\n"}";
+            ExecStop = "${pkgs.nftables}/bin/nft delete table inet ${tap.user}";
+          };
+        };
+
+        # made on the host it serves, so no other account's key is ever copied to it
+        systemd.services."${cfg.name}-ssh-key" = {
+          wantedBy = [ "multi-user.target" ];
+          path = [ pkgs.openssh ];
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            User = cfg.name;
+          };
+          script = ''
+            install -d -m 700 ${home}/.ssh
+            [ -e ${home}/.ssh/id_ed25519 ] || ssh-keygen -q -t ed25519 -N "" -C "${cfg.name}@${config.networking.hostName}" -f ${home}/.ssh/id_ed25519
+          '';
+        };
       }
-    ];
-
-    # notes' claude-tap reads this to find the account's tap
-    environment.etc."anthropic-tap/${cfg.name}".text = "${tap.user}.service";
-    users.groups.${tap.user}.members = tap.watchers;
-    users.users.${tap.user} = {
-      isSystemUser = true;
-      group = tap.user;
-    };
-
-    systemd.services.${tap.user} = {
-      description = "anthropic-tap for ${cfg.name}'s sessions";
-      wantedBy = [ "multi-user.target" ];
-      after = [
-        (if config.networking.nftables.enable then "nftables.service" else "${tap.user}-port.service")
-      ];
-      requires = lib.optional (!config.networking.nftables.enable) "${tap.user}-port.service";
-      unitConfig.ConditionPathExists = "${tap.profile}/bin/anthropic-tap";
-      environment = {
-        STATE_DIR = "/var/lib/${tap.user}";
-        TAP_SOCK = "/run/${tap.user}/events.sock";
-        TAP_SOCK_MODE = "0660";
-        LISTEN_ADDR = "off";
-        LISTEN_PROXY = tap.proxy;
-      }
-      // lib.optionalAttrs (tap.poolTokenFile != null) { DISPATCH = "pool"; };
-      serviceConfig = {
-        ExecStart = "${tap.profile}/bin/anthropic-tap";
-        EnvironmentFile = "${tap.profile}/share/anthropic-tap/policy.env";
-        User = tap.user;
-        Group = tap.user;
-        StateDirectory = tap.user;
-        StateDirectoryMode = "0755";
-        RuntimeDirectory = tap.user;
-        RuntimeDirectoryMode = "0750";
-        LoadCredential = lib.optional (tap.poolTokenFile != null) "pool:${tap.poolTokenFile}";
-        Restart = "on-failure";
-      };
-    };
-
-    networking.nftables.tables.${tap.user} = mkIf config.networking.nftables.enable {
-      family = "inet";
-      content = portRule;
-    };
-    systemd.services."${tap.user}-port" = mkIf (!config.networking.nftables.enable) {
-      description = "only ${cfg.name} reaches its tap's proxy port";
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        ExecStart = "${pkgs.nftables}/bin/nft -f ${pkgs.writeText "${tap.user}.nft" "table inet ${tap.user} {\n${portRule}}\n"}";
-        ExecStop = "${pkgs.nftables}/bin/nft delete table inet ${tap.user}";
-      };
-    };
-
-    # made on the host it serves, so no other account's key is ever copied to it
-    systemd.services."${cfg.name}-ssh-key" = {
-      wantedBy = [ "multi-user.target" ];
-      path = [ pkgs.openssh ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        User = cfg.name;
-      };
-      script = ''
-        install -d -m 700 ${home}/.ssh
-        [ -e ${home}/.ssh/id_ed25519 ] || ssh-keygen -q -t ed25519 -N "" -C "${cfg.name}@${config.networking.hostName}" -f ${home}/.ssh/id_ed25519
-      '';
-    };
-  };
+    ]
+  );
 }
