@@ -12,6 +12,9 @@ let
   inherit (lib)
     mkEnableOption
     mkIf
+    mkMerge
+    mkOption
+    types
     mapAttrs'
     nameValuePair
     filterAttrs
@@ -52,52 +55,92 @@ let
     in
     assert lib.assertMsg (scope.user.email == agentEmail) "jj.toml's agent email isn't ${agentEmail}";
     scope;
+  owner = cfg.account == "owner";
+  # settings.json names paths under Owen's home; another account's copy has its own home in their place
+  ownerHome = "/home/ironmoon";
+  rehome =
+    v:
+    if lib.isString v then
+      lib.replaceStrings [ "${ownerHome}/" ] [ "${config.home.homeDirectory}/" ] v
+    else if lib.isList v then
+      map rehome v
+    else if lib.isAttrs v then
+      lib.mapAttrs (_: rehome) v
+    else
+      v;
+  settings =
+    if config.home.homeDirectory == ownerHome then
+      symlink ./settings.json
+    else
+      pkgs.writeText "settings.json" (builtins.toJSON (rehome (lib.importJSON ./settings.json)));
+  # the agent account is the agent in every repo, so its jj.toml scopes drop their repository lists
+  jjEverywhere = (pkgs.formats.toml { }).generate "claude.toml" (
+    lib.mapAttrs (
+      _: map (scope: scope // { "--when" = removeAttrs scope."--when" [ "repositories" ]; })
+    ) (builtins.fromTOML (builtins.readFile ./jj.toml))
+  );
 in
 {
   options.bundles.dev.claude = {
     enable = mkEnableOption "claude code";
+
+    account = mkOption {
+      type = types.enum [
+        "owner"
+        "agent"
+      ];
+      default = "owner";
+      description = ''
+        Whose sessions these are: Owen's, with agent@'s mail login, the agent identity in his listed repos and
+        Syncthing's ignore list for ~/.claude; or the agent account's, the agent in every repo and none of those.
+      '';
+    };
   };
 
-  config = mkIf cfg.enable {
-    home.packages = [
-      claude-code
-      agent-mail
-    ];
+  config = mkIf cfg.enable (mkMerge [
+    (mkIf owner {
+      xdg.configFile."agent-mail/config.json".text = builtins.toJSON {
+        login = agentEmail;
+        password-file = "~/.claude/secrets/agent-ironmoon-dev-password";
+      };
+      # a real file, not a link: Syncthing's docs don't say it follows a linked .stignore
+      home.activation.stignore = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        run install -m 644 ${stignore} ${config.home.homeDirectory}/.claude/.stignore
+      '';
+    })
+    {
+      home.packages = [ claude-code ] ++ lib.optional owner agent-mail;
 
-    xdg.configFile."agent-mail/config.json".text = builtins.toJSON {
-      login = agentEmail;
-      password-file = "~/.claude/secrets/agent-ironmoon-dev-password";
-    };
-    xdg.configFile."jj/conf.d/claude.toml".source = symlink ./jj.toml;
-    # included only from Claude sessions, by settings.json's GIT_CONFIG_* env
-    xdg.configFile."git/claude-identity".text = lib.concatMapStrings (repo: ''
-      [includeIf "gitdir:${repo}/"]
-      	path = claude-identity.user
-    '') agentIdentity."--when".repositories;
-    xdg.configFile."git/claude-identity.user".text = lib.generators.toGitINI {
-      inherit (agentIdentity) user;
-    };
-    # a push from a Claude Code session keeps its commit messages within the width rule (hooks/lib/widths.sh): jj
-    # pushes go through jj-push.sh, and plain git ones run this beside the repo's own pre-push hook, which passes
-    # everything outside a session
-    programs.git.settings."hook \"commit-width\"" = {
-      event = "pre-push";
-      # the generation's own copy, so a checkout of /etc/nixos without the script can't break every push
-      command = "${./hooks}/git-pre-push-widths.sh";
-    };
+      xdg.configFile."jj/conf.d/claude.toml".source = if owner then symlink ./jj.toml else jjEverywhere;
+      # included only from Claude sessions, by settings.json's GIT_CONFIG_* env
+      xdg.configFile."git/claude-identity".text =
+        if owner then
+          lib.concatMapStrings (repo: ''
+            [includeIf "gitdir:${repo}/"]
+            	path = claude-identity.user
+          '') agentIdentity."--when".repositories
+        else
+          "[include]\n\tpath = claude-identity.user\n";
+      xdg.configFile."git/claude-identity.user".text = lib.generators.toGitINI {
+        inherit (agentIdentity) user;
+      };
+      # a push from a Claude Code session keeps its commit messages within the width rule (hooks/lib/widths.sh): jj
+      # pushes go through jj-push.sh, and plain git ones run this beside the repo's own pre-push hook, which passes
+      # everything outside a session
+      programs.git.settings."hook \"commit-width\"" = {
+        event = "pre-push";
+        # the generation's own copy, so a checkout of /etc/nixos without the script can't break every push
+        command = "${./hooks}/git-pre-push-widths.sh";
+      };
 
-    home.file = {
-      # no XDG: https://github.com/anthropics/claude-code/issues/1455
-      ".claude/CLAUDE.md".source = symlink ./CLAUDE.md;
-      ".claude/settings.json".source = symlink ./settings.json;
-      ".claude/hooks/".source = symlink ./hooks;
-      ".claude/my-marketplaces".source = symlink ./marketplaces;
+      home.file = {
+        # no XDG: https://github.com/anthropics/claude-code/issues/1455
+        ".claude/CLAUDE.md".source = symlink ./CLAUDE.md;
+        ".claude/settings.json".source = settings;
+        ".claude/hooks/".source = symlink ./hooks;
+        ".claude/my-marketplaces".source = symlink ./marketplaces;
+      }
+      // skills;
     }
-    // skills;
-
-    # a real file, not a link: Syncthing's docs don't say it follows a linked .stignore
-    home.activation.stignore = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      run install -m 644 ${stignore} ${config.home.homeDirectory}/.claude/.stignore
-    '';
-  };
+  ]);
 }
