@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, process::ExitCode};
+use std::{num::NonZeroUsize, ops::ControlFlow, process::ExitCode};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, SecondsFormat, TimeDelta};
@@ -15,7 +15,7 @@ use crate::{
     auth::Auth,
     authority::{self, Signed},
     jmap::wire,
-    mail::{Addr, Body, Email, Keyword, Mail, Part, QUERY, Text, names},
+    mail::{Addr, Body, Email, Keyword, Mail, Page, Part, Text, names},
     out::is_receipt,
     policy::Login,
     prelude::*,
@@ -269,28 +269,27 @@ pub async fn newest(mail: &Mail, topics: &[Topic], limit: NonZeroUsize) -> Resul
         filter = json!({ "operator": "AND", "conditions": [filter, any] });
     }
     let sort = [json!({ "property": "receivedAt", "isAscending": false })];
-    let (mut kept, mut last) = (vec![], None::<String>);
-    loop {
-        let page = match &last {
-            Some(last) => json!({
-                "filter": filter, "sort": sort, "limit": limit, "anchor": last, "anchorOffset": 1,
-            }),
-            None => json!({ "filter": filter, "sort": sort, "limit": limit }),
-        };
-        let ids = mail.call(QUERY, page).await?.ids;
-        let more = ids.len() == limit.get();
-        last = ids.last().cloned();
-        let found: Vec<Email> = mail.get(&ids).await?;
+    let mut kept = vec![];
+    let query = json!({ "filter": filter, "sort": sort, "limit": limit });
+    mail.pages(query, async |page: Page| {
+        if page.first {
+            kept.clear();
+        }
+        let found: Vec<Email> = mail.get(&page.ids).await?;
         kept.extend(
             found
                 .into_iter()
                 .filter(|m| topics.is_empty() || names(&topics, m.to.iter().chain(&m.cc))),
         );
-        if !more || kept.len() >= limit.get() {
-            kept.truncate(limit.get());
-            return Ok(kept);
-        }
-    }
+        Ok(if kept.len() >= limit.get() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        })
+    })
+    .await?;
+    kept.truncate(limit.get());
+    Ok(kept)
 }
 
 pub fn place<'a>(

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fs::File};
+use std::{cell::RefCell, fs::File, ops::ControlFlow};
 
 use private::{Secret, random::below};
 use reqwest::{Method, Response, header};
@@ -16,6 +16,12 @@ use crate::{
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
 const PAGE: usize = 256;
 const RESTARTS: usize = 10;
+
+/// One page of an Email/query's ids; `first` again when the pages started over.
+pub struct Page {
+    pub ids: Vec<String>,
+    pub first: bool,
+}
 
 wire! {
     views under Mail {
@@ -59,7 +65,7 @@ wire! {
             state: String = "state", old_state: String = "oldState", new_state: String = "newState",
             created: Value = "created", not_created: Map<String, Value> = "notCreated",
             updated: Value = "updated", not_updated: Map<String, Value> = "notUpdated",
-            not_destroyed: Map<String, Value> = "notDestroyed",
+            not_destroyed: Map<String, Value> = "notDestroyed", limit: Option<u64> = "limit",
         }
     }
 }
@@ -358,24 +364,44 @@ impl Mail {
 
     /// Every id the filter matches, unsorted, since a sort is answered from the full-text index, which lags ingest.
     pub async fn query(&self, filter: Value) -> Result<Vec<String>> {
-        let (mut ids, mut restarts): (Vec<String>, usize) = (vec![], 0);
+        let mut ids = vec![];
+        self.pages(json!({ "filter": filter, "limit": PAGE }), async |page: Page| {
+            if page.first {
+                ids.clear();
+            }
+            ids.extend(page.ids);
+            Ok(ControlFlow::Continue(()))
+        })
+        .await?;
+        Ok(ids)
+    }
+
+    /// Email/query over `query`, page after page until `each` breaks or a page comes back shorter than the limit the
+    /// server used, which it may set below the one asked (RFC 8620 §5.5). A lost anchor starts the pages over.
+    pub async fn pages(
+        &self,
+        query: Value,
+        mut each: impl AsyncFnMut(Page) -> Result<ControlFlow<()>>,
+    ) -> Result<()> {
+        let asked = query["limit"].as_u64();
+        let (mut anchor, mut restarts) = (None::<String>, 0);
         loop {
-            let at = match ids.last() {
-                Some(last) => {
-                    json!({ "filter": filter, "limit": PAGE, "anchor": last, "anchorOffset": 1 })
-                }
-                None => json!({ "filter": filter, "limit": PAGE, "position": 0 }),
-            };
+            let mut at = query.clone();
+            match &anchor {
+                Some(last) => (at["anchor"], at["anchorOffset"]) = (json!(last), json!(1)),
+                None => at["position"] = json!(0),
+            }
             let Some(page) = self.answer(false, QUERY, at).await? else {
                 restarts += 1;
                 ensure!(restarts < RESTARTS, "the mail kept changing under Email/query's pages");
-                ids.clear();
+                anchor = None;
                 continue;
             };
-            let last = page.ids.len() < PAGE;
-            ids.extend(page.ids);
-            if last {
-                return Ok(ids);
+            let short = page.limit.or(asked).is_none_or(|l| (page.ids.len() as u64) < l);
+            let first = anchor.is_none();
+            anchor = page.ids.last().cloned();
+            if each(Page { ids: page.ids, first }).await?.is_break() || short {
+                return Ok(());
             }
         }
     }

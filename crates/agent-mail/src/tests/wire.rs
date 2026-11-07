@@ -194,6 +194,8 @@ pub struct Stalwart {
     start: Option<Instant>,
     /// Seconds after the start during which every request to the mail host is answered 503.
     down: std::ops::Range<u64>,
+    /// The most ids an Email/query page holds, whatever the request asks; told back as its `limit` (RFC 8620 §5.5).
+    pub query_cap: Option<usize>,
 }
 
 pub type Shared = Rc<RefCell<Stalwart>>;
@@ -359,8 +361,16 @@ impl Stalwart {
                     }
                     None => args["position"].as_u64().unwrap_or(0) as usize,
                 };
-                let limit = args["limit"].as_u64().map_or(usize::MAX, |l| l as usize);
-                json!({ "ids": ids.into_iter().skip(start).take(limit).collect::<Vec<_>>() })
+                let asked = args["limit"].as_u64().map_or(usize::MAX, |l| l as usize);
+                let page: Vec<_> = ids
+                    .into_iter()
+                    .skip(start)
+                    .take(asked.min(self.query_cap.unwrap_or(asked)))
+                    .collect();
+                match self.query_cap.filter(|cap| *cap < asked) {
+                    Some(cap) => json!({ "ids": page, "limit": cap }),
+                    None => json!({ "ids": page }),
+                }
             }
             "Thread/get" => {
                 let threads = args["ids"].as_array().unwrap().iter();
@@ -1204,4 +1214,17 @@ async fn inbox_lists_mail_to_its_topic_itself_and_pages_past_mail_to_a_longer_on
     assert_eq!(listed(&["pool"], 2).await, ["p1", "c1"]);
     assert_eq!(listed(&["pool-split", "other"], 10).await, ["s1", "o1", "s2"]);
     assert_eq!(listed(&[], 2).await, ["s1", "p1"]);
+}
+
+#[tokio::test]
+async fn queries_page_on_past_a_server_that_caps_its_pages() {
+    let dir = Scratch::new("capped");
+    let mut stalwart = Stalwart::new((1..=5).map(|i| email(&format!("m{i}"), json!({}))).collect());
+    stalwart.query_cap = Some(2);
+    let (_wire, _server, mail) = mail(&dir, stalwart).await;
+    let mail = mail.unwrap();
+    let all = ["m1", "m2", "m3", "m4", "m5"];
+    assert_eq!(mail.query(json!({})).await.unwrap(), all);
+    let newest = read::newest(&mail, &[], NonZeroUsize::new(10).unwrap()).await.unwrap();
+    assert_eq!(newest.into_iter().map(|m| m.id).collect::<Vec<_>>(), all);
 }
