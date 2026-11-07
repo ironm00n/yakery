@@ -46,3 +46,11 @@ fn a_to_of_another_shape_wakes_its_string_and_rejects_nothing() {
 fn an_agent_is_woken_whatever_the_case_of_its_address() {
     assert_eq!(woken(&[json!(["Alpha@AGENT.ironmoon.dev"])]), ["alpha"]);
 }
+
+#[test]
+fn a_refused_wake_is_not_taken() {
+    assert!(
+        taken(r#"{"refused":{"reason":"the session has stopped reading its input"}}"#).is_err()
+    );
+    assert!(matches!(taken(r#""injected""#), Ok(Reply::Injected)));
+}

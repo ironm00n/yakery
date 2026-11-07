@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_host::Vm;
-use agent_proto::{Key, Request, read_agents};
-use anyhow::{Context, Result};
+use agent_proto::{Key, Reply, Request, read_agents};
+use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use clap::Parser;
 use http_body_util::{BodyExt, Empty, Limited};
@@ -100,13 +100,13 @@ impl Dispatch {
             .collect()
     }
 
-    async fn wake(&self, agent: &str) -> Result<String> {
+    async fn wake(&self, agent: &str) -> Result<Reply> {
         let request = Request::Wake { agent: agent.to_owned(), message: MESSAGE.to_owned() };
         let mut replies = agent_proto::wake(self.cid, &self.key, &request).await?;
-        replies.next_line().await?.context("the daemon hung up without replying")
+        taken(&replies.next_line().await?.context("the daemon hung up without replying")?)
     }
 
-    async fn wake_until_answered(&self, agent: &str) -> Result<String> {
+    async fn wake_until_answered(&self, agent: &str) -> Result<Reply> {
         let mut attempt = 1;
         loop {
             match self.wake(agent).await {
@@ -118,6 +118,14 @@ impl Dispatch {
                 answered => return answered,
             }
         }
+    }
+}
+
+/// The daemon's first reply, if it took the wake: a refusal is retried like a failure to reach it.
+fn taken(line: &str) -> Result<Reply> {
+    match serde_json::from_str(line)? {
+        Reply::Refused { reason } => bail!("refused: {reason}"),
+        reply => Ok(reply),
     }
 }
 
@@ -135,7 +143,7 @@ async fn handle(
                         let dispatch = dispatch.clone();
                         tokio::spawn(async move {
                             match dispatch.wake_until_answered(&agent).await {
-                                Ok(reply) => note!("{agent}: {reply}"),
+                                Ok(reply) => note!("{agent}: {reply:?}"),
                                 Err(e) => fail!("{agent}: wake failed: {e:#}"),
                             }
                         });
