@@ -59,12 +59,15 @@ enum To {
 }
 
 impl To {
-    /// The journal records each line's priority and the program, so only a terminal or a file gets the name.
+    /// journald ends a record at each newline or NUL and takes the record's priority from its own prefix, which each
+    /// gets here; a line past journald's LineMax is cut into records without one. It records the program, so only a
+    /// terminal or a file gets the name.
     fn render(&self, priority: Priority, text: &str) -> String {
         match self {
-            To::Journal => {
-                text.split('\n').map(|line| format!("<{}>{line}\n", priority as u8)).collect()
-            }
+            To::Journal => text
+                .split(['\n', '\0'])
+                .map(|line| format!("<{}>{line}\n", priority as u8))
+                .collect(),
             To::Terminal(program) => format!("{program}: {text}\n"),
         }
     }
@@ -87,9 +90,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_journal_gets_a_priority_per_line_and_a_terminal_the_program() {
-        let journal = To::Journal.render(Priority::Warning, "refused\nsecond line");
-        assert_eq!(journal, "<4>refused\n<4>second line\n");
+    fn the_journal_gets_a_priority_after_each_newline_or_nul_and_a_terminal_the_program() {
+        let journal = To::Journal.render(Priority::Warning, "refused\nsecond line\0<0>third");
+        assert_eq!(journal, "<4>refused\n<4>second line\n<4><0>third\n");
         let terminal = To::Terminal("agentd".into()).render(Priority::Err, "refused\n  detail");
         assert_eq!(terminal, "agentd: refused\n  detail\n");
     }
