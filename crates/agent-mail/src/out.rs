@@ -1,3 +1,4 @@
+use base64::{Engine, engine::general_purpose::STANDARD};
 use private::{now, random};
 use text::Address;
 
@@ -12,29 +13,12 @@ use crate::{
     show::plain,
 };
 
-const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 pub fn fresh_id() -> Result<String> {
     random::chars(random::ALPHANUMERIC, 24)
 }
 
-pub fn base64(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | u32::from(b) << (16 - 8 * i));
-        out.extend((0..4).map(|i| {
-            if i <= chunk.len() {
-                char::from(BASE64[(n >> (18 - 6 * i) & 63) as usize])
-            } else {
-                '='
-            }
-        }));
-    }
-    out
-}
-
 pub fn base64_body(bytes: &[u8]) -> String {
-    let encoded = base64(bytes);
+    let encoded = STANDARD.encode(bytes);
     encoded
         .as_bytes()
         .chunks(76)
@@ -65,7 +49,7 @@ pub fn text(value: &str) -> String {
     }
     words
         .iter()
-        .map(|w| format!("=?UTF-8?B?{}?=", base64(w.as_bytes())))
+        .map(|w| format!("=?UTF-8?B?{}?=", STANDARD.encode(w)))
         .collect::<Vec<_>>()
         .join("\r\n ")
 }

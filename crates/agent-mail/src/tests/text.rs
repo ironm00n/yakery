@@ -5,7 +5,7 @@ use crate::{
     address::{MessageId, Topic},
     cmd::{claim, read, send, wait},
     mail::{Body, Email, Frames, Status, check_account, fill},
-    out::{Asked, Delivery, Entity, Head, base64, base64_body, text},
+    out::{Asked, Delivery, Entity, Head, base64_body, text},
     policy::{Recipients, correspondents},
     show::{Answering, message, reminder},
     store::Config,
@@ -180,13 +180,11 @@ fn recipients(from: &str, to: &str, cc: &str) -> Recipients {
 
 #[test]
 fn every_header_field_is_written_by_agent_mail() {
-    rows!(|s: &str| base64(s.as_bytes());
-        "" => ""; "f" => "Zg=="; "fo" => "Zm8="; "foo" => "Zm9v"; "foob" => "Zm9vYg==";
-        "fooba" => "Zm9vYmE="; "foobar" => "Zm9vYmFy";
+    let encoded = format!("{}eA==", "eHh4".repeat(33));
+    assert_eq!(
+        base64_body("x".repeat(100).as_bytes()),
+        format!("{}\r\n{}", &encoded[..76], &encoded[76..])
     );
-    let body = base64_body("x".repeat(100).as_bytes());
-    assert!(body.split("\r\n").all(|line| line.len() <= 76));
-    assert_eq!(body.replace("\r\n", ""), base64("x".repeat(100).as_bytes()));
     rows!(text;
         "Hi\r\nBcc: victim@example.com\r\n\r\nbody" => "Hi Bcc: victim@example.com body";
         "Read: x · y" => "=?UTF-8?B?UmVhZDogeCDCtyB5?="; "plain" => "plain";
