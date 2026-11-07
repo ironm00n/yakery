@@ -1,4 +1,5 @@
 use tokio::io::{BufReader, duplex};
+use tokio::time::timeout;
 
 use super::*;
 
@@ -101,4 +102,25 @@ async fn a_host_reports_an_agentd_that_hangs_up_and_asks_no_more() {
         async { anyhow::Ok(BufReader::new(duplex(64).0).lines()) }
     };
     assert!(answered(ask, |_| {}).await.is_err());
+}
+
+/// agentd's bound starts once it has read the request, a little after the host's.
+#[tokio::test(start_paused = true)]
+async fn a_host_takes_the_busy_answer_that_reaches_it_past_agentds_bound() {
+    let (host, mut daemon) = duplex(64);
+    let mut replies = BufReader::new(host).lines();
+    let answering = async move {
+        tokio::time::sleep(FIRST_REPLY + Duration::from_secs(1)).await;
+        daemon.write_all(b"\"busy\"\n").await.unwrap();
+        daemon
+    };
+    let (reply, _daemon) = tokio::join!(first_reply(&mut replies), answering);
+    assert_eq!(reply.unwrap(), r#""busy""#);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_host_gives_up_on_an_agentd_silent_past_its_bound() {
+    let (host, _daemon) = duplex(64);
+    let mut replies = BufReader::new(host).lines();
+    assert!(timeout(FIRST_REPLY * 2, first_reply(&mut replies)).await.unwrap().is_err());
 }

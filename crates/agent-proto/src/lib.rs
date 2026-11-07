@@ -180,12 +180,19 @@ where
 {
     loop {
         let mut replies = ask().await?;
-        let line = replies.next_line().await?.context("agentd hung up without replying")?;
+        let line = first_reply(&mut replies).await?;
         if !matches!(serde_json::from_str(&line), Ok(Reply::Busy)) {
             return Ok((line, replies));
         }
         busy(&line);
     }
+}
+
+/// agentd answers within FIRST_REPLY, Busy if need be, so a handshake's bound past it the host gives up only on a
+/// daemon that is not answering.
+async fn first_reply<R: AsyncBufRead + Unpin>(replies: &mut Lines<R>) -> Result<String> {
+    let line = tokio::time::timeout(FIRST_REPLY + HANDSHAKE, replies.next_line()).await;
+    line.context("agentd did not answer the wake")??.context("agentd hung up without replying")
 }
 
 #[cfg(test)]
