@@ -2,12 +2,12 @@
 //! (which events is the stalwart bundle's `deliveryWebhooks`), and every recipient in an event's `to` on the agent
 //! domain whose name is on the agent list gets a wake.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use agent_host::Vm;
@@ -20,6 +20,7 @@ use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Method, Response, StatusCode};
 use hyper_util::rt::TokioIo;
+use private::Dir;
 use serde::Deserialize;
 use serde_json::Value;
 use text::Address;
@@ -46,6 +47,9 @@ struct Args {
     agents: PathBuf,
     #[arg(long)]
     domain: String,
+    /// Where the agents owed a wake are saved, so a restart wakes them again.
+    #[arg(long)]
+    state: PathBuf,
     #[command(flatten)]
     vm: Vm,
 }
@@ -68,11 +72,89 @@ struct Recipients {
     to: Value,
 }
 
+/// The agents owed a wake, each with the mails taken for it since; their names are saved to `owed.json`, so a
+/// restart wakes each again.
+struct Owed {
+    dir: Dir,
+    mails: Mutex<BTreeMap<String, u64>>,
+}
+
+impl Owed {
+    const FILE: &str = "owed.json";
+
+    /// Those an earlier run left under `path`, for the agents still `listed`.
+    fn open(path: &Path, listed: impl Fn(&str) -> bool) -> Result<Self> {
+        let dir = Dir::open(path, &[])?;
+        dir.drop_stale_partials()?;
+        let names: BTreeSet<String> = dir.load(Self::FILE)?;
+        let mails =
+            names.into_iter().filter(|agent| listed(agent)).map(|agent| (agent, 1)).collect();
+        Ok(Owed { dir, mails: Mutex::new(mails) })
+    }
+
+    fn mails(&self) -> MutexGuard<'_, BTreeMap<String, u64>> {
+        self.mails.lock().expect("no panic holds the mails")
+    }
+
+    fn agents(&self) -> Vec<String> {
+        self.mails().keys().cloned().collect()
+    }
+
+    /// One more mail for `agent`: true if it was owed nothing, so no wake for it is under way. Saved every time, so
+    /// a mail retries a save that failed.
+    fn owe(&self, agent: &str) -> bool {
+        let mut mails = self.mails();
+        let first = !mails.contains_key(agent);
+        *mails.entry(agent.to_owned()).or_default() += 1;
+        self.save(&mails);
+        first
+    }
+
+    /// The mails taken for `agent` so far, which a wake begun now covers.
+    fn seen(&self, agent: &str) -> u64 {
+        self.mails().get(agent).copied().unwrap_or(0)
+    }
+
+    /// Clears what `agent` is owed unless a mail came after `seen`; true if it did.
+    fn settle(&self, agent: &str, seen: u64) -> bool {
+        let mut mails = self.mails();
+        let settled = mails.get(agent) == Some(&seen);
+        if settled {
+            mails.remove(agent);
+            self.save(&mails);
+        }
+        settled
+    }
+
+    /// Wakes `agent` with `wake` until a wake begun after its last mail has ended.
+    async fn until_settled<F: Future<Output = ()>>(
+        &self,
+        agent: &str,
+        mut wake: impl FnMut() -> F,
+    ) {
+        loop {
+            let seen = self.seen(agent);
+            wake().await;
+            if self.settle(agent, seen) {
+                break;
+            }
+        }
+    }
+
+    /// A failed save leaves the names to the next one.
+    fn save(&self, mails: &BTreeMap<String, u64>) {
+        if let Err(e) = self.dir.save(Self::FILE, &mails.keys().collect::<Vec<_>>()) {
+            warn!("could not save the owed wakes; a restart now would get them wrong: {e:#}");
+        }
+    }
+}
+
 struct Dispatch {
     /// Each listed agent's address on the agent domain, and its name.
     agents: Vec<(Address, String)>,
     cid: u32,
     key: Key,
+    owed: Owed,
 }
 
 impl Dispatch {
@@ -81,9 +163,33 @@ impl Dispatch {
         domain: &str,
         cid: u32,
         key: Key,
+        state: &Path,
     ) -> Result<Self> {
         let address = |name: String| Ok((format!("{name}@{domain}").parse()?, name));
-        Ok(Dispatch { agents: names.into_iter().map(address).collect::<Result<_>>()?, cid, key })
+        let agents: Vec<(Address, String)> =
+            names.into_iter().map(address).collect::<Result<_>>()?;
+        let owed = Owed::open(state, |agent| agents.iter().any(|(_, name)| name == agent))?;
+        Ok(Dispatch { agents, cid, key, owed })
+    }
+
+    /// The agents `batch` names that were owed nothing, whose wakes must start; the mail server is answered after.
+    fn take(&self, batch: &Batch) -> Vec<String> {
+        self.recipients(batch).into_iter().filter(|agent| self.owed.owe(agent)).collect()
+    }
+
+    /// Wakes `agent` until a wake begun after its last mail is answered or given up.
+    fn spawn_wakes(self: &Arc<Self>, agent: String) {
+        let dispatch = self.clone();
+        tokio::spawn(async move {
+            let (dispatching, agent) = (&dispatch, &agent);
+            let wake = move || async move {
+                match dispatching.wake_until_answered(agent).await {
+                    Ok(reply) => note!("{agent}: {reply:?}"),
+                    Err(e) => fail!("{agent}: wake failed: {e:#}"),
+                }
+            };
+            dispatch.owed.until_settled(agent, wake).await;
+        });
     }
 
     fn recipients(&self, batch: &Batch) -> BTreeSet<String> {
@@ -142,14 +248,8 @@ async fn handle(
         match Limited::new(request.into_body(), BODY_LIMIT).collect().await {
             Ok(body) => match serde_json::from_slice::<Batch>(&body.to_bytes()) {
                 Ok(batch) => {
-                    for agent in dispatch.recipients(&batch) {
-                        let dispatch = dispatch.clone();
-                        tokio::spawn(async move {
-                            match dispatch.wake_until_answered(&agent).await {
-                                Ok(reply) => note!("{agent}: {reply:?}"),
-                                Err(e) => fail!("{agent}: wake failed: {e:#}"),
-                            }
-                        });
+                    for agent in dispatch.take(&batch) {
+                        dispatch.spawn_wakes(agent);
                     }
                     StatusCode::OK
                 }
@@ -170,7 +270,11 @@ fn main() -> ExitCode {
 #[tokio::main]
 async fn serve(args: Args) -> Result<()> {
     let names = read_agents(&args.agents)?.into_keys();
-    let dispatch = Arc::new(Dispatch::new(names, &args.domain, args.vm.cid, args.vm.key()?)?);
+    let dispatch =
+        Arc::new(Dispatch::new(names, &args.domain, args.vm.cid, args.vm.key()?, &args.state)?);
+    for agent in dispatch.owed.agents() {
+        dispatch.spawn_wakes(agent);
+    }
     let listener = TcpListener::bind(args.listen).await?;
     loop {
         let (stream, peer) = yakery_serve::accept(async || listener.accept().await).await;

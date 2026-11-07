@@ -100,6 +100,8 @@ in
         (import ../../nix/vms/agents/agents-json.nix { inherit lib pkgs; })
         "--domain"
         my-lib.ironmoon.mail.agents.domain
+        "--state"
+        "%S/agent-dispatch"
         "--cid"
         (toString guest.vsock.cid)
         "--key"
@@ -107,6 +109,7 @@ in
       ];
       LoadCredential = [ "key:${keyFile}" ];
       DynamicUser = true;
+      StateDirectory = "agent-dispatch";
       Restart = "always";
     };
   };
