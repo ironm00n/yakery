@@ -97,8 +97,8 @@ fn the_shared_login_mails_only_its_domains_and_correspondents() {
     rows!(refused;
         (TOOLING, HIM, ""), (TOOLING, "x@AGENT.example.org", ""),
         (TOOLING, "agent+t@Example.Org", ""),
-        ("agent+unboca@example.org", "Colleague@Example.com", ""),
-        ("Agent+Unboca@Example.org", "Colleague@Example.com", "") => "ok";
+        ("agent+project@example.org", "Colleague@Example.com", ""),
+        ("Agent+Project@Example.org", "Colleague@Example.com", "") => "ok";
         (TOOLING, "someone@example.com", ""), (TOOLING, HIM, "someone@example.com") =>
             "someone@example.com";
         (TOOLING, "x@evil-example.org", "") => "x@evil-example.org";
@@ -109,7 +109,7 @@ fn the_shared_login_mails_only_its_domains_and_correspondents() {
     rows!(|(from, to)| check(from, to, "");
         (TOOLING, "someone@example.com") => "error: agent+tooling@example.org may mail only \
             example.org and agent.example.org, not someone@example.com";
-        ("agent+unboca@example.org", "stranger@example.com") => "error: agent+unboca@example.org \
+        ("agent+project@example.org", "stranger@example.com") => "error: agent+project@example.org \
             may mail only example.org, agent.example.org and its correspondents, not \
             stranger@example.com";
     );
@@ -602,7 +602,7 @@ fn a_reply_names_whom_and_what_it_answers() {
     };
     rows!(from;
         ("agent@example.org", Some("tooling"), None),
-        ("agent@example.org", Some("tooling"), Some("agent+unboca@example.org")) => TOOLING;
+        ("agent@example.org", Some("tooling"), Some("agent+project@example.org")) => TOOLING;
         ("agent@example.org", None, Some(POOL)) => POOL;
         ("ada@agent.example.org", None, None) => "ada@agent.example.org";
         ("agent@example.org", None, Some("agent@example.org")) => "error: a shared login sends from \

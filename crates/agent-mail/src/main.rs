@@ -40,7 +40,7 @@ deployment! {
     CORRESPONDENTS = "AGENT_MAIL_CORRESPONDENTS" | "" | true;
     SUBMISSION_KEY = "AGENT_MAIL_SUBMISSION_KEY" | "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw" | true;
     CORRESPONDENTS_FOR = "AGENT_MAIL_CORRESPONDENTS_FOR"
-        | r#"{"agent+unboca@example.org": ["colleague@example.com"]}"#;
+        | r#"{"agent+project@example.org": ["colleague@example.com"]}"#;
 }
 
 /// A wait's periods (`periods.nix`), in whole seconds from the build.

@@ -10,7 +10,7 @@ use crate::{
 
 const NOW: i64 = 1_800_000_000;
 const MESSAGE: &str = "From: Owner <owner@example.org>\r\nTo: agent+pool@example.org\r\nSubject: deploy\r\n\
-    Content-Type: text/plain\r\n\r\nyes, deploy it\r\n> deploy flex-3?\r\n";
+    Content-Type: text/plain\r\n\r\nyes, deploy it\r\n> deploy the server?\r\n";
 
 /// `message` as delivered, signed for `account` as sent from `sender` at `t`, with `above` written over the header.
 fn delivered_for(account: &str, sender: &str, t: i64, message: &str, above: &str) -> Vec<u8> {
@@ -38,7 +38,7 @@ fn a_mail_owen_sent_carries_what_he_signed_whatever_sits_above_it() {
             "owner@example.org".into(),
             vec![POOL.into()],
             "deploy".into(),
-            "yes, deploy it\n> deploy flex-3?\n".into()
+            "yes, deploy it\n> deploy the server?\n".into()
         )
     );
 }
@@ -92,7 +92,12 @@ fn an_inbox_line_shows_what_he_signed_and_why_other_mail_is_not_his() {
     );
     assert_eq!(
         [&his["text"], &his["signedAt"], &his["toLogin"], &his["topics"]],
-        [&json!("yes, deploy it\n> deploy flex-3?\n"), &json!(NOW), &json!(true), &json!(["pool"])]
+        [
+            &json!("yes, deploy it\n> deploy the server?\n"),
+            &json!(NOW),
+            &json!(true),
+            &json!(["pool"])
+        ]
     );
     assert!(his["signedId"].as_str().is_some_and(|s| s.len() == 64), "{his}");
     let listed = |m: Value, s: Signature| -> Value {

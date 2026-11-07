@@ -20,7 +20,7 @@ fn references_outside_the_mail_are_flagged() {
 fn labels_the_mail_never_introduces_are_flagged() {
     assert_eq!(texts("Do you want option A, or another one?"), ["option A"]);
     assert_eq!(texts("Confirm 1A and 2C, which the branches build on."), ["1A", "2C"]);
-    assert_eq!(texts("Logged for the batch: parsegen (item 19) matters more now."), ["item 19"]);
+    assert_eq!(texts("Logged for the batch: the parser (item 19) matters more now."), ["item 19"]);
     assert_eq!(texts("Recorded as E26 to E34 in the requirements."), ["E26", "E34"]);
 }
 
@@ -28,7 +28,10 @@ fn labels_the_mail_never_introduces_are_flagged() {
 fn labels_the_mail_introduces_pass() {
     let listed = "Two ways:\n- A: one shared layer per node\n- B: a layer per job\n\nPick A or B.";
     assert_eq!(texts(listed), Vec::<String>::new());
-    assert_eq!(texts("Option B (keep the parameter) is what elab built."), Vec::<String>::new());
+    assert_eq!(
+        texts("Option B (keep the parameter) is what the team built."),
+        Vec::<String>::new()
+    );
     assert_eq!(
         texts("1. Rebuild the cache.\n2. Rerun it.\n\nStep 2 waits on step 1."),
         Vec::<String>::new()

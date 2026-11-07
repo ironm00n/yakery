@@ -144,8 +144,8 @@ fn an_urgent_subject_is_the_news_as_written() {
         &format!("URGENT: {LOST}") => again(&format!("URGENT: {LOST}"));
         &format!("[ops][URGENT] {LOST}") => again(&format!("[ops][URGENT] {LOST}"));
         &format!("_Urgent_ {LOST}") => again(&format!("_Urgent_ {LOST}"));
-        "build keeper down since 02:10, non-urgent lanes paused"
-            => again("build keeper down since 02:10, non-urgent lanes paused");
+        "build queue down since 02:10, non-urgent jobs paused"
+            => again("build queue down since 02:10, non-urgent jobs paused");
         "node7 lost" => short("node7 lost", 10);
         &format!("node7 lost{}", "\u{1}".repeat(15)) => short("node7 lost", 10);
         &"é".repeat(24) => short(&"é".repeat(24), 24);
