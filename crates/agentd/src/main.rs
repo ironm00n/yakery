@@ -1,7 +1,7 @@
 //! The agent VM's root daemon: Claude Code reaches the host's gateway through it, each connection tagged with the
 //! uid it came from, and the host's wakes run as transient units in the agent's slice.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::CString;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::num::NonZero;
@@ -143,8 +143,133 @@ impl Run {
     }
 }
 
+/// What a session tells the waker that started it: its events, the oldest dropped first past `budget` (each counted
+/// with EVENT_COST) but the newest always kept; then how many were dropped; then its exit. The session never waits on
+/// its waker, and once the waker's `Reader` is gone the relay holds nothing.
+struct Relay {
+    budget: usize,
+    queue: std::sync::Mutex<Queue>,
+    ready: Notify,
+}
+
+/// What an event costs the relay beyond its bytes: the four queue slots `trim` lets it keep and the allocator's
+/// smallest chunk.
+const EVENT_COST: usize = 4 * size_of::<Box<RawValue>>() + 32;
+
+fn cost(event: &RawValue) -> usize {
+    event.get().len() + EVENT_COST
+}
+
+#[derive(Default)]
+struct Queue {
+    events: VecDeque<Box<RawValue>>,
+    cost: usize,
+    dropped: u64,
+    end: End,
+    unread: bool,
+}
+
+impl Queue {
+    /// Gives back the room the queue grew into for events since dropped or read.
+    fn trim(&mut self) {
+        if self.events.capacity() > 64.max(4 * self.events.len()) {
+            self.events.shrink_to(2 * self.events.len());
+        }
+    }
+}
+
+#[derive(Default)]
+enum End {
+    #[default]
+    Running,
+    Exited(Option<i32>),
+    Told,
+}
+
+impl Relay {
+    /// The relay, and its one reader.
+    fn new(budget: usize) -> (Arc<Self>, Reader) {
+        let relay = Arc::new(Relay { budget, queue: Default::default(), ready: Notify::new() });
+        (relay.clone(), Reader(relay))
+    }
+
+    /// Nothing that holds the lock can panic midway, so a poisoned queue is still whole.
+    fn queue(&self) -> std::sync::MutexGuard<'_, Queue> {
+        self.queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn event(&self, event: Box<RawValue>) {
+        let mut queue = self.queue();
+        if queue.unread {
+            return;
+        }
+        queue.cost += cost(&event);
+        queue.events.push_back(event);
+        while queue.cost > self.budget && queue.events.len() > 1 {
+            let oldest = queue.events.pop_front().expect("more than one");
+            queue.cost -= cost(&oldest);
+            queue.dropped += 1;
+        }
+        queue.trim();
+        drop(queue);
+        self.ready.notify_one();
+    }
+
+    fn exit(&self, code: Option<i32>) {
+        self.queue().end = End::Exited(code);
+        self.ready.notify_one();
+    }
+
+    /// None once the exit has been told; the one reader waits on `ready`, whose permit outlives a missed wakeup.
+    async fn next(&self) -> Option<Reply> {
+        loop {
+            {
+                let mut queue = self.queue();
+                if let Some(event) = queue.events.pop_front() {
+                    queue.cost -= cost(&event);
+                    queue.trim();
+                    return Some(Reply::Event(event));
+                }
+                match queue.end {
+                    End::Running => {}
+                    End::Exited(_) if queue.dropped > 0 => {
+                        return Some(Reply::Dropped { events: std::mem::take(&mut queue.dropped) });
+                    }
+                    End::Exited(code) => {
+                        queue.end = End::Told;
+                        return Some(Reply::Exited { code });
+                    }
+                    End::Told => return None,
+                }
+            }
+            self.ready.notified().await;
+        }
+    }
+}
+
+/// The waker's end of a relay: while it is held the relay keeps events for it, and once it is gone, nothing.
+struct Reader(Arc<Relay>);
+
+impl Reader {
+    async fn next(&self) -> Option<Reply> {
+        self.0.next().await
+    }
+}
+
+impl Drop for Reader {
+    /// The events are freed after the lock is let go, so `drive` doesn't wait on their freeing.
+    fn drop(&mut self) {
+        let mut queue = self.0.queue();
+        queue.unread = true;
+        queue.cost = 0;
+        let events = std::mem::take(&mut queue.events);
+        drop(queue);
+        drop(events);
+    }
+}
+
 enum Woken {
-    Started(mpsc::UnboundedReceiver<Reply>),
+    Started(Reader),
     Injected,
     Busy,
 }
@@ -309,9 +434,9 @@ impl State {
         session.send(message)?;
         agent.set(&mut run, Run::Running(session));
         let stdout = child.stdout.take().expect("piped");
-        let (tx, rx) = mpsc::unbounded_channel();
-        tokio::spawn(self.clone().drive(name.to_owned(), id, child, stdout, tx, slot));
-        Ok(Woken::Started(rx))
+        let (relay, reader) = Relay::new(MAX_EVENT);
+        tokio::spawn(self.clone().drive(name.to_owned(), id, child, stdout, relay, slot));
+        Ok(Woken::Started(reader))
     }
 
     async fn refresh_ca(&self) -> Result<()> {
@@ -379,7 +504,7 @@ impl State {
         id: u64,
         mut child: Child,
         stdout: ChildStdout,
-        tx: mpsc::UnboundedSender<Reply>,
+        relay: Arc<Relay>,
         _slot: OwnedSemaphorePermit,
     ) {
         #[derive(Deserialize)]
@@ -403,7 +528,7 @@ impl State {
                         ended = finished.then(Instant::now);
                         let event = String::from_utf8(line).ok().map(RawValue::from_string);
                         if let Some(Ok(event)) = event {
-                            let _ = tx.send(Reply::Event(event));
+                            relay.event(event);
                         }
                     }
                     Ok(Some(Line::Over)) => {
@@ -423,7 +548,7 @@ impl State {
         let code = child.wait().await.ok().and_then(|status| status.code());
         self.agents[&agent].advance(id, |_| true, Run::Idle).await;
         note!("{agent}: session exited with {code:?}");
-        let _ = tx.send(Reply::Exited { code });
+        relay.exit(code);
     }
 }
 
@@ -576,13 +701,12 @@ async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
     match state.wake(&agent, &message).await {
         Ok(Woken::Injected) => write.write_all(Reply::Injected.line().as_bytes()).await?,
         Ok(Woken::Busy) => write.write_all(Reply::Busy.line().as_bytes()).await?,
-        Ok(Woken::Started(mut replies)) => {
+        Ok(Woken::Started(relay)) => {
             note!("{agent}: session started");
             write.write_all(Reply::Started.line().as_bytes()).await?;
-            while let Some(reply) = replies.recv().await {
-                // A host that hung up stops listening; the session runs on.
+            // A host that hung up stops listening, and the reader's drop empties the relay; the session runs on.
+            while let Some(reply) = relay.next().await {
                 if write.write_all(reply.line().as_bytes()).await.is_err() {
-                    while replies.recv().await.is_some() {}
                     break;
                 }
             }

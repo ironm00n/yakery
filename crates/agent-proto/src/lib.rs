@@ -138,6 +138,7 @@ pub enum Reply {
     Busy,
     Refused { reason: String },
     Event(Box<RawValue>),
+    Dropped { events: u64 },
     Exited { code: Option<i32> },
 }
 

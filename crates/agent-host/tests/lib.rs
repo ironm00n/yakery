@@ -13,6 +13,12 @@ fn a_wake_goes_well_when_its_message_is_taken_or_its_session_exits_0() {
 }
 
 #[test]
+fn dropped_events_leave_a_wake_as_it_went() {
+    assert!(went_well(&[r#""injected""#, r#"{"dropped":{"events":3}}"#]));
+    assert!(!went_well(&[r#""started""#, r#"{"dropped":{"events":3}}"#]));
+}
+
+#[test]
 fn a_wake_goes_badly_with_no_reply_a_refusal_a_cut_off_session_or_any_other_exit() {
     for lines in [
         &[][..],

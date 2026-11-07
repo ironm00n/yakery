@@ -66,21 +66,55 @@ fn sh(script: &str) -> Child {
     command.kill_on_drop(true).spawn().unwrap()
 }
 
-/// Alpha's session `id` driven over `child` in the background, with a slot of its own unless given one.
-async fn driven(
+/// Alpha's session `id` driven over `child` in the background into `relay`, with a slot of its own unless given one.
+async fn driven_into(
+    relay: &Arc<Relay>,
     state: &Arc<State>,
     id: u64,
     mut child: Child,
     slot: Option<OwnedSemaphorePermit>,
-) -> (JoinHandle<()>, mpsc::UnboundedReceiver<Reply>) {
+) -> JoinHandle<()> {
     let stdout = child.stdout.take().unwrap();
-    let (tx, rx) = mpsc::unbounded_channel();
     let slot = match slot {
         Some(slot) => slot,
         None => Arc::new(Semaphore::new(1)).acquire_owned().await.unwrap(),
     };
-    (tokio::spawn(state.clone().drive("alpha".into(), id, child, stdout, tx, slot)), rx)
+    tokio::spawn(state.clone().drive("alpha".into(), id, child, stdout, relay.clone(), slot))
 }
+
+/// As agentd drives a session it starts.
+async fn driven(
+    state: &Arc<State>,
+    id: u64,
+    child: Child,
+    slot: Option<OwnedSemaphorePermit>,
+) -> (JoinHandle<()>, Reader) {
+    let (relay, reader) = Relay::new(MAX_EVENT);
+    (driven_into(&relay, state, id, child, slot).await, reader)
+}
+
+/// Everything the relay tells, as lines; a reply that doesn't come fails rather than hangs.
+async fn told(reader: &Reader) -> Vec<String> {
+    let mut lines = Vec::new();
+    while let Some(reply) = timeout(LONG, reader.next()).await.unwrap() {
+        lines.push(reply.line());
+    }
+    lines
+}
+
+/// The events a relay holds and their cost, read out before any assert so none panics with its lock held.
+fn held(relay: &Relay) -> (usize, usize) {
+    let queue = relay.queue();
+    (queue.events.len(), queue.cost)
+}
+
+/// The relay's budget for `events` events of `bytes` bytes each.
+fn budget(events: usize, bytes: usize) -> usize {
+    events * (bytes + EVENT_COST)
+}
+
+/// Twenty events, `{"n":1}` to `{"n":20}`.
+const TWENTY: &str = r#"i=1; while [ $i -le 20 ]; do printf '{"n":%d}\n' $i; i=$((i+1)); done"#;
 
 #[tokio::test]
 async fn a_line_is_whole_or_skipped_whole_past_the_bound() {
@@ -103,14 +137,13 @@ async fn a_line_is_whole_or_skipped_whole_past_the_bound() {
 #[tokio::test]
 async fn a_session_is_read_on_past_a_line_that_is_not_utf8() {
     let state = state(&[("alpha", 2001)]);
-    let (driving, mut rx) =
+    let (driving, reader) =
         driven(&state, 0, sh(r#"printf '\377\n{"type":"result"}\n'"#), None).await;
     driving.await.unwrap();
-    let mut replies = Vec::new();
-    while let Some(reply) = rx.recv().await {
-        replies.push(reply.line());
-    }
-    assert_eq!(replies, ["{\"event\":{\"type\":\"result\"}}\n", "{\"exited\":{\"code\":0}}\n"]);
+    assert_eq!(
+        told(&reader).await,
+        ["{\"event\":{\"type\":\"result\"}}\n", "{\"exited\":{\"code\":0}}\n"]
+    );
 }
 
 #[tokio::test]
@@ -165,7 +198,7 @@ async fn a_wake_for_an_ending_session_starts_the_next_once_its_process_exits() {
         let mut input = child.stdin.take().unwrap();
         put(&state, "alpha", Run::Ending(0)).await;
         let slot = holds_the_last_slot.then(|| state.slots.clone().try_acquire_owned().unwrap());
-        let (driving, _rx) = driven(&state, 0, child, slot).await;
+        let (driving, _relay) = driven(&state, 0, child, slot).await;
         let waiting = wake(&state, "hi".into());
         tokio::task::yield_now().await;
         let changed = state.agents["alpha"].changed.notified();
@@ -188,7 +221,7 @@ async fn a_session_that_ends_leaves_the_one_started_after_it() {
     let state = state(&[("alpha", 2001)]);
     let (_next, next) = unread(1);
     put(&state, "alpha", Run::Running(next)).await;
-    let (driving, _rx) = driven(&state, 0, sh("true"), None).await;
+    let (driving, _relay) = driven(&state, 0, sh("true"), None).await;
     driving.await.unwrap();
     assert_eq!(state.agents["alpha"].run.lock().await.id(), Some(1));
 }
@@ -241,8 +274,9 @@ async fn turn_ended(state: &Arc<State>) -> (Child, JoinHandle<()>) {
     let (input, session) = unread(0);
     put(state, "alpha", Run::Running(session)).await;
     let output = sh(r#"echo '{"type":"result"}'; exec sleep 600"#);
-    let (driving, mut rx) = driven(state, 0, output, None).await;
-    rx.recv().await.unwrap();
+    let (driving, reader) = driven(state, 0, output, None).await;
+    // no timeout: on these tests' paused clock it would fire before the output comes
+    reader.next().await.unwrap();
     (input, driving)
 }
 
@@ -359,4 +393,131 @@ fn a_later_run_names_no_session_as_an_earlier_run_did() {
     let named = [name(&earlier), name(&earlier)];
     assert_ne!(named[0], named[1]);
     assert!(!named.contains(&name(&state(&[("alpha", 2001)]))));
+}
+
+/// A waker that reads nothing until the session has exited: the session runs to its end, and the waker then gets the
+/// newest events that fit three of 8 bytes, in order, the number dropped, and the exit.
+#[tokio::test]
+async fn a_waker_that_never_reads_holds_up_no_session() {
+    let state = state(&[("alpha", 2001)]);
+    let (relay, reader) = Relay::new(budget(3, 8));
+    timeout(LONG, driven_into(&relay, &state, 0, sh(TWENTY), None).await).await.unwrap().unwrap();
+    assert_eq!(
+        told(&reader).await,
+        [
+            "{\"event\":{\"n\":18}}\n",
+            "{\"event\":{\"n\":19}}\n",
+            "{\"event\":{\"n\":20}}\n",
+            "{\"dropped\":{\"events\":17}}\n",
+            "{\"exited\":{\"code\":0}}\n",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_newest_event_is_kept_even_past_the_budget() {
+    let state = state(&[("alpha", 2001)]);
+    let (relay, reader) = Relay::new(1);
+    timeout(LONG, driven_into(&relay, &state, 0, sh(TWENTY), None).await).await.unwrap().unwrap();
+    assert_eq!(
+        told(&reader).await,
+        [
+            "{\"event\":{\"n\":20}}\n",
+            "{\"dropped\":{\"events\":19}}\n",
+            "{\"exited\":{\"code\":0}}\n"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_waker_within_the_budget_is_told_every_event() {
+    let state = state(&[("alpha", 2001)]);
+    let (driving, reader) = driven(&state, 0, sh(TWENTY), None).await;
+    timeout(LONG, driving).await.unwrap().unwrap();
+    let events = (1..=20).map(|n| format!("{{\"event\":{{\"n\":{n}}}}}\n"));
+    let all = events.chain(["{\"exited\":{\"code\":0}}\n".to_owned()]).collect::<Vec<_>>();
+    assert_eq!(told(&reader).await, all);
+}
+
+/// Three events of 7 bytes fit, are read, and then three more fit again.
+#[tokio::test]
+async fn events_the_waker_has_read_free_their_cost() {
+    let state = state(&[("alpha", 2001)]);
+    let (relay, reader) = Relay::new(budget(3, 7));
+    let mut child = sh(
+        r#"printf '{"n":1}\n{"n":2}\n{"n":3}\n'; read line; printf '{"n":4}\n{"n":5}\n{"n":6}\n'"#,
+    );
+    let mut input = child.stdin.take().unwrap();
+    let driving = driven_into(&relay, &state, 0, child, None).await;
+    let mut read = Vec::new();
+    for _ in 0..3 {
+        read.push(timeout(LONG, reader.next()).await.unwrap().unwrap().line());
+    }
+    input.write_all(b"\n").await.unwrap();
+    timeout(LONG, driving).await.unwrap().unwrap();
+    read.extend(told(&reader).await);
+    let events = (1..=6).map(|n| format!("{{\"event\":{{\"n\":{n}}}}}\n"));
+    assert_eq!(read, events.chain(["{\"exited\":{\"code\":0}}\n".to_owned()]).collect::<Vec<_>>());
+}
+
+/// The reader is waiting when the session, which says nothing, exits.
+#[tokio::test]
+async fn a_waiting_waker_is_told_the_exit() {
+    let state = state(&[("alpha", 2001)]);
+    let (relay, reader) = Relay::new(MAX_EVENT);
+    let waiting = tokio::spawn(async move { reader.next().await.map(|reply| reply.line()) });
+    tokio::task::yield_now().await;
+    timeout(LONG, driven_into(&relay, &state, 0, sh("exit 7"), None).await).await.unwrap().unwrap();
+    let told = timeout(LONG, waiting).await.unwrap().unwrap();
+    assert_eq!(told.as_deref(), Some("{\"exited\":{\"code\":7}}\n"));
+}
+
+#[tokio::test]
+async fn a_relay_whose_waker_is_gone_holds_nothing() {
+    let state = state(&[("alpha", 2001)]);
+    let (relay, reader) = Relay::new(MAX_EVENT);
+    drop(reader);
+    timeout(LONG, driven_into(&relay, &state, 0, sh(TWENTY), None).await).await.unwrap().unwrap();
+    assert_eq!(held(&relay), (0, 0));
+}
+
+/// Twenty events wait unread when the waker goes.
+#[tokio::test]
+async fn a_relay_lets_go_of_what_it_held_when_its_waker_goes() {
+    let state = state(&[("alpha", 2001)]);
+    let (relay, reader) = Relay::new(MAX_EVENT);
+    timeout(LONG, driven_into(&relay, &state, 0, sh(TWENTY), None).await).await.unwrap().unwrap();
+    assert_eq!(held(&relay).0, 20);
+    drop(reader);
+    assert_eq!(held(&relay), (0, 0));
+}
+
+/// A thousand one-byte events, then one the size of the budget, which drops them.
+#[test]
+fn a_relay_gives_back_the_room_of_events_it_dropped() {
+    let (relay, _reader) = Relay::new(budget(1000, 1));
+    for _ in 0..1000 {
+        relay.event(RawValue::from_string("1".into()).unwrap());
+    }
+    relay.event(RawValue::from_string(format!("\"{}\"", "x".repeat(budget(1000, 1)))).unwrap());
+    let (events, room) = {
+        let queue = relay.queue();
+        (queue.events.len(), queue.events.capacity())
+    };
+    assert_eq!(events, 1);
+    assert!(room <= 64, "{room}");
+}
+
+/// A waker that fell behind a burst of a thousand one-byte events, and then read them all.
+#[tokio::test]
+async fn a_relay_gives_back_the_room_of_events_it_has_told() {
+    let (relay, reader) = Relay::new(budget(1000, 1));
+    for _ in 0..1000 {
+        relay.event(RawValue::from_string("1".into()).unwrap());
+    }
+    for _ in 0..1000 {
+        timeout(LONG, reader.next()).await.unwrap().unwrap();
+    }
+    let room = relay.queue().events.capacity();
+    assert!(room <= 64, "{room}");
 }

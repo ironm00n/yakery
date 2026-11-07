@@ -31,7 +31,7 @@ impl Outcome {
         self.well = match reply {
             Reply::Injected | Reply::Exited { code: Some(0) } => true,
             Reply::Started | Reply::Busy | Reply::Refused { .. } | Reply::Exited { .. } => false,
-            Reply::Event(_) => self.well,
+            Reply::Event(_) | Reply::Dropped { .. } => self.well,
         };
     }
 }
