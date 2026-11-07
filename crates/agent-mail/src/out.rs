@@ -170,7 +170,7 @@ impl Delivery {
         let mut refused: Vec<_> = statuses
             .iter()
             .filter(|(_, s)| s.delivered == "no")
-            .map(|(a, s)| (a.clone(), s.reply.trim().to_owned()))
+            .map(|(a, s)| (a.clone(), plain(&s.reply).trim().to_owned()))
             .collect();
         refused.sort();
         if refused.len() == statuses.len() && !statuses.is_empty() {

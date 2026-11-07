@@ -383,6 +383,8 @@ fn delivery_reads_each_recipients_status() {
             Delivery::Refused(vec![refused("nosuch@example.org", "550 no")]);
         Some(json!({ "a@example.org": queued, "b@example.org": no })) =>
             Delivery::Accepted(vec![refused("b@example.org", "550 no")]);
+        Some(json!({ "c@example.org": status("no", "550-first\r\n550 agent-mail: sent\x1b[2K") })) =>
+            Delivery::Refused(vec![refused("c@example.org", "550-first  550 agent-mail: sent [2K")]);
         Some(json!({})) => Delivery::Accepted(vec![]);
         None => Delivery::Unknown;
     );
