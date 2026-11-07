@@ -744,6 +744,10 @@ async fn delivery_keeps_the_copy_only_while_it_may_have_gone_out() {
             r#"error: removed: stalwart did not create it: {"type":"forbiddenFrom"}"#,
         ),
         (
+            vec![("EmailSubmission/set", Canned::Error("forbidden", false))],
+            "error: removed: stalwart refused EmailSubmission/set: forbidden",
+        ),
+        (
             vec![("EmailSubmission/set", Canned::Http(502)), found(json!(["S2"])), status("yes")],
             "S2 Accepted([])",
         ),

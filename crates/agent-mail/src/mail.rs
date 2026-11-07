@@ -310,9 +310,9 @@ impl Mail {
                 replies.get(n).filter(|r| r[2].as_str().and_then(|i| i.parse().ok()) == Some(n));
             match reply.map(|r| (r[0].as_str(), r[1]["type"].as_str(), &r[1])) {
                 Some((Some("error"), kind, _)) if kind.is_some() && kind == *tolerated => Ok(None),
-                Some((Some("error"), kind, _)) => {
-                    bail!("stalwart refused {name}: {}", kind.unwrap_or_default())
-                }
+                // A method answered with an error made no change (RFC 8620 §3.6.2).
+                Some((Some("error"), kind, _)) => Err(Failure::Unprocessed
+                    .with(format!("stalwart refused {name}: {}", kind.unwrap_or_default()))),
                 Some((Some(_), _, answer)) => Ok(Some(
                     serde_json::from_value(answer.clone())
                         .with_context(|| format!("stalwart's {name} reply"))?,
