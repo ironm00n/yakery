@@ -6,6 +6,35 @@ let
     import sys
     held = b"\x01" * (int(sys.argv[1]) << 20)
   '';
+  # The interceptor, for what the bundle wires around it: it writes its CA and the policy, dispatch rule and pool token
+  # it was started with, opens its tap socket and takes connections on its proxy port.
+  tap = pkgs.runCommand "anthropic-tap-stand-in" { } ''
+    install -D -m 755 ${pkgs.writeScript "anthropic-tap" ''
+      #!${pkgs.python3}/bin/python3
+      import os, socket
+      env, state = os.environ, os.environ["STATE_DIR"]
+      open(f"{state}/ca.pem", "w").write("cert\n")
+      key = os.open(f"{state}/ca.key", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+      os.write(key, b"key\n")
+      creds = env.get("CREDENTIALS_DIRECTORY")
+      pool = open(f"{creds}/pool").read().strip() if creds else ""
+      open(f"{state}/seen", "w").write(f"{env.get('FLAGS')} {env.get('DISPATCH')} {pool}\n")
+      tap = socket.socket(socket.AF_UNIX)
+      tap.bind(env["TAP_SOCK"])
+      os.chmod(env["TAP_SOCK"], int(env["TAP_SOCK_MODE"], 8))
+      tap.listen()
+      host, port = env["LISTEN_PROXY"].rsplit(":", 1)
+      proxy = socket.create_server((host, int(port)))
+      while True:
+          proxy.accept()[0].close()
+    ''} $out/bin/anthropic-tap
+    install -D -m 644 ${pkgs.writeText "policy.env" "FLAGS=a=true,b=false\n"} $out/share/anthropic-tap/policy.env
+  '';
+  connect = pkgs.writeText "connect.py" ''
+    import socket, sys
+    family, address = (socket.AF_UNIX, sys.argv[1]) if "/" in sys.argv[1] else (socket.AF_INET, ("127.0.0.1", int(sys.argv[1])))
+    socket.socket(family).connect(address)
+  '';
   common = {
     imports = [ ../../bundles/claude-agent.nix ];
     bundles.claude-agent = {
@@ -13,7 +42,12 @@ let
       owner = "ironmoon";
       memoryMax = "300M";
       sessionMemoryMax = "100M";
+      tap = {
+        profile = tap;
+        poolTokenFile = "/etc/pool.key";
+      };
     };
+    environment.etc."pool.key".text = "token\n";
     users.users.ironmoon.isNormalUser = true;
     environment.systemPackages = [ pkgs.python3 ];
     virtualisation.memorySize = 1024;
@@ -76,6 +110,26 @@ pkgs.testers.runNixOSTest {
         desktop.succeed(asAgent("systemd-run --user --scope python3 ${hog} 50"))
         desktop.fail(asAgent("systemd-run --user --scope python3 ${hog} 400"))
         assert sliceOoms() > 0
+
+    with subtest("its tap runs under a uid of its own, with the policy file and the pool token the account can't read"):
+        desktop.wait_for_unit("claude-agent-tap.service")
+        seen = desktop.succeed("cat /var/lib/claude-agent-tap/seen").strip()
+        assert seen == "a=true,b=false pool token", seen
+        unit = desktop.succeed("cat /etc/anthropic-tap/claude-agent")
+        desktop.succeed(f"systemctl is-active {unit}")
+        user = desktop.succeed("ps -o user:32= -p $(systemctl show -p MainPID --value claude-agent-tap)").strip()
+        assert user == "claude-agent-tap", user
+        refused(asAgent("cat /run/credentials/claude-agent-tap.service/pool"), "Permission denied")
+
+    with subtest("the account reads the tap's certificate and never its key"):
+        desktop.succeed(asAgent("cat /var/lib/claude-agent-tap/ca.pem"))
+        refused(asAgent("cat /var/lib/claude-agent-tap/ca.key"), "Permission denied")
+
+    with subtest("only the account reaches its tap's port, and only he reads the tap"):
+        desktop.wait_until_succeeds(asAgent("python3 ${connect} 8891"))
+        refused("su ironmoon -c 'python3 ${connect} 8891'", "Connection refused")
+        desktop.succeed("su ironmoon -c 'python3 ${connect} /run/claude-agent-tap/events.sock'")
+        refused(asAgent("python3 ${connect} /run/claude-agent-tap/events.sock"), "Permission denied")
 
     with subtest("its key logs in to itself on the laptop and never to him"):
         laptop.wait_for_unit("sshd.service")
