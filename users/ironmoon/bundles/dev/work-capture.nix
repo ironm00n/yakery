@@ -1,11 +1,6 @@
-# Files every request Owen types to an agent session as an agents/work issue (notes repo tools/work-capture). One host
-# runs it: each keeps its own seen file, so a second would file everything twice.
-{
-  config,
-  lib,
-  pkgs,
-  ...
-}:
+# Files every request Owen types or mails to an agent session as an agents/work issue (notes repo tools/work-capture).
+# One host runs it: each keeps its own seen file, so a second would file everything twice.
+{ config, lib, ... }:
 let
   inherit (config.home) homeDirectory username;
 in
@@ -14,11 +9,11 @@ in
 
   config = lib.mkIf (config.bundles.dev.enable && config.bundles.dev.work-capture) {
     systemd.user.services.work-capture = {
-      Unit.Description = "File Owen's typed requests as agents/work issues";
+      Unit.Description = "File Owen's typed and mailed requests as agents/work issues";
       Service = {
         Type = "oneshot";
-        ExecStart = "${lib.getExe pkgs.bash} ${homeDirectory}/workspace/claude/tools/work-capture/run.sh";
-        # claude-tap from his `nix profile`, and his python, as his sessions find them
+        ExecStart = "${homeDirectory}/workspace/claude/tools/work-capture/work-capture.py";
+        # claude-tap from his `nix profile`, and agent-mail and python3 from home-manager's, as his sessions find them
         Environment = [
           "PATH=${homeDirectory}/.nix-profile/bin:/etc/profiles/per-user/${username}/bin:/run/current-system/sw/bin"
         ];
