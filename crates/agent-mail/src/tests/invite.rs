@@ -165,6 +165,13 @@ async fn an_invitation_made_again_is_the_one_already_made() {
     let mail = mail.unwrap();
     assert_eq!(invite(&mail, asked(NEW)).await.unwrap(), "e1");
     assert_eq!(invite(&mail, asked(NEW)).await.unwrap(), "e1");
+    let him = HIM.to_uppercase();
+    let shouted: Vec<&str> = NEW.iter().map(|w| if *w == HIM { him.as_str() } else { w }).collect();
+    assert_eq!(
+        invite(&mail, asked(&shouted)).await.unwrap(),
+        "e1",
+        "an address the same but for case"
+    );
     assert_eq!(server.borrow().events.len(), 1);
     let other = [NEW, &["--location", "elsewhere"]].concat();
     assert_eq!(

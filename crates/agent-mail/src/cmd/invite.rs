@@ -125,8 +125,8 @@ fn deployment_zone() -> Result<Zone> {
     Zone::named(TIME_ZONE).context("the deployment's time zone")
 }
 
-/// An invitation's uid, from what makes it the same invitation, so `invite new` run again finds the event an
-/// earlier run may have made instead of inviting twice.
+/// An invitation's uid, from what makes it the same invitation, the addresses as they compare, without case, so
+/// `invite new` run again finds the event an earlier run may have made instead of inviting twice.
 fn uid(
     organizer: &Address,
     invited: &[String],
@@ -134,9 +134,10 @@ fn uid(
     start: Timestamp,
     duration: SignedDuration,
 ) -> String {
-    let mut invited = invited.to_vec();
+    let mut invited: Vec<String> = invited.iter().map(|a| a.to_lowercase()).collect();
     invited.sort();
-    let key = format!("{organizer}\n{}\n{title}\n{start}\n{duration}", invited.join("\n"));
+    let from = organizer.to_string().to_lowercase();
+    let key = format!("{from}\n{}\n{title}\n{start}\n{duration}", invited.join("\n"));
     let hash = private::hex::encode(digest(&SHA256, key.as_bytes()).as_ref());
     format!("{}@{}", &hash[..32], organizer.domain())
 }
