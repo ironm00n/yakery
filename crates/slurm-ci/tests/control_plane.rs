@@ -2,14 +2,19 @@
 //! and `dispatch` behind a fake `ssh`, with fake Slurm commands and the test
 //! itself playing the compute node over the real TLS callback.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
+use std::os::fd::AsFd;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+use nix::sys::inotify::{AddWatchFlags, InitFlags, Inotify, WatchDescriptor};
+use rustix::process::{Pid, PidfdFlags, pidfd_open};
 use slurm_ci::callback::{self, Hello, Msg};
 use slurm_ci::cluster::rundir::JobFile;
 use slurm_ci::ids::Token;
@@ -45,11 +50,19 @@ fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
-fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !cond() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        thread::sleep(Duration::from_millis(50));
+/// Watches DIR and every dir below it, now and as inotify reports them made.
+fn watch_tree(inotify: &Inotify, dirs: &mut HashMap<WatchDescriptor, PathBuf>, dir: &Path) {
+    let changes = AddWatchFlags::IN_CREATE
+        | AddWatchFlags::IN_CLOSE_WRITE
+        | AddWatchFlags::IN_MOVED_TO
+        | AddWatchFlags::IN_MOVED_FROM
+        | AddWatchFlags::IN_DELETE;
+    let Ok(wd) = inotify.add_watch(dir, changes) else { return };
+    dirs.insert(wd, dir.to_path_buf());
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            watch_tree(inotify, dirs, &entry.path());
+        }
     }
 }
 
@@ -119,8 +132,38 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
             .spawn()
             .unwrap();
         let h = Harness { _dir: dir, fake_home, state, socket, port, daemon };
-        wait_for("daemon socket", || h.socket.exists());
+        h.wait_for("daemon socket", || h.socket.exists());
         h
+    }
+
+    /// Blocks until COND holds, rechecking it after each change inotify reports under the harness's dir, so the wait
+    /// takes no clock; the daemon exiting first fails the test.
+    fn wait_for(&self, what: &str, mut cond: impl FnMut() -> bool) {
+        let inotify = Inotify::init(InitFlags::IN_NONBLOCK | InitFlags::IN_CLOEXEC).unwrap();
+        let mut dirs = HashMap::new();
+        watch_tree(&inotify, &mut dirs, self._dir.path());
+        let exited = pidfd_open(Pid::from_child(&self.daemon), PidfdFlags::empty()).unwrap();
+        while !cond() {
+            let mut fds = [
+                PollFd::new(inotify.as_fd(), PollFlags::POLLIN),
+                PollFd::new(exited.as_fd(), PollFlags::POLLIN),
+            ];
+            poll(&mut fds, PollTimeout::NONE).unwrap();
+            assert!(
+                fds[1].revents().is_none_or(|r| r.is_empty()),
+                "the daemon exited while waiting for {what}"
+            );
+            for event in inotify.read_events().unwrap_or_default() {
+                if event.mask.contains(AddWatchFlags::IN_Q_OVERFLOW) {
+                    watch_tree(&inotify, &mut dirs, self._dir.path());
+                } else if event.mask.contains(AddWatchFlags::IN_ISDIR)
+                    && let (Some(parent), Some(name)) = (dirs.get(&event.wd), &event.name)
+                {
+                    let made = parent.join(name);
+                    watch_tree(&inotify, &mut dirs, &made);
+                }
+            }
+        }
     }
 
     fn start_run(&self, event: &str) -> Child {
@@ -142,7 +185,7 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
     fn wait_run_dir(&self, seen: &[PathBuf]) -> (PathBuf, JobFile, Token, JobId) {
         let ci = self.fake_home.join("ci");
         let mut found = None;
-        wait_for("run dir with jobid", || {
+        self.wait_for("run dir with jobid", || {
             let Ok(entries) = fs::read_dir(&ci) else {
                 return false;
             };
@@ -269,14 +312,14 @@ fn green_via_callback_streams_log() {
     assert!(err.contains("green"), "{err}");
     assert!(err.contains("started on d0020"), "{err}");
 
-    wait_for("done marker", || dir.join("done").exists());
+    h.wait_for("done marker", || dir.join("done").exists());
     let records = h.jsonl();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["verdict"]["kind"], "green");
     assert_eq!(records[0]["verdict_via"], "callback");
     assert_eq!(records[0]["eff"]["sacct"]["max_rss"], "4000000K");
     assert_eq!(records[0]["mem_overshoot"], false);
-    wait_for("registry cleared", || fs::read_dir(h.state.join("runs")).unwrap().count() == 0);
+    h.wait_for("registry cleared", || fs::read_dir(h.state.join("runs")).unwrap().count() == 0);
 }
 
 #[test]
@@ -361,9 +404,9 @@ fn cancel_scancels_and_exits_promptly() {
     assert_eq!(code, 1);
     assert!(t.elapsed() < Duration::from_secs(10));
     assert!(err.contains("cancelled"), "{err}");
-    wait_for("scancel", || h.fake_home.join("scancelled").exists());
+    h.wait_for("scancel", || h.fake_home.join("scancelled").exists());
     assert_eq!(fs::read_to_string(h.fake_home.join("scancelled")).unwrap().trim(), jobid.as_str());
-    wait_for("jsonl", || !h.jsonl().is_empty());
+    h.wait_for("jsonl", || !h.jsonl().is_empty());
     assert_eq!(h.jsonl()[0]["verdict"]["kind"], "red");
 }
 
@@ -442,7 +485,7 @@ fn daemon_restart_reattaches() {
     let run = h.start_run("push");
     let (_, _, _, jobid) = h.wait_run_dir(&[]);
     // the fake cluster holds the job before the daemon's registry does: a kill between the two leaves nothing to reattach
-    wait_for("the registry to record the job", || h.recorded_jobs() == [jobid.to_string()]);
+    h.wait_for("the registry to record the job", || h.recorded_jobs() == [jobid.to_string()]);
     h.daemon.kill().unwrap();
     h.daemon.wait().unwrap();
     let (code, _, err) = Harness::finish(run);
@@ -475,9 +518,17 @@ fn daemon_restart_reattaches() {
         .stderr(Stdio::inherit())
         .spawn()
         .unwrap();
-    wait_for("reconciled", || fs::read_dir(h.state.join("runs")).unwrap().count() == 0);
+    h.wait_for("reconciled", || fs::read_dir(h.state.join("runs")).unwrap().count() == 0);
     let records = h.jsonl();
     assert_eq!(records.len(), 1);
     assert_eq!(records[0]["verdict"]["kind"], "green");
     assert_eq!(records[0]["verdict_via"], "sacct");
+}
+
+#[test]
+#[should_panic(expected = "the daemon exited while waiting for nothing")]
+fn a_wait_ends_when_the_daemon_exits() {
+    let mut h = Harness::new(TOML);
+    h.daemon.kill().unwrap();
+    h.wait_for("nothing", || false);
 }
