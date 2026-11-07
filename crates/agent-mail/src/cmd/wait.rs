@@ -14,7 +14,7 @@ use text::Address;
 use crate::{
     BACKOFF, RECHECK, STALE, SUBMISSION_KEY,
     address::{SessionId, Topic},
-    authority::{self, Signed},
+    authority::{self, Word},
     jmap::wire,
     listeners::{Leave, Listeners},
     mail::{Addr, Body, Email, Keyword, Mail, Mark, names},
@@ -23,8 +23,6 @@ use crate::{
     show::{Answering, message, out, reminder, utc},
     store::{Config, Records, Store, Watched},
 };
-
-const MAX_MESSAGE_BYTES: usize = 32 << 20;
 
 macro_rules! exits {
     (timeout $timeout:literal, deferred $deferred:literal) => {
@@ -516,19 +514,13 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
 }
 
 /// Whether `m` is Owen's word, read from the message as Stalwart holds it.
-async fn authority(mail: &Mail, m: &Email, topics: &[Address]) -> Result<Result<Signed, String>> {
-    Ok(match mail.download(&m.blob, MAX_MESSAGE_BYTES).await? {
-        Some(raw) => authority::check(SUBMISSION_KEY, &raw, topics, now()),
-        None => Err(format!(
-            "the message is over {} MiB, so its signature goes unchecked",
-            MAX_MESSAGE_BYTES >> 20
-        )),
-    })
+async fn authority(mail: &Mail, m: &Email, topics: &[Address]) -> Result<Result<Word, String>> {
+    Ok(mail.message(m).await?.and_then(|raw| authority::check(SUBMISSION_KEY, &raw, topics, now())))
 }
 
 /// One mail as one line, whatever its text holds; with Owen's authority, its addressing, subject, text and the mail
 /// of `thread` it answers are the ones he signed.
-pub fn line(m: &Email, body: &Body, verdict: &Result<Signed, String>, thread: &[Email]) -> String {
+pub fn line(m: &Email, body: &Body, verdict: &Result<Word, String>, thread: &[Email]) -> String {
     let values: Vec<_> = body.text.iter().filter_map(|p| body.values.get(&p.part)).collect();
     let emails = |l: &[Addr]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
     let (from, to, cc, subject, text, truncated, reason) = match verdict {

@@ -456,6 +456,15 @@ impl Mail {
         Ok(uploaded["blobId"].as_str().context("stalwart's upload reply names no blob")?.into())
     }
 
+    /// `m` as Stalwart holds it, or why it can't be read whole.
+    pub async fn message(&self, m: &Email) -> Result<Result<Vec<u8>, String>> {
+        const MOST: usize = 32 << 20;
+        Ok(self.download(&m.blob, MOST).await?.ok_or(format!(
+            "the message is over {} MiB, so its signature goes unchecked",
+            MOST >> 20
+        )))
+    }
+
     pub async fn download(&self, blob: &str, most: usize) -> Result<Option<Vec<u8>>> {
         let ids = [("accountId", jmap_id(self.account(Cap::Mail)?)?), ("blobId", jmap_id(blob)?)];
         let fixed = [("name", "attachment"), ("type", "application%2Foctet-stream")];

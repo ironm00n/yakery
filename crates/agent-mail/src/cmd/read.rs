@@ -9,10 +9,12 @@ use text::Address;
 
 use super::succeed;
 use crate::{
+    SUBMISSION_KEY,
     address::{MessageId, Topic},
     auth::Auth,
+    authority::{self, Signed},
     jmap::wire,
-    mail::{Body, Email, Keyword, Mail, Part, QUERY, Text, names},
+    mail::{Addr, Body, Email, Keyword, Mail, Part, QUERY, Text, names},
     out::is_receipt,
     prelude::*,
     show::{Answering, emails, inbox_line, message, out, plain, utc},
@@ -107,6 +109,11 @@ pub struct Inbox {
     topic: Vec<Topic>,
     #[arg(long, default_value = "10")]
     limit: NonZeroUsize,
+    /// Print each mail as one JSON object on a line of its own, `signedByOwen` saying whether its signature makes it
+    /// his, and his mail's addressing, subject, text and signing time read from the bytes he signed. Like the rest of
+    /// inbox, it claims nothing and marks nothing seen, and it is no approval: that comes only through `wait`.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(clap::Args)]
@@ -139,12 +146,64 @@ enum Rotation {
 pub async fn inbox(args: Inbox) -> Result<ExitCode> {
     let mail = Mail::open().await?;
     let listed = newest(&mail, &args.topic, args.limit).await?;
+    if args.json {
+        for m in &listed {
+            let signature = match mail.message(m).await {
+                Ok(Ok(raw)) => authority::signed(SUBMISSION_KEY, &raw)
+                    .map_or_else(Signature::NotHis, Signature::His),
+                Ok(Err(why)) => Signature::Unchecked(why),
+                Err(e) => Signature::Unchecked(format!("the message could not be read: {e:#}")),
+            };
+            out(&listing(m, &signature))?;
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     let files: Vec<Attached> = mail.get(&listed.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
     for m in &listed {
         let files = files.iter().find(|f| f.id == m.id).map_or(&[][..], |f| &f.attachments);
         out(&inbox_line(m, files))?;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// What the listing learned of a mail's signature.
+pub enum Signature {
+    His(Signed),
+    NotHis(String),
+    /// The message couldn't be read whole, so whose it is wasn't checked
+    Unchecked(String),
+}
+
+/// One inbox mail as one JSON line; when Owen signed it, its addressing, subject and text are what he signed.
+/// `signedByOwen` (null when unchecked) says who wrote it and nothing more: it skips the wait's age and topic rules,
+/// so it approves nothing, and the signature, which approvals are known by, isn't printed. His word to a session
+/// comes only through `wait` ([`authority::check`]). `id`, `threadId` and `receivedAt` are the mailbox copy's, which
+/// an import can set; `signedId` (a hash of the signature) and `signedAt` are the signed message's own.
+pub fn listing(m: &Email, signature: &Signature) -> String {
+    let addresses = |l: &[Addr]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
+    let his = match signature {
+        Signature::His(s) => Some(s),
+        _ => None,
+    };
+    let (from, to, cc, subject) = match his {
+        Some(s) => (s.from.clone(), s.to.clone(), s.cc.clone(), s.subject.clone()),
+        None => (emails(&m.from), addresses(&m.to), addresses(&m.cc), m.subject.clone()),
+    };
+    let (owen, reason) = match signature {
+        Signature::His(_) => (Some(true), None),
+        Signature::NotHis(why) => (Some(false), Some(why)),
+        Signature::Unchecked(why) => (None, Some(why)),
+    };
+    let id = |s: &Signed| {
+        let digest = ring::digest::digest(&ring::digest::SHA256, s.signature.as_bytes());
+        digest.as_ref().iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    json!({
+        "id": m.id, "threadId": m.thread, "receivedAt": m.received, "from": from, "to": to, "cc": cc,
+        "subject": subject, "signedByOwen": owen, "text": his.map(|s| &s.text), "signedAt": his.map(|s| s.at),
+        "signedId": his.map(id), "reason": reason,
+    })
+    .to_string()
 }
 
 /// The newest `limit` inbox mail, only that to or cc one of `topics` when any is given. The server's filter is a first

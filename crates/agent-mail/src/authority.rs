@@ -1,10 +1,10 @@
-//! Whether a mail is Owen's word: its `Submission-Signature` verifies with the signer's key built in, it was signed
-//! for his account and sent from one of his addresses, it was signed within ten minutes, and its signed To or Cc
-//! names a topic the wait watches. What it says is then read from the signed bytes alone, never from headers above
-//! them, which anyone who can put a message in the mailbox writes.
+//! Whether a mail is Owen's: its `Submission-Signature` verifies with the signer's key built in, and it was signed
+//! for his account and sent from one of his addresses ([`signed`]). It is his word to a wait when it was also signed
+//! within ten minutes and its signed To or Cc names a topic the wait watches ([`check`]). What it says is read from
+//! the signed bytes alone, never from headers above them, which anyone who can put a message in the mailbox writes.
 
 use mail_parser::{Address as Parsed, MessageParser};
-use submission_signature::verify;
+use submission_signature::{Verified, verify};
 use text::Address;
 
 use crate::DOMAIN;
@@ -33,6 +33,20 @@ pub struct Signed {
     pub text: String,
     pub in_reply_to: Vec<String>,
     pub signature: String,
+    /// When it was signed, in Unix seconds
+    pub at: i64,
+}
+
+/// His word to a wait: a mail he signed that also meets the wait's rules. Only [`check`] makes one, so code that
+/// acts on his word can't be handed a [`signed`] mail of any age or address.
+#[derive(Debug, PartialEq)]
+pub struct Word(Signed);
+
+impl std::ops::Deref for Word {
+    type Target = Signed;
+    fn deref(&self) -> &Signed {
+        &self.0
+    }
 }
 
 fn emails(a: Option<&Parsed>) -> Vec<String> {
@@ -41,8 +55,8 @@ fn emails(a: Option<&Parsed>) -> Vec<String> {
     })
 }
 
-/// `raw` as Owen's word, or why it isn't.
-pub fn check(public: &str, raw: &[u8], topics: &[Address], now: i64) -> Result<Signed, String> {
+/// `raw`'s signature, if it verifies and was made for his account as sent from one of his addresses.
+fn stamped<'a>(public: &str, raw: &'a [u8]) -> Result<Verified<'a>, String> {
     let verified = verify(public, raw).map_err(|e| e.to_string())?;
     let (account, sender) = (verified.stamp.account.to_string(), verified.stamp.sender.to_string());
     let his = |local: &str, name: &str| name.eq_ignore_ascii_case(&format!("{local}@{DOMAIN}"));
@@ -52,6 +66,35 @@ pub fn check(public: &str, raw: &[u8], topics: &[Address], now: i64) -> Result<S
     if !OWNERS.iter().any(|o| his(o, &sender)) {
         return Err(format!("signed as sent from {sender}, not one of Owen's addresses"));
     }
+    Ok(verified)
+}
+
+/// What the signed bytes say.
+fn read(verified: Verified) -> Result<Signed, String> {
+    let parsed =
+        MessageParser::new().parse(verified.message).ok_or("the signed bytes are no message")?;
+    let texts: Vec<_> = (0..parsed.text_body_count()).filter_map(|i| parsed.body_text(i)).collect();
+    let answered = parsed.in_reply_to().as_text_list().unwrap_or_default();
+    Ok(Signed {
+        from: emails(parsed.from()).join(", "),
+        to: emails(parsed.to()),
+        cc: emails(parsed.cc()),
+        subject: parsed.subject().unwrap_or_default().into(),
+        text: texts.join("\n").replace("\r\n", "\n"),
+        in_reply_to: answered.iter().map(ToString::to_string).collect(),
+        signature: verified.signature,
+        at: verified.stamp.t,
+    })
+}
+
+/// `raw` as Owen signed it, whenever and to whomever, or why it isn't his.
+pub fn signed(public: &str, raw: &[u8]) -> Result<Signed, String> {
+    read(stamped(public, raw)?)
+}
+
+/// `raw` as Owen's word to a wait watching `topics` at `now`, or why it isn't.
+pub fn check(public: &str, raw: &[u8], topics: &[Address], now: i64) -> Result<Word, String> {
+    let verified = stamped(public, raw)?;
     match now - verified.stamp.t {
         age if age > AGE => return Err(format!("signed {age} s ago, over {AGE} s")),
         age if -age > AHEAD => {
@@ -59,22 +102,10 @@ pub fn check(public: &str, raw: &[u8], topics: &[Address], now: i64) -> Result<S
         }
         _ => {}
     }
-    let parsed =
-        MessageParser::new().parse(verified.message).ok_or("the signed bytes are no message")?;
-    let (to, cc) = (emails(parsed.to()), emails(parsed.cc()));
+    let signed = read(verified)?;
     let named = |a: &String| a.parse::<Address>().is_ok_and(|a| topics.contains(&a));
-    if !to.iter().chain(&cc).any(named) {
+    if !signed.to.iter().chain(&signed.cc).any(named) {
         return Err("signed, but to no topic this wait watches".into());
     }
-    let texts: Vec<_> = (0..parsed.text_body_count()).filter_map(|i| parsed.body_text(i)).collect();
-    let answered = parsed.in_reply_to().as_text_list().unwrap_or_default();
-    Ok(Signed {
-        from: emails(parsed.from()).join(", "),
-        to,
-        cc,
-        subject: parsed.subject().unwrap_or_default().into(),
-        text: texts.join("\n").replace("\r\n", "\n"),
-        in_reply_to: answered.iter().map(ToString::to_string).collect(),
-        signature: verified.signature,
-    })
+    Ok(Word(signed))
 }
