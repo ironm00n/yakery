@@ -163,9 +163,13 @@ impl Dir {
         Ok(File::from(fd))
     }
 
-    /// `name` open to read and write, created private if missing, never through a link.
+    /// `name` open to read and write, created private if missing, never through a link; made private whatever the
+    /// umask, as every file Dir makes.
     pub fn file(&self, name: &str) -> Result<File> {
-        self.at(caller(name)?, OFlags::CREATE | OFlags::RDWR)
+        let file = self.at(caller(name)?, OFlags::CREATE | OFlags::RDWR)?;
+        fchmod(&file, Mode::Private.bits())
+            .with_context(|| self.path(name).display().to_string())?;
+        Ok(file)
     }
 
     /// `name` open to read, never through a link.

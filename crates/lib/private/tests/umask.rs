@@ -12,8 +12,11 @@ fn main() {
     dir.write("readable", b"", Mode::Readable, Replace::No).unwrap();
     dir.append("log", b"a\n").unwrap();
     dir.append("log", b"b\n").unwrap();
+    dir.file("lock").unwrap();
+    dir.file("lock").unwrap();
     dir.create_dir("run").unwrap().unwrap().write("a", b"", Mode::Private, Replace::No).unwrap();
     let mode = |name| fs::metadata(home.path().join(name)).unwrap().permissions().mode() & 0o777;
-    let modes = ["made", "made/private", "made/readable", "made/log", "made/run"].map(mode);
-    assert_eq!(modes, [0o700, 0o600, 0o644, 0o600, 0o700]);
+    let modes =
+        ["made", "made/private", "made/readable", "made/log", "made/lock", "made/run"].map(mode);
+    assert_eq!(modes, [0o700, 0o600, 0o644, 0o600, 0o600, 0o700]);
 }
