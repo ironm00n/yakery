@@ -225,7 +225,7 @@ fn subscriptions_says_what_a_session_recorded_and_records_nothing() {
     );
     assert_eq!(
         wait::subscribed(&records, &a, false).unwrap(),
-        wait::watches(&records, &a).unwrap()
+        "session a-1 watches topics [pool, pyret] and the threads of [e1]"
     );
     assert_eq!(entries(&dir.0.join("locks/agent-mail/sessions")), ["a-1.json", "lock"]);
 }
