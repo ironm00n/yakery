@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use agent_proto::{Key, read_key};
+use agent_proto::{Key, Reply, read_key};
 use anyhow::Result;
 
 #[derive(clap::Args)]
@@ -18,3 +18,24 @@ impl Vm {
         read_key(&self.key)
     }
 }
+
+/// How a wake went, read from the daemon's replies as they come: well once the daemon takes the message into a
+/// running session, or the session it started exits 0, and not before; a refusal, a start or another exit is not.
+#[derive(Default)]
+pub struct Outcome {
+    pub well: bool,
+}
+
+impl Outcome {
+    pub fn read(&mut self, reply: &Reply) {
+        self.well = match reply {
+            Reply::Injected | Reply::Exited { code: Some(0) } => true,
+            Reply::Started | Reply::Refused { .. } | Reply::Exited { .. } => false,
+            Reply::Event(_) => self.well,
+        };
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/lib.rs"]
+mod tests;

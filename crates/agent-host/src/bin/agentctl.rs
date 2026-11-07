@@ -1,10 +1,10 @@
 //! The host's end of the control connection: start or nudge an agent, and print what the daemon replies, one JSON
-//! line each.
+//! line each, and exit 0 only if the wake went well (`Outcome`).
 
 use std::{io::Read, process::ExitCode};
 
-use agent_host::Vm;
-use agent_proto::{Reply, Request, wake};
+use agent_host::{Outcome, Vm};
+use agent_proto::{Request, wake};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -34,14 +34,12 @@ async fn wake_agent(args: Args) -> Result<ExitCode> {
         std::io::stdin().read_to_string(&mut message)?;
     }
     let mut replies = wake(args.vm.cid, &args.vm.key()?, &Request::Wake { agent, message }).await?;
-    let mut status = ExitCode::SUCCESS;
+    let mut outcome = Outcome::default();
     while let Some(line) = replies.next_line().await? {
-        if let Ok(Reply::Refused { .. } | Reply::Exited { code: Some(1..) }) =
-            serde_json::from_str(&line)
-        {
-            status = ExitCode::FAILURE;
+        if let Ok(reply) = serde_json::from_str(&line) {
+            outcome.read(&reply);
         }
         println!("{line}");
     }
-    Ok(status)
+    Ok(if outcome.well { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
