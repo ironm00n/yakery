@@ -157,7 +157,27 @@ fn a_listener_counts_while_its_process_runs_and_it_scanned_within_three_rechecks
         (std::process::id(), vec!["e1"])
     );
     ids.iter().for_each(|id| listeners.leave(id).unwrap());
-    assert!(listeners.all().unwrap().is_empty());
+    assert_eq!(
+        listeners.all().unwrap().keys().collect::<Vec<_>>(),
+        ["c-3"],
+        "another process's stays"
+    );
+}
+
+#[test]
+fn a_listener_leaving_keeps_the_heartbeat_a_newer_one_wrote_for_its_session() {
+    let dir = Scratch::new("leave");
+    let listeners = store(&dir, "agent@example.org").listeners().unwrap();
+    let session: SessionId = "a-1".parse().unwrap();
+    let newer = Heartbeat {
+        pid: 1,
+        topics: ["agent+pool@example.org".into()].into(),
+        threads: [].into(),
+        scanned: 0,
+    };
+    listeners.put(&session, newer.clone()).unwrap();
+    listeners.leave(&session).unwrap();
+    assert_eq!(listeners.all().unwrap().get("a-1"), Some(&newer));
 }
 
 #[test]

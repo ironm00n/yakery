@@ -54,8 +54,14 @@ impl Listeners {
         self.change(|all| drop(all.insert(session.to_string(), beat)))
     }
 
+    /// Takes out `session`'s heartbeat if this process wrote it: a newer listener for the session keeps its own.
     pub fn leave(&self, session: &SessionId) -> Result<()> {
-        self.change(|all| drop(all.remove(&session.to_string())))
+        let (key, pid) = (session.to_string(), std::process::id());
+        self.change(|all| {
+            if all.get(&key).is_some_and(|b| b.pid == pid) {
+                all.remove(&key);
+            }
+        })
     }
 
     pub fn all(&self) -> Result<BTreeMap<String, Heartbeat>> {
