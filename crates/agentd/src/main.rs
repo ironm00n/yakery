@@ -9,13 +9,14 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitCode, Stdio};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use agent_proto::{
     CA, CONTROL_PORT, HOST_CID, Key, Reply, Request, Service, WAKE, challenge, prove, read_agents,
     read_key,
 };
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::Parser;
 use private::{Dir, Mode, Replace, listen_fds, now};
 use serde::Deserialize;
@@ -26,7 +27,9 @@ use tokio::io::{
 };
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::{Mutex, MutexGuard, Notify, OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::time::Instant;
 use tokio_vsock::{VsockAddr, VsockListener, VsockStream};
 use yakery_log::{note, warn};
 
@@ -39,6 +42,10 @@ const MAX_REQUEST: u64 = 1 << 20;
 /// The longest stdout line relayed as a session's event: the API's limit on one Messages request, which no event in
 /// the conversation can exceed.
 const MAX_EVENT: usize = 128 << 20;
+
+/// Wakes queued for a session past what its stdin pipe holds. One more is refused: the session has stopped reading,
+/// and queueing on would only grow agentd's memory.
+const QUEUED: usize = 8;
 
 #[derive(Parser)]
 struct Args {
@@ -69,21 +76,57 @@ struct Args {
 }
 
 struct Session {
-    stdin: ChildStdin,
+    id: u64,
+    input: mpsc::Sender<String>,
     injected: Instant,
 }
 
 impl Session {
-    async fn send(&mut self, message: &str) -> Result<()> {
+    /// Session `id`, whose stdin a task of its own writes, so that no wake waits on a session that has stopped
+    /// reading. Dropping the session ends its input.
+    fn new(id: u64, mut stdin: ChildStdin) -> Self {
+        let (input, mut queued) = mpsc::channel::<String>(QUEUED);
+        tokio::spawn(async move {
+            while let Some(line) = queued.recv().await {
+                if stdin.write_all(line.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Session { id, input, injected: Instant::now() }
+    }
+
+    fn send(&mut self, message: &str) -> Result<()> {
         let line = serde_json::json!({
             "type": "user",
             "message": { "role": "user", "content": message },
             "parent_tool_use_id": null,
             "priority": "next",
         });
-        self.stdin.write_all(format!("{line}\n").as_bytes()).await?;
+        self.input.try_send(format!("{line}\n")).map_err(|refused| match refused {
+            TrySendError::Full(_) => anyhow!("the session has stopped reading its input"),
+            TrySendError::Closed(_) => anyhow!("the session's input has closed"),
+        })?;
         self.injected = Instant::now();
         Ok(())
+    }
+}
+
+/// An agent's session. An ending one has lost its input but not yet exited, and holds back the agent's next session,
+/// so that two never run in one home.
+enum Run {
+    Idle,
+    Running(Session),
+    Ending(u64),
+}
+
+impl Run {
+    fn id(&self) -> Option<u64> {
+        match self {
+            Run::Idle => None,
+            Run::Running(session) => Some(session.id),
+            Run::Ending(id) => Some(*id),
+        }
     }
 }
 
@@ -140,45 +183,111 @@ impl<R: AsyncBufRead + Unpin> Lines<R> {
     }
 }
 
+struct Agent {
+    uid: u32,
+    run: Mutex<Run>,
+    /// Told of every change of `run`, for the wakes waiting on one.
+    changed: Notify,
+}
+
+impl Agent {
+    fn set(&self, run: &mut Run, next: Run) {
+        *run = next;
+        self.changed.notify_waiters();
+    }
+
+    /// Moves session `id` to `next` if it is still the agent's and `now` holds of it, so that a session never changes
+    /// a later one.
+    async fn advance(&self, id: u64, now: impl FnOnce(&Run) -> bool, next: Run) {
+        let mut run = self.run.lock().await;
+        if run.id() == Some(id) && now(&run) {
+            self.set(&mut run, next);
+        }
+    }
+}
+
 struct State {
     args: Args,
     api: PathBuf,
     key: Key,
-    agents: HashMap<String, u32>,
-    sessions: Mutex<HashMap<String, Session>>,
+    agents: HashMap<String, Agent>,
     slots: Arc<Semaphore>,
+    started: AtomicU64,
 }
 
 impl State {
-    fn agent_of(&self, uid: u32) -> Option<&str> {
-        self.agents.iter().find(|&(_, &u)| u == uid).map(|(name, _)| name.as_str())
+    fn new(args: Args, api: PathBuf, key: Key, agents: HashMap<String, u32>) -> Self {
+        let agents = agents.into_iter().map(|(name, uid)| {
+            (name, Agent { uid, run: Mutex::new(Run::Idle), changed: Notify::new() })
+        });
+        State {
+            slots: Arc::new(Semaphore::new(args.sessions)),
+            args,
+            api,
+            key,
+            agents: agents.collect(),
+            started: AtomicU64::default(),
+        }
     }
 
-    async fn wake(self: &Arc<Self>, agent: &str, message: &str) -> Result<Woken> {
-        let &uid = self.agents.get(agent).with_context(|| format!("no agent named {agent}"))?;
-        if let Some(session) = self.sessions.lock().await.get_mut(agent) {
-            session.send(message).await?;
-            return Ok(Woken::Injected);
+    fn agent_of(&self, uid: u32) -> Option<&str> {
+        self.agents.iter().find(|(_, agent)| agent.uid == uid).map(|(name, _)| name.as_str())
+    }
+
+    async fn wake(self: &Arc<Self>, name: &str, message: &str) -> Result<Woken> {
+        let agent = self.agents.get(name).with_context(|| format!("no agent named {name}"))?;
+        let mut slot = None;
+        loop {
+            let changed = agent.changed.notified();
+            let mut changed = std::pin::pin!(changed);
+            changed.as_mut().enable();
+            let mut run = match agent.run.try_lock() {
+                Ok(run) => run,
+                // A start holds the lock across its CA fetch: wait for it with no slot held.
+                Err(_) => {
+                    slot = None;
+                    agent.run.lock().await
+                }
+            };
+            let idle = match &mut *run {
+                Run::Running(session) => return session.send(message).map(|()| Woken::Injected),
+                Run::Idle => true,
+                Run::Ending(_) => false,
+            };
+            if !idle {
+                slot = None;
+            } else if let Some(slot) =
+                slot.take().or_else(|| self.slots.clone().try_acquire_owned().ok())
+            {
+                return self.start(name, agent, run, slot, message).await;
+            }
+            drop(run);
+            // Unlocked while it waits: a session's end takes its agent's lock before giving its slot back.
+            tokio::select! {
+                permit = self.slots.clone().acquire_owned(), if idle => slot = Some(permit?),
+                () = changed => {}
+            }
         }
-        if !has_quota(&self.args.quota_device, uid)? {
-            bail!("{agent} has no home quota");
-        }
-        let slot = self.slots.clone().acquire_owned().await?;
-        let mut sessions = self.sessions.lock().await;
-        // Another wake may have started this agent while this one waited.
-        if let Some(session) = sessions.get_mut(agent) {
-            session.send(message).await?;
-            return Ok(Woken::Injected);
-        }
+    }
+
+    async fn start(
+        self: &Arc<Self>,
+        name: &str,
+        agent: &Agent,
+        mut run: MutexGuard<'_, Run>,
+        slot: OwnedSemaphorePermit,
+        message: &str,
+    ) -> Result<Woken> {
+        ensure!(has_quota(&self.args.quota_device, agent.uid)?, "{name} has no home quota");
         self.refresh_ca().await.context("fetch the gateway's CA")?;
-        let mut child = self.spawn(agent, uid)?;
-        let mut session =
-            Session { stdin: child.stdin.take().expect("piped"), injected: Instant::now() };
-        session.send(message).await?;
-        sessions.insert(agent.to_owned(), session);
+        let mut child = self.spawn(name, agent.uid)?;
+        let id = self.started.fetch_add(1, Ordering::Relaxed);
+        let mut session = Session::new(id, child.stdin.take().expect("piped"));
+        session.send(message)?;
+        agent.set(&mut run, Run::Running(session));
         let stdout = child.stdout.take().expect("piped");
         let (tx, rx) = mpsc::unbounded_channel();
-        tokio::spawn(self.clone().drive(agent.to_owned(), child, stdout, tx, slot));
+        tokio::spawn(self.clone().drive(name.to_owned(), id, child, stdout, tx, slot));
         Ok(Woken::Started(rx))
     }
 
@@ -243,6 +352,7 @@ impl State {
     async fn drive(
         self: Arc<Self>,
         agent: String,
+        id: u64,
         mut child: Child,
         stdout: ChildStdout,
         tx: mpsc::UnboundedSender<Reply>,
@@ -257,7 +367,7 @@ impl State {
         loop {
             let quiet = async {
                 match ended {
-                    Some(at) => tokio::time::sleep_until((at + QUIET).into()).await,
+                    Some(at) => tokio::time::sleep_until(at + QUIET).await,
                     None => std::future::pending().await,
                 }
             };
@@ -280,15 +390,14 @@ impl State {
                 },
                 () = quiet => {
                     let at = ended.take().expect("armed");
-                    let mut sessions = self.sessions.lock().await;
-                    if sessions.get(&agent).is_some_and(|session| session.injected <= at) {
-                        sessions.remove(&agent);
-                    }
+                    let unwoken = |run: &Run| matches!(run, Run::Running(s) if s.injected <= at);
+                    self.agents[&agent].advance(id, unwoken, Run::Ending(id)).await;
                 }
             }
         }
-        self.sessions.lock().await.remove(&agent);
+        self.agents[&agent].advance(id, |_| true, Run::Ending(id)).await;
         let code = child.wait().await.ok().and_then(|status| status.code());
+        self.agents[&agent].advance(id, |_| true, Run::Idle).await;
         note!("{agent}: session exited with {code:?}");
         let _ = tx.send(Reply::Exited { code });
     }
@@ -475,14 +584,9 @@ async fn run(args: Args, api: OwnedFd, direct: OwnedFd, control: OwnedFd) -> Res
         (std::os::unix::net::UnixListener::from(api), std::net::TcpListener::from(direct));
     api.set_nonblocking(true)?;
     direct.set_nonblocking(true)?;
-    let state = Arc::new(State {
-        api: api.local_addr()?.as_pathname().context("the api socket has no path")?.into(),
-        slots: Arc::new(Semaphore::new(args.sessions)),
-        key: read_key(&args.key)?,
-        agents: read_agents(&args.agents)?,
-        args,
-        sessions: Mutex::default(),
-    });
+    let path = api.local_addr()?.as_pathname().context("the api socket has no path")?.into();
+    let (key, agents) = (read_key(&args.key)?, read_agents(&args.agents)?);
+    let state = Arc::new(State::new(args, path, key, agents));
     // SAFETY: the fd is open, and the listener becomes its one owner.
     #[allow(unsafe_code)]
     let control = unsafe { VsockListener::from_raw_fd(control.into_raw_fd()) };
