@@ -69,7 +69,8 @@ pub fn dot_atom(s: &str) -> bool {
     s.split('.').all(|run| !run.is_empty() && run.chars().all(atext))
 }
 
-/// A host name of two or more letter-digit-hyphen labels.
+/// A host name of two or more letter-digit-hyphen labels, the last with a letter, so never a dotted-decimal address
+/// (RFC 1123, 2.1).
 pub fn ldh(s: &str) -> bool {
     let label = |l: &str| {
         (1..=63).contains(&l.len())
@@ -77,7 +78,8 @@ pub fn ldh(s: &str) -> bool {
             && !l.starts_with('-')
             && !l.ends_with('-')
     };
-    s.len() <= 253 && s.split('.').count() >= 2 && s.split('.').all(label)
+    let top = s.rsplit('.').next().is_some_and(|l| l.chars().any(|c| c.is_ascii_alphabetic()));
+    s.len() <= 253 && s.split('.').count() >= 2 && s.split('.').all(label) && top
 }
 
 /// A plain mail address, equal to another regardless of ASCII case.

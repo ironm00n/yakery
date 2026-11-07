@@ -2,9 +2,13 @@ use super::*;
 
 #[test]
 fn addresses_are_plain_and_compare_without_case() {
-    for kept in
-        ["a@b.dev", "o'neil.x@sub.example-1.com", "A@Example.ORG", "agent+tooling@example.org"]
-    {
+    for kept in [
+        "a@b.dev",
+        "o'neil.x@sub.example-1.com",
+        "A@Example.ORG",
+        "agent+tooling@example.org",
+        "a@10.example.org",
+    ] {
         assert_eq!(kept.parse::<Address>().unwrap().to_string(), kept);
     }
     for refused in [
@@ -21,6 +25,8 @@ fn addresses_are_plain_and_compare_without_case() {
         "a@example",
         "a@example.org.",
         "a@[127.0.0.1]",
+        "a@127.0.0.1",
+        "a@example.123",
         "ä@example.org",
         "a@exämple.org",
         "@example.org",
