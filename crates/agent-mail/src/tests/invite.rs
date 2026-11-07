@@ -235,6 +235,23 @@ async fn an_invitation_listing_that_stalwart_cut_at_its_get_limit_is_refused() {
     );
 }
 
+#[test]
+fn an_invitation_lasts_a_length_above_zero() {
+    let with = |duration: &str| {
+        let given = format!("--duration={duration}");
+        let args: Vec<&str> =
+            NEW[..NEW.len() - 2].iter().copied().chain([given.as_str()]).collect();
+        command(&[&["invite"], &args[..]].concat()).map(drop)
+    };
+    assert!(with("30m").is_ok());
+    for refused in ["-30m", "0s", "PT0S"] {
+        assert!(
+            with(refused).unwrap_err().contains(&format!("{refused} isn't a length above zero")),
+            "{refused}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_session_with_no_calendars_account_refuses_an_invitation_and_mail_asks_as_before() {
     let dir = Scratch::new("invite-no-calendars");

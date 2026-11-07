@@ -61,7 +61,7 @@ pub struct New {
     #[arg(long)]
     start: Timestamp,
     /// ISO 8601 (`PT30M`) or `30m`.
-    #[arg(long)]
+    #[arg(long, value_parser = length)]
     duration: SignedDuration,
     /// The event's time zone, which calendar apps show it in and keep its local time by; the deployment's by default.
     #[arg(long)]
@@ -82,7 +82,7 @@ pub struct Update {
     title: Option<String>,
     #[arg(long)]
     start: Option<Timestamp>,
-    #[arg(long)]
+    #[arg(long, value_parser = length)]
     duration: Option<SignedDuration>,
     #[arg(long, requires = "start")]
     zone: Option<Zone>,
@@ -109,6 +109,16 @@ pub struct Text {
 pub struct List {
     #[arg(long)]
     topic: Option<Topic>,
+}
+
+/// A length of time above zero.
+fn length(text: &str) -> Result<SignedDuration, String> {
+    let length: SignedDuration = text.parse().map_err(|e| format!("{e}"))?;
+    if length > SignedDuration::ZERO {
+        Ok(length)
+    } else {
+        Err(format!("{text} isn't a length above zero"))
+    }
 }
 
 fn deployment_zone() -> Result<Zone> {
