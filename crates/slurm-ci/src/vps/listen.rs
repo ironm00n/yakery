@@ -84,10 +84,23 @@ impl Client {
     }
 }
 
+/// HOST as nodes are told it: one whose port is 0 calls back on the port the listener was given.
+fn callback_host(host: String, bound: u16) -> String {
+    match callback::split_host_port(&host) {
+        (name, 0) => format!("{name}:{bound}"),
+        _ => host,
+    }
+}
+
 pub fn main() -> Result<()> {
     let state = StateDir::open(env_or("CI_STATE_DIR", DEFAULT_STATE_DIR))?;
     let identity = Identity::load_or_create(&state.tls_dir())?;
     let tls = identity.server_config()?;
+    let bind = env_or("CI_CALLBACK_BIND", &format!("0.0.0.0:{}", callback::PORT));
+    let listener =
+        TcpListener::bind(&bind).with_context(|| format!("bind callback listener {bind}"))?;
+    let bound = listener.local_addr()?;
+    eprintln!("callback listener on {bound}, cert {}", identity.fingerprint);
     let daemon = Arc::new(Daemon {
         state,
         probe_min: Duration::from_secs(
@@ -96,17 +109,13 @@ pub fn main() -> Result<()> {
         cluster: Cluster::from_env()?,
         forge: Forge::from_env()?,
         fingerprint: identity.fingerprint.clone(),
-        callback_host: crate::proc::env_var("CI_CALLBACK_HOST")?,
+        callback_host: callback_host(crate::proc::env_var("CI_CALLBACK_HOST")?, bound.port()),
         repo_allowlist: std::env::var("CI_REPO_ALLOWLIST")
             .ok()
             .map(|s| s.split(',').map(|r| r.trim().to_owned()).filter(|r| !r.is_empty()).collect()),
         runs: Mutex::new(HashMap::new()),
     });
 
-    let bind = env_or("CI_CALLBACK_BIND", &format!("0.0.0.0:{}", callback::PORT));
-    let listener =
-        TcpListener::bind(&bind).with_context(|| format!("bind callback listener {bind}"))?;
-    eprintln!("callback listener on {bind}, cert {}", identity.fingerprint);
     {
         let daemon = daemon.clone();
         thread::spawn(move || serve_callbacks(daemon, listener, tls));

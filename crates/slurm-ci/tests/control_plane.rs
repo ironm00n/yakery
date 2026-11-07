@@ -29,7 +29,6 @@ struct Harness {
     fake_home: PathBuf,
     state: PathBuf,
     socket: PathBuf,
-    port: u16,
     daemon: Child,
 }
 
@@ -44,10 +43,6 @@ fn script(dir: &Path, name: &str, body: &str) {
     let p = dir.join(name);
     fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
     fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
 /// Watches DIR and every dir below it, now and as inotify reports them made.
@@ -108,13 +103,12 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
         script(&bin, "sinfo", "echo 1:00:00");
         script(&bin, "curl", r#"cat > /dev/null; cat "$FAKE_HOME/slurm-ci.toml""#);
 
-        let port = free_port();
         let daemon = Command::new(BIN)
             .arg("listen")
             .env("CI_STATE_DIR", &state)
             .env("CI_SOCKET", &socket)
-            .env("CI_CALLBACK_BIND", format!("127.0.0.1:{port}"))
-            .env("CI_CALLBACK_HOST", format!("127.0.0.1:{port}"))
+            .env("CI_CALLBACK_BIND", "127.0.0.1:0")
+            .env("CI_CALLBACK_HOST", "127.0.0.1:0")
             .env("CI_FORGEJO_API", "http://forge.invalid")
             .env("CI_FORGEJO_GIT_HOST", "git.example")
             .env("CI_CLUSTER_USER", "ci")
@@ -131,7 +125,7 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
-        let h = Harness { _dir: dir, fake_home, state, socket, port, daemon };
+        let h = Harness { _dir: dir, fake_home, state, socket, daemon };
         h.wait_for("daemon socket", || h.socket.exists());
         h
     }
@@ -210,7 +204,8 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
     }
 
     fn compute_node(&self, job: &JobFile, token: Token, jobid: &JobId) -> callback::ClientStream {
-        let mut s = callback::connect("127.0.0.1", self.port, &job.submit.fingerprint).unwrap();
+        let (host, port) = callback::split_host_port(&job.submit.callback_host);
+        let mut s = callback::connect(host, port, &job.submit.fingerprint).unwrap();
         let hello = Hello {
             run: job.submit.run.clone(),
             token,
@@ -246,9 +241,13 @@ echo "$1" >> "$FAKE_HOME/scancelled""#,
         (status.code().unwrap_or(-1), out, err)
     }
 
+    /// The records the daemon has appended whole; a line is one once its newline is written.
     fn jsonl(&self) -> Vec<serde_json::Value> {
         let text = fs::read_to_string(self.state.join("efficiency.jsonl")).unwrap_or_default();
-        text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+        text.split_inclusive('\n')
+            .filter(|l| l.ends_with('\n'))
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
     }
 
     /// The Slurm jobs the daemon's registry names, which is all a restarted daemon knows of its runs.
@@ -404,8 +403,9 @@ fn cancel_scancels_and_exits_promptly() {
     assert_eq!(code, 1);
     assert!(t.elapsed() < Duration::from_secs(10));
     assert!(err.contains("cancelled"), "{err}");
-    h.wait_for("scancel", || h.fake_home.join("scancelled").exists());
-    assert_eq!(fs::read_to_string(h.fake_home.join("scancelled")).unwrap().trim(), jobid.as_str());
+    let scancelled = h.fake_home.join("scancelled");
+    h.wait_for("scancel", || fs::read_to_string(&scancelled).is_ok_and(|s| s.ends_with('\n')));
+    assert_eq!(fs::read_to_string(&scancelled).unwrap().trim(), jobid.as_str());
     h.wait_for("jsonl", || !h.jsonl().is_empty());
     assert_eq!(h.jsonl()[0]["verdict"]["kind"], "red");
 }
@@ -500,8 +500,8 @@ fn daemon_restart_reattaches() {
         .arg("listen")
         .env("CI_STATE_DIR", &h.state)
         .env("CI_SOCKET", &h.socket)
-        .env("CI_CALLBACK_BIND", format!("127.0.0.1:{}", h.port))
-        .env("CI_CALLBACK_HOST", format!("127.0.0.1:{}", h.port))
+        .env("CI_CALLBACK_BIND", "127.0.0.1:0")
+        .env("CI_CALLBACK_HOST", "127.0.0.1:0")
         .env("CI_FORGEJO_API", "http://forge.invalid")
         .env("CI_FORGEJO_GIT_HOST", "git.example")
         .env("CI_CLUSTER_USER", "ci")

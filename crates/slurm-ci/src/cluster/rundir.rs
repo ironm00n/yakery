@@ -93,8 +93,11 @@ impl RunDir {
         Token::parse(s.trim())
     }
 
+    /// Written whole, then renamed into place: a reader that finds `jobid` reads all of it.
     pub fn record_job(&self, job: &JobId) -> Result<()> {
-        fs::write(self.path.join("jobid"), format!("{job}\n")).context("write jobid")
+        let partial = self.path.join("jobid.partial");
+        fs::write(&partial, format!("{job}\n")).context("write jobid")?;
+        fs::rename(&partial, self.path.join("jobid")).context("rename jobid")
     }
 
     pub fn job_id(&self) -> Result<Option<JobId>> {
