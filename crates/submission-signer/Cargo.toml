@@ -24,6 +24,7 @@ submission-signature.workspace = true
 text.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
 yakery-log.workspace = true
+yakery-serve.workspace = true
 
 [lints]
 workspace = true

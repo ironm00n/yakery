@@ -11,7 +11,6 @@ use std::{
     path::PathBuf,
     process::ExitCode,
     sync::Arc,
-    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -33,7 +32,6 @@ use yakery_log::{note, warn};
 
 /// A request carries the whole message as JSON text.
 const BODY_LIMIT: usize = 256 << 20;
-const ACCEPT_PAUSE: Duration = Duration::from_millis(100);
 
 #[derive(Parser)]
 enum Command {
@@ -287,14 +285,7 @@ async fn serve(listener: StdListener, judge: Judge, bearer: Secret) -> Result<Ex
     let listener = TcpListener::from_std(listener)?;
     let (judge, bearer) = (Arc::new(judge), Arc::new(bearer));
     loop {
-        let stream = match listener.accept().await {
-            Ok((stream, _)) => stream,
-            Err(e) => {
-                warn!("accept: {e}");
-                tokio::time::sleep(ACCEPT_PAUSE).await;
-                continue;
-            }
-        };
+        let (stream, _) = yakery_serve::accept("the hook socket", || listener.accept()).await?;
         let (judge, bearer) = (judge.clone(), bearer.clone());
         tokio::spawn(async move {
             let service = service_fn(move |request| {

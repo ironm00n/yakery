@@ -266,7 +266,8 @@ impl Daemon {
 
     async fn serve(self: Arc<Self>, listener: UnixListener) -> Result<()> {
         loop {
-            let (stream, _) = listener.accept().await.context("accepting a local client")?;
+            let (stream, _) =
+                yakery_serve::accept("the local socket", || listener.accept()).await?;
             drop(tokio::spawn(self.clone().client(stream)));
         }
     }
