@@ -1,7 +1,8 @@
-//! Wakes an agent whenever the mail server reports a delivery to it: Stalwart posts its `delivery.completed` events
-//! here as a webhook, and every recipient on the agent domain whose name is on the agent list gets a wake.
+//! Wakes an agent whenever the mail server reports a delivery attempt to it: Stalwart posts events here as a webhook
+//! (which events is the stalwart bundle's `deliveryWebhooks`), and every recipient in an event's `to` on the agent
+//! domain whose name is on the agent list gets a wake.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -56,9 +57,15 @@ struct Batch {
 
 #[derive(Deserialize)]
 struct Event {
-    r#type: String,
     #[serde(default)]
-    data: HashMap<String, Value>,
+    data: Recipients,
+}
+
+/// `to` is an array in delivery events and a string in some others; any other shape names no one.
+#[derive(Deserialize, Default)]
+struct Recipients {
+    #[serde(default)]
+    to: Value,
 }
 
 struct Dispatch {
@@ -73,12 +80,9 @@ impl Dispatch {
         batch
             .events
             .iter()
-            .filter(|event| event.r#type == "delivery.completed")
-            .filter_map(|event| event.data.get("to"))
-            .flat_map(|to| match to {
-                Value::Array(addresses) => addresses.iter().filter_map(Value::as_str).collect(),
+            .flat_map(|event| match &event.data.to {
                 Value::String(address) => vec![address.as_str()],
-                _ => vec![],
+                to => to.as_array().into_iter().flatten().filter_map(Value::as_str).collect(),
             })
             .filter_map(|address| address.parse::<Address>().ok())
             .filter(|a| {
