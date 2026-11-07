@@ -29,11 +29,14 @@ fn answers_receipt(login: &Login, m: &Email) -> bool {
     !is_receipt(m) && !matches!(Asked::of(login, m), Asked::Nothing)
 }
 
-pub async fn claim(
+/// Claims the due mail `candidates` finds. `ready` fetches what showing that mail needs before any of it is claimed,
+/// so a claimed mail has nothing left to fail on but being shown.
+pub async fn claim<R: Default>(
     server: &Mail,
     login: &Login,
     mut candidates: impl AsyncFnMut() -> Result<Scan>,
-) -> (Result<Vec<Email>>, Vec<Email>) {
+    mut ready: impl AsyncFnMut(&[Current]) -> Result<R>,
+) -> (Result<(Vec<Email>, R)>, Vec<Email>) {
     let mut remind: Vec<Email> = vec![];
     let claimed = async {
         for _ in 0..20 {
@@ -45,13 +48,14 @@ pub async fn claim(
                     .collect::<Vec<_>>(),
             );
             if scan.due.is_empty() {
-                return Ok(vec![]);
+                return Ok((vec![], R::default()));
             }
             let ids = server
                 .canonical(&scan.due.iter().map(|m| m.id.clone()).collect::<Vec<_>>())
                 .await?;
+            let readied = ready(&ids).await?;
             match locked(server, login, &ids).await {
-                Ok(Some(claimed)) => return Ok(taken(server, login, claimed).await),
+                Ok(Some(claimed)) => return Ok((taken(server, login, claimed).await, readied)),
                 Ok(None) => {}
                 Err(e) if Failure::of(&e) == Failure::TokenRefused => {}
                 Err(e) => return Err(e),

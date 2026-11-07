@@ -6,12 +6,21 @@ use super::{
 };
 use crate::{
     cmd::claim::{Cursor, Scan, claim, open},
-    mail::{Email, Keyword, Mail},
+    mail::{Current, Email, Keyword, Mail},
     out::Asked,
 };
 
 /// One round of this host's claim over the open inbox mail, under its stale ids too, as a cursor may hold one.
 async fn round(mail: &Mail, server: &Shared) -> Result<Vec<Email>> {
+    readied(mail, server, async |_: &[Current]| Ok(())).await.map(|(claimed, ())| claimed)
+}
+
+/// [`round`], with `ready` fetching before the claim.
+async fn readied<R: Default>(
+    mail: &Mail,
+    server: &Shared,
+    ready: impl AsyncFnMut(&[Current]) -> Result<R>,
+) -> Result<(Vec<Email>, R)> {
     let scan = async || {
         let s = server.borrow();
         let current = s.emails.iter().map(|m| m["id"].as_str().unwrap()).map(|i| (i, i));
@@ -25,7 +34,7 @@ async fn round(mail: &Mail, server: &Shared) -> Result<Vec<Email>> {
         let (remind, due) = open.partition(|m| m.has(Keyword::Seen));
         Ok(Scan { due, remind })
     };
-    claim(mail, mail.login(), scan).await.0
+    claim(mail, mail.login(), scan, ready).await.0
 }
 
 async fn claimed(mail: &Mail, server: &Shared) -> Vec<String> {
@@ -60,6 +69,20 @@ async fn inbox(
     stalwart.session["capabilities"]["urn:ietf:params:jmap:core"]["maxCallsInRequest"] = json!(2);
     let (wire, server, mail) = mail(&dir, stalwart).await;
     (dir, wire, server, mail.unwrap())
+}
+
+#[tokio::test]
+async fn a_mail_is_left_unclaimed_when_what_showing_it_needs_cannot_be_fetched() {
+    let (_dir, _wire, server, mail) = inbox("unready", vec![email("a1", json!({}))], vec![]).await;
+    let failed = async |_: &[Current]| -> Result<()> { bail!("its body could not be fetched") };
+    assert!(readied(&mail, &server, failed).await.is_err());
+    assert_eq!(marked(&server, "a1"), (0, vec![]), "still unseen, so the next scan finds it");
+    let (claimed, ids) =
+        readied(&mail, &server, async |ids: &[Current]| Ok(ids.to_vec())).await.unwrap();
+    assert_eq!(
+        (claimed.len(), ids.iter().map(Current::as_str).collect::<Vec<_>>()),
+        (1, vec!["a1"])
+    );
 }
 
 #[tokio::test]

@@ -17,7 +17,7 @@ use crate::{
     authority::{self, Word},
     jmap::wire,
     listeners::{Leave, Listeners},
-    mail::{Addr, Body, Email, Keyword, Mail, Mark, names},
+    mail::{Addr, Body, Current, Email, Keyword, Mail, Mark, names},
     out::{Asked, Outbox, is_receipt},
     prelude::*,
     show::{Answering, message, out, reminder, utc},
@@ -217,6 +217,31 @@ struct Watch<'a> {
     started: Instant,
     scanned: Option<Instant>,
     reminded: HashSet<String>,
+    /// A listener's: each mail is shown with whether it has Owen's authority.
+    json: bool,
+}
+
+/// What showing claimed mail needs from the server, fetched before the claim.
+#[derive(Default)]
+struct Ready {
+    bodies: Vec<Body>,
+    members: Vec<Email>,
+    verdicts: HashMap<String, Result<Word, String>>,
+}
+
+impl Ready {
+    async fn fetch(mail: &Mail, ids: &[Current], topics: &[Address], json: bool) -> Result<Ready> {
+        let (bodies, emails): (Vec<Body>, Vec<Email>) =
+            (mail.get(ids).await?, mail.get(ids).await?);
+        let threads: BTreeSet<&String> = emails.iter().map(|m| &m.thread).collect();
+        let members =
+            mail.get(&mail.members(&threads.into_iter().collect::<Vec<_>>()).await?).await?;
+        let mut verdicts = HashMap::new();
+        for m in emails.iter().filter(|_| json) {
+            verdicts.insert(m.id.clone(), authority(mail, m, topics).await?);
+        }
+        Ok(Ready { bodies, members, verdicts })
+    }
 }
 
 impl Watch<'_> {
@@ -341,11 +366,13 @@ impl Watch<'_> {
         left > pause
     }
 
-    async fn settle(&mut self) -> Result<Option<Vec<Email>>> {
+    async fn settle(&mut self) -> Result<Option<(Vec<Email>, Ready)>> {
         let mut pushes = self.mail.pushes().await?;
         loop {
-            let mail = self.mail;
-            let (claimed, remind) = claim(mail, mail.login(), async || self.scan().await).await;
+            let (mail, topics, json) = (self.mail, self.topics.clone(), self.json);
+            let ready = async |ids: &[Current]| Ready::fetch(mail, ids, &topics, json).await;
+            let (claimed, remind) =
+                claim(mail, mail.login(), async || self.scan().await, ready).await;
             let mut fresh: Vec<Email> = remind
                 .into_iter()
                 .filter(|m| !is_receipt(m) && !self.reminded.contains(&m.id))
@@ -367,7 +394,7 @@ impl Watch<'_> {
                     "{e:#}; this listener's scan goes unrecorded, so other waits may claim Owen's word"
                 );
             }
-            if !claimed.is_empty() {
+            if !claimed.0.is_empty() {
                 return Ok(Some(claimed));
             }
             let wait = self.remaining().map_or(RECHECK, |left| left.min(RECHECK));
@@ -388,7 +415,7 @@ impl Watch<'_> {
         }
     }
 
-    async fn until_due(&mut self) -> Result<Option<Vec<Email>>> {
+    async fn until_due(&mut self) -> Result<Option<(Vec<Email>, Ready)>> {
         let mut backoff = BACKOFF;
         loop {
             let before = self.scanned;
@@ -481,6 +508,7 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
         started: Instant::now(),
         scanned: None,
         reminded: HashSet::new(),
+        json,
     };
     for start in &watch.given.thread {
         ensure!(mail.current(start).await?.is_some(), "no email {start}");
@@ -492,23 +520,21 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
     note!("waiting for {}", topics.chain(threads).chain(recorded).collect::<Vec<_>>().join(", "));
     let wall = args.timeout.map(|t| now().saturating_add(t.as_secs() as i64));
     loop {
-        let Some(mut claimed) = watch.until_due().await? else {
+        let Some((mut claimed, mut ready)) = watch.until_due().await? else {
             note!("no mail by {}", utc(wall.unwrap_or_else(now)));
             return Ok(ExitCode::from(TIMED_OUT));
         };
-        // Claimed already: if printing fails, the mail shows up in the next wait's reminders.
         claimed.sort_by(|a, b| a.received.cmp(&b.received));
-        let bodies: Vec<Body> =
-            mail.get(&claimed.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
-        let threads: BTreeSet<&String> = claimed.iter().map(|m| &m.thread).collect();
-        let members: Vec<Email> =
-            mail.get(&mail.members(&threads.into_iter().collect::<Vec<_>>()).await?).await?;
+        let unchecked = || Err("its authority was not checked".to_owned());
         for m in &claimed {
-            if let Some(body) = bodies.iter().find(|b| b.id == m.id) {
+            if let Some(body) = ready.bodies.iter().find(|b| b.id == m.id) {
                 out(&match json {
-                    true => line(m, body, &authority(mail, m, &watch.topics).await?, &members),
+                    true => {
+                        let verdict = ready.verdicts.remove(&m.id).unwrap_or_else(unchecked);
+                        line(m, body, &verdict, &ready.members)
+                    }
                     false => {
-                        let answering = Answering::of(m, &m.in_reply_to, &members);
+                        let answering = Answering::of(m, &m.in_reply_to, &ready.members);
                         format!("{}\n", message(m, Some(body), answering))
                     }
                 })?;
