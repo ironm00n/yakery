@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "The host's end of the agent VM: agentctl, and the mail server's webhook that wakes agents"
 edition.workspace = true
 rust-version.workspace = true
+autotests = false
 
 [lib]
 path = "src/lib.rs"
