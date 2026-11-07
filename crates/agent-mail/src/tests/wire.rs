@@ -1166,6 +1166,35 @@ async fn inbox_after_a_time_lists_all_mail_received_since_newest_first() {
     assert_eq!(listed("2026-11-04T00:00:00Z", &[], None).await.len(), 604);
 }
 
+#[tokio::test]
+async fn an_inbox_listing_has_stalwart_parse_a_hundred_mails_or_fewer_a_request() {
+    let dir = Scratch::new("inbox-parsed");
+    let emails = (0..300)
+        .map(|n| {
+            let t = format!("2026-11-05T{:02}:{:02}:00Z", n / 60, n % 60);
+            email(&format!("e{n}"), json!({ "receivedAt": t, "to": [{ "email": POOL }] }))
+        })
+        .collect();
+    let (_wire, server, mail) = mail(&dir, Stalwart::new(emails)).await;
+    let args = read::Inbox {
+        topic: vec![],
+        limit: None,
+        after: Some("2026-11-04T00:00:00Z".parse().unwrap()),
+        json: false,
+    };
+    assert_eq!(read::lines(&mail.unwrap(), &args).await.unwrap().len(), 300);
+    let parsed: Vec<usize> = (server.borrow().requests.iter())
+        .flat_map(|r| r["methodCalls"].as_array().cloned().unwrap_or_default())
+        .filter(|c| {
+            c[0] == "Email/get"
+                && c[1]["properties"].as_array().is_some_and(|p| p.contains(&json!("attachments")))
+        })
+        .map(|c| c[1]["ids"].as_array().map_or(0, Vec::len))
+        .collect();
+    assert_eq!(parsed.iter().sum::<usize>(), 300);
+    assert!(parsed.iter().all(|&n| n <= 100), "mails parsed per request: {parsed:?}");
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_inbox_listing_after_a_time_reads_each_mail_and_fails_whole_on_a_failed_download() {
     let dir = Scratch::new("inbox-lines");

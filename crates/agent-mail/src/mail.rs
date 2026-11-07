@@ -15,6 +15,10 @@ use crate::{
 
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
 const PAGE: usize = 256;
+/// Email properties Stalwart answers by parsing each message, about 27 ms a mail on cx33-1 (10-29), so a get of
+/// [`PARSED_PER_GET`] of them stays well inside [`TIMEOUT`].
+const PARSED: &[&str] = &["attachments", "bodyStructure", "textBody", "htmlBody", "bodyValues"];
+const PARSED_PER_GET: usize = 64;
 const RESTARTS: usize = 10;
 
 /// One page of an Email/query's ids; `first` again when the pages started over.
@@ -347,8 +351,11 @@ impl Mail {
     }
 
     pub async fn get<V: View>(&self, ids: &[impl Serialize]) -> Result<Vec<V>> {
+        let parses = V::PROPERTIES.iter().any(|p| PARSED.contains(p));
         let mut found = vec![];
-        for chunk in ids.chunks(self.limits[0]) {
+        for chunk in
+            ids.chunks(if parses { PARSED_PER_GET.min(self.limits[0]) } else { self.limits[0] })
+        {
             found.extend(self.got(false, json!(chunk)).await?.1);
         }
         Ok(found)
