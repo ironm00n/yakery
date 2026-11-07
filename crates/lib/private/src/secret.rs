@@ -11,7 +11,8 @@ pub(crate) const PASSWORD_CLASSES: [&[u8]; 4] = [
     b"!#%&*+-./:;=?@^_~",
 ];
 
-/// Prints as `Secret(..)` and compares in constant time; only `expose` and serde, for storing it, read it.
+/// Prints as `Secret(..)`, and compares in time that depends on the lengths only; only `expose` and serde, for
+/// storing it, read it.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Secret(String);
