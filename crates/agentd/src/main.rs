@@ -4,12 +4,13 @@
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::num::NonZero;
 use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitCode, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use agent_proto::{
@@ -49,6 +50,15 @@ const QUEUED: usize = 8;
 
 /// How long a start waits for the gateway's CA once the handshake is done.
 const CA_FETCH: Duration = Duration::from_secs(10);
+
+/// Loopback owner lookups at once, as many as the runtime has workers: the bound the reads had when they ran on
+/// them, so a burst drains as fast as before, with no more copies of the socket table at once.
+static LOOKUPS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(workers()));
+
+/// As tokio counts its runtime's workers.
+fn workers() -> usize {
+    std::thread::available_parallelism().map_or(1, NonZero::get)
+}
 
 #[derive(Parser)]
 struct Args {
@@ -436,7 +446,7 @@ trait Local {
 
     async fn next(&self) -> std::io::Result<Self::Stream>;
 
-    fn uid(stream: &Self::Stream) -> Result<u32>;
+    fn uid(stream: &Self::Stream) -> impl Future<Output = Result<u32>> + Send;
 }
 
 impl Local for UnixListener {
@@ -446,7 +456,7 @@ impl Local for UnixListener {
         Ok(self.accept().await?.0)
     }
 
-    fn uid(stream: &UnixStream) -> Result<u32> {
+    async fn uid(stream: &UnixStream) -> Result<u32> {
         Ok(stream.peer_cred()?.uid())
     }
 }
@@ -458,28 +468,42 @@ impl Local for TcpListener {
         Ok(self.accept().await?.0)
     }
 
-    /// On loopback the client's end is in this kernel's table too, with its
-    /// owner.
-    fn uid(stream: &TcpStream) -> Result<u32> {
+    /// On loopback the client's end is in this kernel's table too, with its owner. The read takes time in
+    /// proportion to every socket in the VM, so it runs on a blocking thread.
+    async fn uid(stream: &TcpStream) -> Result<u32> {
         let (SocketAddr::V4(client), SocketAddr::V4(server)) =
             (stream.peer_addr()?, stream.local_addr()?)
         else {
             bail!("not an IPv4 connection");
         };
-        std::fs::read_to_string("/proc/net/tcp")?
-            .lines()
-            .skip(1)
-            .find_map(|row| {
-                let mut fields = row.split_whitespace().skip(1);
-                let local = proc_net_address(fields.next()?)?;
-                let remote = proc_net_address(fields.next()?)?;
-                if (local, remote) != (client, server) {
-                    return None;
-                }
-                fields.nth(4)?.parse().ok()
-            })
-            .with_context(|| format!("no socket owner for {client}"))
+        loopback_owner(client, server, &LOOKUPS).await
     }
+}
+
+/// Held by this task, not by the read: a read that never gets a thread must not keep its turn.
+async fn loopback_owner(
+    client: SocketAddrV4,
+    server: SocketAddrV4,
+    turns: &Semaphore,
+) -> Result<u32> {
+    let _turn = turns.acquire().await?;
+    tokio::task::spawn_blocking(move || owner(client, server)).await?
+}
+
+fn owner(client: SocketAddrV4, server: SocketAddrV4) -> Result<u32> {
+    std::fs::read_to_string("/proc/net/tcp")?
+        .lines()
+        .skip(1)
+        .find_map(|row| {
+            let mut fields = row.split_whitespace().skip(1);
+            let local = proc_net_address(fields.next()?)?;
+            let remote = proc_net_address(fields.next()?)?;
+            if (local, remote) != (client, server) {
+                return None;
+            }
+            fields.nth(4)?.parse().ok()
+        })
+        .with_context(|| format!("no socket owner for {client}"))
 }
 
 /// An address as /proc/net/tcp writes it: the IPv4 address as one hex word in
@@ -503,7 +527,7 @@ async fn relay<L: Local>(listener: L, state: Arc<State>) {
 }
 
 async fn tunnel<L: Local>(mut client: L::Stream, state: &State) -> Result<()> {
-    let uid = L::uid(&client)?;
+    let uid = L::uid(&client).await?;
     if state.agent_of(uid).is_none() {
         bail!("uid {uid} is not an agent");
     }

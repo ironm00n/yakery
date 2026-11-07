@@ -11,13 +11,20 @@ fn reads_proc_net_addresses() {
     );
 }
 
-#[tokio::test]
+/// As agentd's TCP listener looks an owner up: off the runtime, in one of LOOKUPS' turns. No other test takes them.
+#[test]
 #[allow(unsafe_code)]
-async fn a_loopback_client_is_its_owner() {
-    let listener = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 9), 0)).await.unwrap();
-    let _client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
-    let server = listener.next().await.unwrap();
-    assert_eq!(TcpListener::uid(&server).unwrap(), unsafe { libc::getuid() });
+fn a_loopback_client_is_its_owner_found_off_the_runtime_in_a_turn() {
+    one_blocking_thread().block_on(async {
+        let (server, _client) = loopback().await;
+        let release = take_the_blocking_thread();
+        let lookup = tokio::spawn(async move { TcpListener::uid(&server).await });
+        yields(100).await;
+        assert!(!lookup.is_finished());
+        assert_eq!(LOOKUPS.available_permits(), workers() - 1);
+        drop(release);
+        assert_eq!(lookup.await.unwrap().unwrap(), unsafe { libc::getuid() });
+    });
 }
 
 const UNUSED: &str = "/nonexistent";
@@ -255,4 +262,91 @@ async fn a_wake_in_the_quiet_period_keeps_the_session() {
     assert!(matches!(state.wake("alpha", "hi").await, Ok(Woken::Injected)));
     tokio::time::sleep(QUIET * 2).await;
     assert!(matches!(*state.agents["alpha"].run.lock().await, Run::Running(_)));
+}
+
+fn one_blocking_thread() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap()
+}
+
+/// Takes the one blocking thread until the sender is dropped.
+fn take_the_blocking_thread() -> std::sync::mpsc::Sender<()> {
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    tokio::task::spawn_blocking(move || held.recv());
+    release
+}
+
+/// A loopback connection's server end, and its client kept open.
+async fn loopback() -> (TcpStream, TcpStream) {
+    let listener = TcpListener::bind((Ipv4Addr::new(127, 0, 0, 9), 0)).await.unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
+    (listener.next().await.unwrap(), client)
+}
+
+async fn yields(n: usize) {
+    for _ in 0..n {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// A lookup of `server`'s client in `turns`, in the background.
+fn look_up(server: &TcpStream, turns: &Arc<Semaphore>) -> JoinHandle<Result<u32>> {
+    let (Ok(SocketAddr::V4(client)), Ok(SocketAddr::V4(server))) =
+        (server.peer_addr(), server.local_addr())
+    else {
+        panic!("a loopback IPv4 connection");
+    };
+    let turns = turns.clone();
+    tokio::spawn(async move { loopback_owner(client, server, &turns).await })
+}
+
+/// With the blocking thread taken, a lookup that reads off the runtime can't finish however often it is polled.
+#[test]
+#[allow(unsafe_code)]
+fn a_loopback_owner_is_looked_up_off_the_runtime() {
+    one_blocking_thread().block_on(async {
+        let (server, _client) = loopback().await;
+        let release = take_the_blocking_thread();
+        let lookup = look_up(&server, &Arc::new(Semaphore::new(1)));
+        yields(100).await;
+        assert!(!lookup.is_finished());
+        drop(release);
+        assert_eq!(lookup.await.unwrap().unwrap(), unsafe { libc::getuid() });
+    });
+}
+
+/// With every turn held here, a read sent to the blocking thread after the lookup started ends with the lookup still
+/// waiting.
+#[test]
+fn a_loopback_owner_lookup_waits_for_a_turn() {
+    one_blocking_thread().block_on(async {
+        let (server, _client) = loopback().await;
+        let turns = Arc::new(Semaphore::new(1));
+        let turn = turns.clone().acquire_owned().await.unwrap();
+        let lookup = look_up(&server, &turns);
+        yields(1).await;
+        tokio::task::spawn_blocking(|| ()).await.unwrap();
+        yields(100).await;
+        assert!(!lookup.is_finished());
+        drop(turn);
+        lookup.await.unwrap().unwrap();
+    });
+}
+
+#[test]
+fn a_loopback_owner_lookup_holds_its_turn_until_its_read_ends() {
+    one_blocking_thread().block_on(async {
+        let (server, _client) = loopback().await;
+        let turns = Arc::new(Semaphore::new(1));
+        let release = take_the_blocking_thread();
+        let lookup = look_up(&server, &turns);
+        yields(100).await;
+        assert_eq!(turns.available_permits(), 0);
+        drop(release);
+        lookup.await.unwrap().unwrap();
+        assert_eq!(turns.available_permits(), 1);
+    });
 }
