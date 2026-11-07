@@ -197,6 +197,8 @@ async fn invites_lists_the_logins_invitations_with_each_answer() {
         event("e1", "agent+pool@example.org", json!("accepted")),
         event("e2", "agent+other@example.org", Value::Null),
         event("e3", "someone@example.com", json!("declined")),
+        // an all-day invitation received, as Stalwart serves it: no title or time zone set, so none given
+        json!({ "id": "e4", "start": "2026-11-07T00:00:00", "organizerCalendarAddress": "mailto:someone@example.com" }),
     ];
     let (_wire, _server, mail) = mail(&dir, stalwart).await;
     let mail = mail.unwrap();

@@ -7,7 +7,8 @@ pub fn nullable<'de, D: serde::Deserializer<'de>, T: Default + Deserialize<'de>>
 }
 
 /// A view is fetched with exactly the properties it declares, so it reads none it did not fetch, and decoding a
-/// reply that lacks one fails; null, JMAP's empty, reads as the default.
+/// reply that lacks one fails; null, JMAP's empty, reads as the default. Views under `(default)` read a missing one
+/// as the default too: JSCalendar leaves a property at its default out (RFC 8984), and Stalwart's get does.
 pub trait View: DeserializeOwned {
     const GET: &str;
     const CAP: Cap;
@@ -50,12 +51,14 @@ caps! {
 }
 
 macro_rules! wire {
-    (views under $cap:ident { $($view:ident in $get:literal $(with ($bodies:literal, $bytes:expr))? {
+    (views under $cap:ident (default) $($rest:tt)*) => { wire!(@views [#[serde(default)]] $cap $($rest)*); };
+    (views under $cap:ident $($rest:tt)*) => { wire!(@views [] $cap $($rest)*); };
+    (@views $meta:tt $cap:ident { $($view:ident in $get:literal $(with ($bodies:literal, $bytes:expr))? {
         $($vf:ident: $vt:ty = $vp:literal),* $(,)?
     })* }
      objects { $($object:ident { $($of:ident: $ot:ty = $op:literal),* $(,)? })* }) => {
         $(
-            wire!(@struct [] $view { $($vf: $vt = $vp),* });
+            wire!(@struct $meta $view { $($vf: $vt = $vp),* });
             impl $crate::jmap::View for $view {
                 const GET: &str = $get;
                 const CAP: $crate::jmap::Cap = $crate::jmap::Cap::$cap;

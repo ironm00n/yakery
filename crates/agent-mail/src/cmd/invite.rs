@@ -19,7 +19,7 @@ use crate::{
 };
 
 wire! {
-    views under Calendars {
+    views under Calendars (default) {
         Calendar in "Calendar/get" { id: String = "id", default: bool = "isDefault" }
         Event in "CalendarEvent/get" {
             id: String = "id", title: String = "title", start: String = "start", zone: String = "timeZone",
