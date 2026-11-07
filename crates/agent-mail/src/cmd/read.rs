@@ -2,6 +2,7 @@ use std::{num::NonZeroUsize, process::ExitCode};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, SecondsFormat, TimeDelta};
+use jiff::Timestamp;
 use lol_html::{RewriteStrSettings, element, rewrite_str};
 
 use private::{Dir, Mode, Replace};
@@ -16,6 +17,7 @@ use crate::{
     jmap::wire,
     mail::{Addr, Body, Email, Keyword, Mail, Part, QUERY, Text, names},
     out::is_receipt,
+    policy::Login,
     prelude::*,
     show::{Answering, emails, inbox_line, message, out, plain, utc},
     store::{Config, passwd_home},
@@ -45,6 +47,7 @@ wire! {
             html: Vec<Part> = "htmlBody", values: HashMap<String, Text> = "bodyValues",
         }
         Attached in "Email/get" { id: String = "id", attachments: Vec<Part> = "attachments" }
+        Dated in "Email/get" { id: String = "id", received: String = "receivedAt" }
     }
     objects {}
 }
@@ -106,15 +109,21 @@ pub fn embedded(html: &str) -> Vec<Result<(String, Vec<u8>)>> {
 pub struct Inbox {
     /// Keep only mail to or cc the subaddress <login>+<topic> itself, not <login>+<topic>-<more>.
     #[arg(long)]
-    topic: Vec<Topic>,
-    #[arg(long, default_value = "10")]
-    limit: NonZeroUsize,
+    pub topic: Vec<Topic>,
+    /// Keep only the newest this many [default: 10 without --after]
+    #[arg(long)]
+    pub limit: Option<NonZeroUsize>,
+    /// List every mail received after this time (RFC 3339), not only the newest ten.
+    #[arg(long, value_name = "TIME")]
+    pub after: Option<Timestamp>,
     /// Print each mail as one JSON object on a line of its own, `signedByOwen` saying whether its signature makes it
     /// his, and his mail's addressing, subject, text and signing time read from the bytes he signed. Like the rest of
     /// inbox, it claims nothing and marks nothing seen, and it is no approval: that comes only through `wait`.
     #[arg(long)]
-    json: bool,
+    pub json: bool,
 }
+
+const NEWEST: NonZeroUsize = NonZeroUsize::new(10).unwrap();
 
 #[derive(clap::Args)]
 pub struct One {
@@ -144,33 +153,40 @@ enum Rotation {
 }
 
 pub async fn inbox(args: Inbox) -> Result<ExitCode> {
-    let mail = Mail::open().await?;
-    let listed = newest(&mail, &args.topic, args.limit).await?;
-    if args.json {
-        for m in &listed {
-            let signature = match mail.message(m).await {
-                Ok(Ok(raw)) => authority::signed(SUBMISSION_KEY, &raw)
-                    .map_or_else(Signature::NotHis, Signature::His),
-                Ok(Err(why)) => Signature::Unchecked(why),
-                Err(e) => Signature::Unchecked(format!("the message could not be read: {e:#}")),
-            };
-            out(&listing(m, &signature))?;
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
-    let files: Vec<Attached> = mail.get(&listed.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
-    for m in &listed {
-        let files = files.iter().find(|f| f.id == m.id).map_or(&[][..], |f| &f.attachments);
-        out(&inbox_line(m, files))?;
+    for line in lines(&Mail::open().await?, &args).await? {
+        out(&line)?;
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// What `inbox` prints, a line per mail; nothing when a message it reads fails to download.
+pub async fn lines(mail: &Mail, args: &Inbox) -> Result<Vec<String>> {
+    let listed = match args.after {
+        Some(after) => received_after(mail, &args.topic, after, args.limit).await?,
+        None => newest(mail, &args.topic, args.limit.unwrap_or(NEWEST)).await?,
+    };
+    if args.json {
+        let mut lines = vec![];
+        for m in &listed {
+            let signature = match mail.message(m).await? {
+                Ok(raw) => authority::signed(SUBMISSION_KEY, &raw)
+                    .map_or_else(Signature::NotHis, Signature::His),
+                Err(why) => Signature::Unchecked(why),
+            };
+            lines.push(listing(m, &signature, mail.login()));
+        }
+        return Ok(lines);
+    }
+    let files: Vec<Attached> = mail.get(&listed.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
+    let parts = |m: &Email| files.iter().find(|f| f.id == m.id).map_or(&[][..], |f| &f.attachments);
+    Ok(listed.iter().map(|m| inbox_line(m, parts(m))).collect())
 }
 
 /// What the listing learned of a mail's signature.
 pub enum Signature {
     His(Signed),
     NotHis(String),
-    /// The message couldn't be read whole, so whose it is wasn't checked
+    /// The message is too large to read whole, so whose it is wasn't checked
     Unchecked(String),
 }
 
@@ -178,8 +194,10 @@ pub enum Signature {
 /// `signedByOwen` (null when unchecked) says who wrote it and nothing more: it skips the wait's age and topic rules,
 /// so it approves nothing, and the signature, which approvals are known by, isn't printed. His word to a session
 /// comes only through `wait` ([`authority::check`]). `id`, `threadId` and `receivedAt` are the mailbox copy's, which
-/// an import can set; `signedId` (a hash of the signature) and `signedAt` are the signed message's own.
-pub fn listing(m: &Email, signature: &Signature) -> String {
+/// an import can set; `signedId` (a hash of the signature) and `signedAt` are the signed message's own. `toLogin` says
+/// whether its To or Cc names `login` or any subaddress of it, and `topics` lists the topics of those that are topic
+/// subaddresses, in lower case, as addresses compare.
+pub fn listing(m: &Email, signature: &Signature, login: &Login) -> String {
     let addresses = |l: &[Addr]| l.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
     let his = match signature {
         Signature::His(s) => Some(s),
@@ -198,19 +216,48 @@ pub fn listing(m: &Email, signature: &Signature) -> String {
         let digest = ring::digest::digest(&ring::digest::SHA256, s.signature.as_bytes());
         digest.as_ref().iter().map(|b| format!("{b:02x}")).collect::<String>()
     };
+    let ours: Vec<&String> = to.iter().chain(&cc).filter(|a| login.reaches(a)).collect();
+    let topics: BTreeSet<String> = ours
+        .iter()
+        .filter_map(|a| Some(login.topic(a)?.to_string().to_ascii_lowercase()))
+        .collect();
     json!({
         "id": m.id, "threadId": m.thread, "receivedAt": m.received, "from": from, "to": to, "cc": cc,
-        "subject": subject, "signedByOwen": owen, "text": his.map(|s| &s.text), "signedAt": his.map(|s| s.at),
-        "signedId": his.map(id), "reason": reason,
+        "toLogin": !ours.is_empty(), "topics": topics, "subject": subject, "signedByOwen": owen,
+        "text": his.map(|s| &s.text), "signedAt": his.map(|s| s.at), "signedId": his.map(id), "reason": reason,
     })
     .to_string()
+}
+
+fn subaddresses(mail: &Mail, topics: &[Topic]) -> Result<Vec<Address>> {
+    topics.iter().map(|t| mail.login().address().subaddress(t)).collect()
+}
+
+/// Every inbox mail received after `after`, newest first and at most `limit`, only that to or cc one of `topics` when
+/// any is given. The dates are compared here, as [`names`] compares addresses: Stalwart answers a sort from its
+/// full-text index, which lags ingest, and may answer a date filter the same way.
+pub async fn received_after(
+    mail: &Mail,
+    topics: &[Topic],
+    after: Timestamp,
+    limit: Option<NonZeroUsize>,
+) -> Result<Vec<Email>> {
+    let topics = subaddresses(mail, topics)?;
+    let dated: Vec<Dated> =
+        mail.get(&mail.query(json!({ "inMailbox": mail.mailbox("inbox")? })).await?).await?;
+    let late = |d: &Dated| !d.received.parse::<Timestamp>().is_ok_and(|t| t <= after);
+    let ids: Vec<String> = dated.into_iter().filter(late).map(|d| d.id).collect();
+    let mut found: Vec<Email> = mail.get(&ids).await?;
+    found.retain(|m| topics.is_empty() || names(&topics, m.to.iter().chain(&m.cc)));
+    found.sort_by(|a, b| b.received.cmp(&a.received));
+    found.truncate(limit.map_or(usize::MAX, NonZeroUsize::get));
+    Ok(found)
 }
 
 /// The newest `limit` inbox mail, only that to or cc one of `topics` when any is given. The server's filter is a first
 /// cut, so it is paged until `limit` pass.
 pub async fn newest(mail: &Mail, topics: &[Topic], limit: NonZeroUsize) -> Result<Vec<Email>> {
-    let login = mail.login().address();
-    let topics = topics.iter().map(|t| login.subaddress(t)).collect::<Result<Vec<_>>>()?;
+    let topics = subaddresses(mail, topics)?;
     let mut filter = json!({ "inMailbox": mail.mailbox("inbox")? });
     let addressed: Vec<_> = topics
         .iter()

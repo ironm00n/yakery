@@ -22,15 +22,28 @@ impl Login {
         &self.0
     }
 
-    fn detail(&self, email: &str) -> Option<Option<Topic>> {
+    /// `email`'s subaddress detail, whatever it is, when it is the login or a subaddress of it.
+    fn reached(&self, email: &str) -> Option<Option<String>> {
         let address: Address = email.parse().ok()?;
         let (base, detail) = match address.local().split_once('+') {
-            Some((base, detail)) => (base, Some(detail.parse().ok()?)),
+            Some((base, detail)) => (base, Some(detail.to_owned())),
             None => (address.local(), None),
         };
         let ours = address.domain().eq_ignore_ascii_case(self.0.domain())
             && base.eq_ignore_ascii_case(self.0.local());
         ours.then_some(detail)
+    }
+
+    fn detail(&self, email: &str) -> Option<Option<Topic>> {
+        match self.reached(email)? {
+            Some(detail) => Some(Some(detail.parse().ok()?)),
+            None => Some(None),
+        }
+    }
+
+    /// Whether `email` is the login or any subaddress of it, a topic's or not.
+    pub fn reaches(&self, email: &str) -> bool {
+        self.reached(email).is_some()
     }
 
     pub fn topic(&self, email: &str) -> Option<Topic> {

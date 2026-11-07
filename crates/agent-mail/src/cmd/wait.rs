@@ -91,6 +91,9 @@ pub struct Subscribe {
 pub struct Subscriptions {
     #[arg(long, value_name = "SESSION_ID")]
     pub session: Option<SessionId>,
+    /// Print the record as one JSON object: its `topics`, and its `threads` as the mail ids that name them.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(clap::Args)]
@@ -149,7 +152,12 @@ pub async fn subscribe(args: Subscribe) -> Result<ExitCode> {
 /// Says what a Claude Code session's `wait --session` watches, this one's unless --session names another.
 pub async fn subscriptions(args: Subscriptions) -> Result<ExitCode> {
     let id = target(args.session, "subscriptions lists")?;
-    succeed!("{}", watches(&Store::new(&Config::load()?.login)?.records()?, &id)?)
+    succeed!("{}", subscribed(&Store::new(&Config::load()?.login)?.records()?, &id, args.json)?)
+}
+
+/// What `subscriptions` prints for `id`: its record as JSON, or in words.
+pub fn subscribed(records: &Records, id: &SessionId, json: bool) -> Result<String> {
+    if json { Ok(serde_json::to_string(&records.of(id)?)?) } else { watches(records, id) }
 }
 
 /// Takes topics and threads out of what a Claude Code session's `wait --session` watches, this one's unless --session

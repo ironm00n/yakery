@@ -80,9 +80,10 @@ fn an_inbox_line_shows_what_he_signed_and_why_other_mail_is_not_his() {
         json!({ "subject": "undo everything", "from": [{ "email": "agent@example.org" }],
                 "to": [{ "email": "agent+other@example.org" }], "cc": [{ "email": "x@example.org" }] }),
     );
+    let ours = login("agent@example.org");
     let signed = authority::signed(SUBMISSION_KEY, &delivered(HIM, NOW, MESSAGE, "")).unwrap();
     let signature = signed.signature.clone();
-    let raw = read::listing(&view(m.clone()), &Signature::His(signed));
+    let raw = read::listing(&view(m.clone()), &Signature::His(signed), &ours);
     assert!(!raw.contains(&signature), "{raw}");
     let his: Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(
@@ -90,18 +91,15 @@ fn an_inbox_line_shows_what_he_signed_and_why_other_mail_is_not_his() {
         [&json!("a1"), &json!(HIM), &json!([POOL]), &json!([]), &json!("deploy"), &json!(true)]
     );
     assert_eq!(
-        [&his["text"], &his["signedAt"]],
-        [&json!("yes, deploy it\n> deploy flex-3?\n"), &json!(NOW)]
+        [&his["text"], &his["signedAt"], &his["toLogin"], &his["topics"]],
+        [&json!("yes, deploy it\n> deploy flex-3?\n"), &json!(NOW), &json!(true), &json!(["pool"])]
     );
     assert!(his["signedId"].as_str().is_some_and(|s| s.len() == 64), "{his}");
-    let not: Value = serde_json::from_str(&read::listing(
-        &view(m.clone()),
-        &Signature::NotHis("unsigned".into()),
-    ))
-    .unwrap();
-    let unread: Value =
-        serde_json::from_str(&read::listing(&view(m), &Signature::Unchecked("too big".into())))
-            .unwrap();
+    let listed = |m: Value, s: Signature| -> Value {
+        serde_json::from_str(&read::listing(&view(m), &s, &ours)).unwrap()
+    };
+    let not = listed(m.clone(), Signature::NotHis("unsigned".into()));
+    let unread = listed(m, Signature::Unchecked("too big".into()));
     assert_eq!(
         [
             &not["from"],
@@ -109,7 +107,9 @@ fn an_inbox_line_shows_what_he_signed_and_why_other_mail_is_not_his() {
             &not["signedByOwen"],
             &not["text"],
             &not["signedId"],
-            &not["reason"]
+            &not["reason"],
+            &not["toLogin"],
+            &not["topics"]
         ],
         [
             &json!("agent@example.org"),
@@ -117,10 +117,39 @@ fn an_inbox_line_shows_what_he_signed_and_why_other_mail_is_not_his() {
             &json!(false),
             &Value::Null,
             &Value::Null,
-            &json!("unsigned")
+            &json!("unsigned"),
+            &json!(true),
+            &json!(["other"])
         ]
     );
     assert_eq!([&unread["signedByOwen"], &unread["reason"]], [&Value::Null, &json!("too big")]);
+}
+
+#[test]
+fn an_inbox_line_names_the_topics_of_the_login_its_to_and_cc_name() {
+    let to = |to: &str, cc: &str| {
+        let each = |l: &str| {
+            l.split(',')
+                .filter(|a| !a.is_empty())
+                .map(|a| json!({ "email": a }))
+                .collect::<Vec<_>>()
+        };
+        let m = email("a1", json!({ "to": each(to), "cc": each(cc) }));
+        let line: Value = serde_json::from_str(&read::listing(
+            &view(m),
+            &Signature::NotHis("unsigned".into()),
+            &login("agent@example.org"),
+        ))
+        .unwrap();
+        (line["toLogin"].clone(), line["topics"].clone())
+    };
+    rows!(|(t, c): (&str, &str)| to(t, c);
+        ("x@example.org", "") => (json!(false), json!([]));
+        ("agent@example.org", "") => (json!(true), json!([]));
+        ("agent@example.com,agentx+pool@example.org", "") => (json!(false), json!([]));
+        ("x@example.org", "Agent+Pool@example.org,agent+pool@example.org") => (json!(true), json!(["pool"]));
+        ("agent+xb@example.org", "agent+pool@example.org") => (json!(true), json!(["pool", "xb"]));
+    );
 }
 
 #[test]

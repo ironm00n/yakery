@@ -65,6 +65,10 @@ fn ours_is_the_login_or_its_topic_subaddresses() {
         HIM, "agent@agent.example.org", "agents@example.org", "agent+@example.org",
         "agent+a_b@example.org", "ada+agent@example.org", "agent" => false;
     );
+    rows!(|a| me.reaches(a);
+        "agent@example.org", "agent+tooling@example.org", "agent+@example.org", "Agent+a_b@example.org" => true;
+        HIM, "agent@agent.example.org", "agents@example.org", "ada+agent@example.org", "agent" => false;
+    );
     rows!(|a| me.first_topic([a]).map(|a| a.to_string());
         TOOLING => Some(TOOLING.into()); "agent@example.org", "owner+tooling@example.org" => None;
     );

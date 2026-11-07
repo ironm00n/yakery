@@ -1113,6 +1113,69 @@ async fn change_lists_that_do_not_read_or_do_not_move_and_queries_whose_pages_ke
 }
 
 #[tokio::test]
+async fn inbox_after_a_time_lists_all_mail_received_since_newest_first() {
+    let dir = Scratch::new("inbox-after");
+    let at = |id: String, t: String, to: &str| {
+        email(&id, json!({ "receivedAt": t, "to": [{ "email": to }] }))
+    };
+    let mut emails = vec![
+        at("a".into(), "2026-11-06T10:00:00Z".into(), POOL),
+        at("b".into(), "2026-11-06T12:00:00Z".into(), "agent+other@example.org"),
+        at("c".into(), "2026-11-06T11:00:00Z".into(), POOL),
+        at("d".into(), "2026-11-06T09:00:00Z".into(), POOL),
+    ];
+    emails.extend(
+        (0..600).map(|n| {
+            at(format!("e{n}"), format!("2026-11-05T{:02}:{:02}:00Z", n / 60, n % 60), POOL)
+        }),
+    );
+    let (_wire, _server, mail) = mail(&dir, Stalwart::new(emails)).await;
+    let mail = mail.unwrap();
+    let listed = async |after: &str, topics: &[&str], limit: Option<usize>| {
+        let topics: Vec<_> = topics.iter().map(|t| t.parse().unwrap()).collect();
+        let limit = limit.map(|l| NonZeroUsize::new(l).unwrap());
+        let found =
+            read::received_after(&mail, &topics, after.parse().unwrap(), limit).await.unwrap();
+        found.into_iter().map(|m| m.id).collect::<Vec<_>>()
+    };
+    assert_eq!(listed("2026-11-06T09:30:00Z", &[], None).await, ["b", "c", "a"]);
+    assert_eq!(listed("2026-11-06T10:00:00Z", &[], None).await, ["b", "c"]);
+    assert_eq!(listed("2026-11-06T10:00:00.900Z", &[], None).await, ["b", "c"]);
+    assert_eq!(listed("2026-11-06T05:30:00-04:00", &["pool"], None).await, ["c", "a"]);
+    assert_eq!(listed("2026-11-06T09:30:00Z", &[], Some(1)).await, ["b"]);
+    assert_eq!(listed("2026-11-04T00:00:00Z", &[], None).await.len(), 604);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_inbox_listing_after_a_time_reads_each_mail_and_fails_whole_on_a_failed_download() {
+    let dir = Scratch::new("inbox-lines");
+    let at = |id, t: &str| email(id, json!({ "receivedAt": t, "to": [{ "email": POOL }] }));
+    let emails = vec![
+        at("mid", "2026-11-06T11:00:00Z"),
+        at("old", "2026-11-05T00:00:00Z"),
+        at("new", "2026-11-06T12:00:00Z"),
+    ];
+    let mut stalwart = Stalwart::new(emails);
+    let unsigned = format!("From: {HIM}\r\nTo: {POOL}\r\n\r\nyes\r\n");
+    stalwart.downloads.extend([reply(200, signed_to(POOL)), reply(200, unsigned)]);
+    let (_wire, _server, mail) = mail(&dir, stalwart).await;
+    let mail = mail.unwrap();
+    let args = read::Inbox {
+        topic: vec![],
+        limit: None,
+        after: Some("2026-11-06T00:00:00Z".parse().unwrap()),
+        json: true,
+    };
+    let lines = read::lines(&mail, &args).await.unwrap();
+    let field = |l: &String, f: &str| serde_json::from_str::<Value>(l).unwrap()[f].clone();
+    assert_eq!(
+        lines.iter().map(|l| (field(l, "id"), field(l, "signedByOwen"))).collect::<Vec<_>>(),
+        [(json!("new"), json!(true)), (json!("mid"), json!(false))]
+    );
+    assert!(read::lines(&mail, &args).await.is_err(), "the third download is a 404");
+}
+
+#[tokio::test]
 async fn inbox_lists_mail_to_its_topic_itself_and_pages_past_mail_to_a_longer_one() {
     let dir = Scratch::new("inbox-topic");
     let to = |id, a: &str| email(id, json!({ "to": [{ "email": a }] }));
