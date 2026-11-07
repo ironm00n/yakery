@@ -371,6 +371,7 @@
       deployLib.deployChecks self.deploy
       // lib.optionalAttrs (system == "x86_64-linux") {
         oom = import ./nix/tests/oom.nix { pkgs = test-pkgs; };
+        claude-agent = import ./nix/tests/claude-agent.nix { pkgs = test-pkgs; };
         stack = import ./nix/tests/stack.nix { pkgs = test-pkgs; };
         ksycoca = import ./nix/tests/ksycoca.nix { pkgs = test-pkgs; };
         ok-color = import ./nix/tests/ok-color.nix { pkgs = test-pkgs; };

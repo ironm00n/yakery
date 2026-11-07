@@ -25,6 +25,7 @@
     ./backup.nix
     ./zitadel.nix
     ./claude-code.nix
+    ./claude-agent.nix
     ./agent-slack.nix
     ./stalwart
     ./bulwark.nix
