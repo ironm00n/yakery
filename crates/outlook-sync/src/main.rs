@@ -101,8 +101,11 @@ async fn daemon(state: Rc<Dir>, http: std::os::fd::OwnedFd) -> Result<()> {
         Box::leak(Box::new(Sync { graph, mirror, state, policy: &POLICY, shared }));
     let listener = std::net::TcpListener::from(http);
     listener.set_nonblocking(true)?;
-    tokio::task::spawn_local(serve::serve(sync, tokio::net::TcpListener::from_std(listener)?));
-    sync.run(wakes).await;
+    let listener = tokio::net::TcpListener::from_std(listener)?;
+    tokio::select! {
+        served = serve::serve(sync, listener) => served?,
+        () = sync.run(wakes) => {}
+    }
     Ok(())
 }
 

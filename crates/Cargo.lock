@@ -2795,6 +2795,8 @@ dependencies = [
 name = "yakery-serve"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "rustix",
  "tokio",
  "yakery-log",
 ]

@@ -649,9 +649,9 @@ fn proc_net_address(field: &str) -> Option<SocketAddrV4> {
     Some(SocketAddrV4::new(ip, u16::from_str_radix(port, 16).ok()?))
 }
 
-async fn relay<L: Local>(listener: L, state: Arc<State>) {
+async fn relay<L: Local>(what: &str, listener: L, state: Arc<State>) -> Result<()> {
     loop {
-        let client = yakery_serve::accept(async || listener.next().await).await;
+        let client = yakery_serve::accept(what, || listener.next()).await?;
         let state = state.clone();
         tokio::spawn(async move {
             if let Err(e) = tunnel::<L>(client, &state).await {
@@ -673,9 +673,9 @@ async fn tunnel<L: Local>(mut client: L::Stream, state: &State) -> Result<()> {
     Ok(())
 }
 
-async fn serve(listener: VsockListener, state: Arc<State>) {
+async fn serve(listener: VsockListener, state: Arc<State>) -> Result<()> {
     loop {
-        let (stream, peer) = yakery_serve::accept(async || listener.accept().await).await;
+        let (stream, peer) = yakery_serve::accept("the control port", || listener.accept()).await?;
         if peer.cid() != HOST_CID {
             continue;
         }
@@ -765,7 +765,11 @@ async fn run(args: Args, api: OwnedFd, direct: OwnedFd, control: OwnedFd) -> Res
     let port = control.local_addr()?.port();
     ensure!(port == CONTROL_PORT, "the control socket is on port {port}, not {CONTROL_PORT}");
     let (api, direct) = (UnixListener::from_std(api)?, TcpListener::from_std(direct)?);
-    tokio::join!(relay(api, state.clone()), relay(direct, state.clone()), serve(control, state));
+    tokio::try_join!(
+        relay("the api socket", api, state.clone()),
+        relay("the direct port", direct, state.clone()),
+        serve(control, state)
+    )?;
     Ok(())
 }
 

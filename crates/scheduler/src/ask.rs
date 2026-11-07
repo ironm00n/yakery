@@ -136,14 +136,18 @@ pub async fn ask<A: Serialize, B: DeserializeOwned>(socket: &Path, question: &A)
     Ok(serde_json::from_slice(&answer)?)
 }
 
-pub async fn serve<A, B, F>(listener: UnixListener, answer: impl Fn(A) -> F + Clone + 'static)
+pub async fn serve<A, B, F>(
+    what: &str,
+    listener: UnixListener,
+    answer: impl Fn(A) -> F + Clone + 'static,
+) -> Result<()>
 where
     A: DeserializeOwned + 'static,
     B: Serialize,
     F: Future<Output = B>,
 {
     loop {
-        let (mut stream, _) = yakery_serve::accept(async || listener.accept().await).await;
+        let (mut stream, _) = yakery_serve::accept(what, || listener.accept()).await?;
         let answer = answer.clone();
         tokio::task::spawn_local(async move {
             let mut question = vec![];

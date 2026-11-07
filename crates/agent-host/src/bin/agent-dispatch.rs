@@ -277,7 +277,7 @@ async fn serve(args: Args) -> Result<()> {
     }
     let listener = TcpListener::bind(args.listen).await?;
     loop {
-        let (stream, peer) = yakery_serve::accept(async || listener.accept().await).await;
+        let (stream, peer) = yakery_serve::accept("the webhook port", || listener.accept()).await?;
         if !args.allow_from.contains(&peer.ip().to_canonical()) {
             warn!("refused a connection from {peer}");
             continue;

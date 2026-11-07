@@ -10,6 +10,8 @@ autotests = false
 path = "src/lib.rs"
 
 [dependencies]
+anyhow.workspace = true
+rustix.workspace = true
 tokio = { workspace = true, features = ["time"] }
 yakery-log.workspace = true
 

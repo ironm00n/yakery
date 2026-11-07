@@ -155,9 +155,9 @@ impl Sync {
     }
 }
 
-pub async fn serve(sync: &'static Sync, listener: TcpListener) {
+pub async fn serve(sync: &'static Sync, listener: TcpListener) -> anyhow::Result<()> {
     loop {
-        let (stream, _) = yakery_serve::accept(async || listener.accept().await).await;
+        let (stream, _) = yakery_serve::accept("the http socket", || listener.accept()).await?;
         tokio::task::spawn_local(async move {
             let service = service_fn(move |request| async move {
                 Ok::<_, Infallible>(sync.answer(request).await)

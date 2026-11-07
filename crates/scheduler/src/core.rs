@@ -246,8 +246,10 @@ pub async fn run(policy: &'static Policy, mut sockets: Sockets) -> Result<()> {
         Ok(UnixListener::from_std(listener)?)
     };
     let (front, admin) = (listener(&policy.layout.front.fd)?, listener(&policy.layout.admin.fd)?);
-    tokio::task::spawn_local(ask::serve(admin, move |a| core.admin(a)));
-    ask::serve(front, move |a| core.front(a)).await;
+    tokio::try_join!(
+        ask::serve("the admin socket", admin, move |a| core.admin(a)),
+        ask::serve("the front socket", front, move |a| core.front(a))
+    )?;
     Ok(())
 }
 
