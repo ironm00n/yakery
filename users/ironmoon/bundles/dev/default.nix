@@ -16,7 +16,10 @@ let
   cfg = config.bundles.dev;
 in
 {
-  imports = [ ./claude ];
+  imports = [
+    ./claude
+    ./work-capture.nix
+  ];
 
   options.bundles.dev = {
     enable = mkEnableOption "global dev stuff";
