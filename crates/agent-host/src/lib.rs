@@ -30,7 +30,7 @@ impl Outcome {
     pub fn read(&mut self, reply: &Reply) {
         self.well = match reply {
             Reply::Injected | Reply::Exited { code: Some(0) } => true,
-            Reply::Started | Reply::Refused { .. } | Reply::Exited { .. } => false,
+            Reply::Started | Reply::Busy | Reply::Refused { .. } | Reply::Exited { .. } => false,
             Reply::Event(_) => self.well,
         };
     }

@@ -24,6 +24,8 @@ pub const WAKE: &str = "wake";
 pub const CA: &str = "ca";
 const MAX_PROOF: usize = "uid 4294967295 ".len() + 2 * blake3::OUT_LEN + 1;
 const HANDSHAKE: Duration = Duration::from_secs(10);
+/// agentd refuses a wake that no session takes within this.
+pub const FIRST_REPLY: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug)]
 pub enum Service {
@@ -133,6 +135,7 @@ pub enum Request {
 pub enum Reply {
     Started,
     Injected,
+    Busy,
     Refused { reason: String },
     Event(Box<RawValue>),
     Exited { code: Option<i32> },
@@ -146,16 +149,43 @@ impl Reply {
     }
 }
 
+pub type Replies = Lines<BufReader<ReadHalf<VsockStream>>>;
+
+/// Wakes the agent, asking again while agentd answers Busy, which it does only after waiting FIRST_REPLY: the first
+/// other reply line, and the lines after it. `busy` is told each Busy line.
 pub async fn wake(
     cid: u32,
     key: &Key,
     request: &Request,
-) -> Result<Lines<BufReader<ReadHalf<VsockStream>>>> {
+    busy: impl FnMut(&str),
+) -> Result<(String, Replies)> {
+    answered(|| ask(cid, key, request), busy).await
+}
+
+async fn ask(cid: u32, key: &Key, request: &Request) -> Result<Replies> {
     let mut stream = VsockStream::connect(VsockAddr::new(cid, CONTROL_PORT)).await?;
     prove(&mut stream, key, Service::Control, WAKE).await?;
     let (read, mut write) = tokio::io::split(stream);
     write.write_all(format!("{}\n", serde_json::to_string(request)?).as_bytes()).await?;
     Ok(BufReader::new(read).lines())
+}
+
+async fn answered<R, F>(
+    mut ask: impl FnMut() -> F,
+    mut busy: impl FnMut(&str),
+) -> Result<(String, Lines<R>)>
+where
+    R: AsyncBufRead + Unpin,
+    F: Future<Output = Result<Lines<R>>>,
+{
+    loop {
+        let mut replies = ask().await?;
+        let line = replies.next_line().await?.context("agentd hung up without replying")?;
+        if !matches!(serde_json::from_str(&line), Ok(Reply::Busy)) {
+            return Ok((line, replies));
+        }
+        busy(&line);
+    }
 }
 
 #[cfg(test)]

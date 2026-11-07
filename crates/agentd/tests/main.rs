@@ -186,6 +186,49 @@ async fn a_session_that_ends_leaves_the_one_started_after_it() {
     assert_eq!(state.agents["alpha"].run.lock().await.id(), Some(1));
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_wake_no_slot_comes_to_within_the_bound_is_answered_busy() {
+    let state = state(&[("alpha", 2001)]);
+    let _every_slot = state.slots.clone().acquire_owned().await.unwrap();
+    let answered = timeout(FIRST_REPLY * 2, state.wake("alpha", "hi")).await.unwrap();
+    assert!(matches!(answered, Ok(Woken::Busy)));
+}
+
+/// A start holds the agent's lock across its CA fetch.
+#[tokio::test(start_paused = true)]
+async fn a_wake_behind_a_start_that_does_not_finish_is_answered_busy() {
+    let state = state(&[("alpha", 2001)]);
+    let _starting = state.agents["alpha"].run.lock().await;
+    let answered = timeout(FIRST_REPLY * 2, state.wake("alpha", "hi")).await.unwrap();
+    assert!(matches!(answered, Ok(Woken::Busy)));
+}
+
+/// The wake waits past the bound for alpha's last session to exit; a session taking input after that gets nothing.
+#[tokio::test(start_paused = true)]
+async fn a_wake_answered_busy_is_not_made_later() {
+    let state = state(&[("alpha", 2001)]);
+    put(&state, "alpha", Run::Ending(0)).await;
+    let answered = timeout(FIRST_REPLY * 2, state.wake("alpha", "hi")).await.unwrap();
+    assert!(matches!(answered, Ok(Woken::Busy)));
+    let (input, mut taken) = mpsc::channel(QUEUED);
+    put(&state, "alpha", Run::Running(Session { id: 1, input, injected: Instant::now() })).await;
+    tokio::task::yield_now().await;
+    assert!(taken.try_recv().is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_slot_freed_within_the_bound_is_taken() {
+    let state = state(&[("alpha", 2001)]);
+    let every_slot = state.slots.clone().acquire_owned().await.unwrap();
+    let waiting = wake(&state, "hi".into());
+    // its deadline set, so a shorter bound expires while the clock moves
+    tokio::task::yield_now().await;
+    tokio::time::advance(FIRST_REPLY - Duration::from_secs(1)).await;
+    drop(every_slot);
+    let started = timeout(LONG, waiting).await.unwrap().unwrap();
+    assert!(format!("{:#}", started.err().unwrap()).contains("quotactl"));
+}
+
 /// Alpha's session 0, whose turn has just ended, driven in the background.
 async fn turn_ended(state: &Arc<State>) -> (Child, JoinHandle<()>) {
     let (input, session) = unread(0);

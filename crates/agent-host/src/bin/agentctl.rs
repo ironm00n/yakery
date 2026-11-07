@@ -33,13 +33,17 @@ async fn wake_agent(args: Args) -> Result<ExitCode> {
         message.clear();
         std::io::stdin().read_to_string(&mut message)?;
     }
-    let mut replies = wake(args.vm.cid, &args.vm.key()?, &Request::Wake { agent, message }).await?;
+    let request = Request::Wake { agent, message };
+    let (first, mut replies) =
+        wake(args.vm.cid, &args.vm.key()?, &request, |busy| println!("{busy}")).await?;
     let mut outcome = Outcome::default();
-    while let Some(line) = replies.next_line().await? {
+    let mut next = Some(first);
+    while let Some(line) = next {
         if let Ok(reply) = serde_json::from_str(&line) {
             outcome.read(&reply);
         }
         println!("{line}");
+        next = replies.next_line().await?;
     }
     Ok(if outcome.well { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }

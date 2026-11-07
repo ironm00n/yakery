@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_host::Vm;
-use agent_proto::{Key, Reply, Request, read_agents};
-use anyhow::{Context, Result, bail};
+use agent_proto::{FIRST_REPLY, Key, Reply, Request, read_agents};
+use anyhow::{Result, bail};
 use bytes::Bytes;
 use clap::Parser;
 use http_body_util::{BodyExt, Empty, Limited};
@@ -102,8 +102,11 @@ impl Dispatch {
 
     async fn wake(&self, agent: &str) -> Result<Reply> {
         let request = Request::Wake { agent: agent.to_owned(), message: MESSAGE.to_owned() };
-        let mut replies = agent_proto::wake(self.cid, &self.key, &request).await?;
-        taken(&replies.next_line().await?.context("the daemon hung up without replying")?)
+        let busy = |_: &str| {
+            warn!("{agent}: no session took the wake within {FIRST_REPLY:?}, asking again")
+        };
+        let (first, _) = agent_proto::wake(self.cid, &self.key, &request, busy).await?;
+        taken(&first)
     }
 
     async fn wake_until_answered(&self, agent: &str) -> Result<Reply> {

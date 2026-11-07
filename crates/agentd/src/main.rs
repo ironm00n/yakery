@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use agent_proto::{
-    CA, CONTROL_PORT, HOST_CID, Key, Reply, Request, Service, WAKE, challenge, prove, read_agents,
-    read_key,
+    CA, CONTROL_PORT, FIRST_REPLY, HOST_CID, Key, Reply, Request, Service, WAKE, challenge, prove,
+    read_agents, read_key,
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use clap::Parser;
@@ -46,6 +46,9 @@ const MAX_EVENT: usize = 128 << 20;
 /// Wakes queued for a session past what its stdin pipe holds. One more is refused: the session has stopped reading,
 /// and queueing on would only grow agentd's memory.
 const QUEUED: usize = 8;
+
+/// How long a start waits for the gateway's CA once the handshake is done.
+const CA_FETCH: Duration = Duration::from_secs(10);
 
 #[derive(Parser)]
 struct Args {
@@ -133,6 +136,7 @@ impl Run {
 enum Woken {
     Started(mpsc::UnboundedReceiver<Reply>),
     Injected,
+    Busy,
 }
 
 /// Lines of at most `max` bytes, the last with or without its newline: a longer one is skipped whole, so no writer
@@ -234,7 +238,14 @@ impl State {
         self.agents.iter().find(|(_, agent)| agent.uid == uid).map(|(name, _)| name.as_str())
     }
 
+    /// Busy if no session takes `message` within FIRST_REPLY. Until it spawns a session a wake only waits, for the
+    /// agent's lock, a slot, a change or the CA, so dropping it there leaves nothing to start later.
     async fn wake(self: &Arc<Self>, name: &str, message: &str) -> Result<Woken> {
+        let handed = tokio::time::timeout(FIRST_REPLY, self.hand(name, message)).await;
+        handed.unwrap_or(Ok(Woken::Busy))
+    }
+
+    async fn hand(self: &Arc<Self>, name: &str, message: &str) -> Result<Woken> {
         let agent = self.agents.get(name).with_context(|| format!("no agent named {name}"))?;
         let mut slot = None;
         loop {
@@ -295,7 +306,9 @@ impl State {
         let mut gateway = VsockStream::connect(VsockAddr::new(HOST_CID, self.args.ca_port)).await?;
         prove(&mut gateway, &self.key, Service::Ca, CA).await?;
         let mut pem = Vec::new();
-        gateway.read_to_end(&mut pem).await?;
+        tokio::time::timeout(CA_FETCH, gateway.read_to_end(&mut pem))
+            .await
+            .context("the CA did not arrive")??;
         let dir = Dir::open(&self.args.run_dir, &[])?;
         dir.drop_stale_partials()?;
         dir.write("ca.pem", &pem, Mode::Readable, Replace::Yes).map(drop)
@@ -528,6 +541,7 @@ async fn control(stream: VsockStream, state: Arc<State>) -> Result<()> {
     let mut write = stream.into_inner();
     match state.wake(&agent, &message).await {
         Ok(Woken::Injected) => write.write_all(Reply::Injected.line().as_bytes()).await?,
+        Ok(Woken::Busy) => write.write_all(Reply::Busy.line().as_bytes()).await?,
         Ok(Woken::Started(mut replies)) => {
             note!("{agent}: session started");
             write.write_all(Reply::Started.line().as_bytes()).await?;

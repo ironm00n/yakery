@@ -71,3 +71,34 @@ async fn a_silent_peer_times_out() {
     let mut accepting = BufReader::new(accepting);
     assert!(challenge(&mut accepting, &KEY, Service::Control).await.is_err());
 }
+
+/// Each ask reaches a daemon that answers the next of `answers`.
+#[tokio::test]
+async fn a_host_asks_again_while_agentd_is_busy() {
+    let mut answers = [r#""busy""#, r#""busy""#, r#""injected""#].into_iter();
+    let mut told = Vec::new();
+    let ask = || {
+        let answer = answers.next().expect("asked after it was answered");
+        async move {
+            let (host, mut daemon) = duplex(64);
+            daemon.write_all(format!("{answer}\n").as_bytes()).await?;
+            anyhow::Ok(BufReader::new(host).lines())
+        }
+    };
+    let (first, _) = answered(ask, |line| told.push(line.to_owned())).await.unwrap();
+    assert_eq!(first, r#""injected""#);
+    assert_eq!(told, [r#""busy""#, r#""busy""#]);
+    assert_eq!(answers.next(), None);
+}
+
+/// agentd closes the connection without a word.
+#[tokio::test]
+async fn a_host_reports_an_agentd_that_hangs_up_and_asks_no_more() {
+    let mut asks = 0;
+    let ask = || {
+        asks += 1;
+        assert_eq!(asks, 1, "asked again after a hang-up");
+        async { anyhow::Ok(BufReader::new(duplex(64).0).lines()) }
+    };
+    assert!(answered(ask, |_| {}).await.is_err());
+}
