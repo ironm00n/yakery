@@ -148,6 +148,9 @@ in
         pandoc
 
         poppler-utils
+
+        openssl
+        socat
       ]
       ++ lib.optionals non-essential [
         (wordlists.override {
