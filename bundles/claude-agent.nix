@@ -20,11 +20,16 @@ let
     user = "${cfg.name}-tap";
     proxy = "127.0.0.1:${toString cfg.tap.port}";
   };
-  # Only the account's own sessions reach its tap's proxy port; any other uid's connection is reset.
+  # A loopback port reached by one uid alone: the account's tap by the account, the owner's own services by the owner.
+  only =
+    uid: port:
+    "ip daddr 127.0.0.1 tcp dport ${toString port} meta skuid != ${toString uid} reject with tcp reset";
   portRule = ''
     chain output {
       type filter hook output priority filter; policy accept;
-      ip daddr 127.0.0.1 tcp dport ${toString tap.port} meta skuid != ${toString cfg.uid} reject with tcp reset
+      ${lib.concatStringsSep "\n  " (
+        [ (only cfg.uid tap.port) ] ++ map (only config.users.users.${cfg.owner}.uid) cfg.ownerPorts
+      )}
     }
   '';
 in
@@ -64,6 +69,17 @@ in
       type = types.listOf types.str;
       default = [ ];
       description = "This account's keys on Owen's other hosts, so it logs in to itself there and never to him.";
+    };
+
+    ownerPorts = mkOption {
+      type = types.listOf types.port;
+      default = [ ];
+      example = [
+        8384
+        8888
+        8889
+      ];
+      description = "The owner's loopback services that answer as the owner, which only the owner's uid may reach.";
     };
 
     tap = {
@@ -109,6 +125,10 @@ in
           "docker"
         ]
       ++ [
+        {
+          assertion = cfg.ownerPorts == [ ] || config.users.users.${cfg.owner}.uid != null;
+          message = "bundles.claude-agent: ownerPorts needs ${cfg.owner}'s uid fixed, for the port rule to name";
+        }
         {
           assertion = !(lib.elem cfg.name config.nix.settings.trusted-users);
           message = "bundles.claude-agent: ${cfg.name} is a nix trusted user, which is root by another name";

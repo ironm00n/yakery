@@ -30,6 +30,12 @@ let
     ''} $out/bin/anthropic-tap
     install -D -m 644 ${pkgs.writeText "policy.env" "FLAGS=a=true,b=false\n"} $out/share/anthropic-tap/policy.env
   '';
+  listen = pkgs.writeText "listen.py" ''
+    import socket, sys
+    server = socket.create_server(("127.0.0.1", int(sys.argv[1])))
+    while True:
+        server.accept()[0].close()
+  '';
   connect = pkgs.writeText "connect.py" ''
     import socket, sys
     family, address = (socket.AF_UNIX, sys.argv[1]) if "/" in sys.argv[1] else (socket.AF_INET, ("127.0.0.1", int(sys.argv[1])))
@@ -42,11 +48,13 @@ let
       owner = "ironmoon";
       memoryMax = "300M";
       sessionMemoryMax = "100M";
+      ownerPorts = [ 8384 ];
       tap = {
         profile = tap;
         poolTokenFile = "/etc/pool.key";
       };
     };
+    users.users.ironmoon.uid = 1000;
     environment.etc."pool.key".text = "token\n";
     users.users.ironmoon.isNormalUser = true;
     environment.systemPackages = [ pkgs.python3 ];
@@ -130,6 +138,11 @@ pkgs.testers.runNixOSTest {
         refused("su ironmoon -c 'python3 ${connect} 8891'", "Connection refused")
         desktop.succeed("su ironmoon -c 'python3 ${connect} /run/claude-agent-tap/events.sock'")
         refused(asAgent("python3 ${connect} /run/claude-agent-tap/events.sock"), "Permission denied")
+
+    with subtest("his own loopback services answer him and refuse the account"):
+        desktop.succeed("su ironmoon -c 'python3 ${listen} 8384 >/dev/null 2>&1 &'")
+        desktop.wait_until_succeeds("su ironmoon -c 'python3 ${connect} 8384'")
+        refused(asAgent("python3 ${connect} 8384"), "Connection refused")
 
     with subtest("its key logs in to itself on the laptop and never to him"):
         laptop.wait_for_unit("sshd.service")
