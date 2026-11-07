@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "What the host and the agent VM's root daemon say to each other over vsock"
 edition.workspace = true
 rust-version.workspace = true
+autotests = false
 
 [lib]
 path = "src/lib.rs"
