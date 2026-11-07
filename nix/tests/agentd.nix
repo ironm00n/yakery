@@ -42,8 +42,9 @@ pkgs.testers.runNixOSTest {
   };
 
   testScript = ''
+    # the client reads until agentd closes, so it is still connected when agentd looks up its owner
     def connect(user, to):
-        vm.succeed(f"su {user} -c 'socat -u /dev/null {to}'")
+        vm.succeed(f"su {user} -c 'timeout 60 socat -u {to} /dev/null'")
 
     def refused():
         return int(vm.succeed("${refusals} || true").strip())
