@@ -598,7 +598,7 @@ let
         assert "signing in again in" in err[:failed] and took < periods["stale"] + 30, (took, err)
   '';
 
-  # invitations from agent@'s calendar to owner@, which Stalwart writes and sends (scheduler/agent-invites.md's run)
+  # invitations from agent@'s calendar to owner@, which Stalwart writes and sends
   invites = ''
 
     def as_user(user, method, args, cap="calendars"):
@@ -613,7 +613,7 @@ let
 
     def owners_copy(title):
         properties = ["uid", "title", "start", "timeZone", "sequence", "status", "calendarIds", "organizerCalendarAddress", "participants"]
-        found = [e for e in as_user("owner", "CalendarEvent/get", {"ids": None, "properties": properties})["list"] if e["title"] == title]
+        found = [e for e in as_user("owner", "CalendarEvent/get", {"ids": None, "properties": properties})["list"] if e.get("title") == title]
         return found[0] if found else None
 
     # unsorted: Stalwart answers a sorted query from its full-text index, which lags delivery
@@ -657,7 +657,8 @@ let
 
     with subtest("a cancel takes it off his calendar, and agent@ lists no invitation"):
         host1.succeed(f"{agent} invite cancel {made} --topic invite")
-        retry(lambda _: (owners_copy("Invite test") or {"status": "gone"})["status"] in ("gone", "cancelled"), timeout_seconds=60)
+        # Stalwart leaves a status at its JSCalendar default, "confirmed", out of the event
+        retry(lambda _: (owners_copy("Invite test") or {"status": "gone"}).get("status", "confirmed") in ("gone", "cancelled"), timeout_seconds=60)
         print("owner@'s copy after the cancel, gone or marked cancelled:", owners_copy("Invite test"))
         assert host1.succeed(f"{agent} invites --topic invite").strip() == "no invitations"
 
