@@ -481,8 +481,9 @@ in
         "a campus network" = [ "155.33.0.0/16" ];
       };
       description = ''
-        Networks Stalwart never bans, by why: it bans an address after 100 failed sign-ins in a
-        day, which locks out every user behind it. This host's own addresses are always exempt.
+        Networks Stalwart never bans or rate-limits, by why: it bans an address after 100 failed
+        sign-ins in a day, which locks out every user behind it, and refuses an account's HTTP
+        requests past 1000 a minute from anywhere else. This host's own addresses are always exempt.
       '';
     };
     programAccounts = lib.mkOption {
