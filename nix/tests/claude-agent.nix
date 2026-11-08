@@ -1,4 +1,8 @@
-{ pkgs }:
+{
+  pkgs,
+  inputs,
+  my-lib,
+}:
 let
   keys = import "${pkgs.path}/nixos/tests/ssh-keys.nix" pkgs;
   # Holds the MiB it is given, every page touched: bytearray(n) alone gets lazy zero pages.
@@ -41,13 +45,34 @@ let
     family, address = (socket.AF_UNIX, sys.argv[1]) if "/" in sys.argv[1] else (socket.AF_INET, ("127.0.0.1", int(sys.argv[1])))
     socket.socket(family).connect(address)
   '';
+  gpg = "${pkgs.gnupg}/bin/gpg";
+  agent = "ironmoon's agent <agent@ironmoon.dev>";
+  commit = pkgs.writeShellScript "commit" ''
+    set -eu
+    bin=/etc/profiles/per-user/claude-agent/bin
+    cd ~
+    $bin/git init -q git
+    $bin/git -C git commit -q --allow-empty -m signed
+    $bin/jj git init --colocate jj
+    $bin/jj -R jj commit -m signed
+    $bin/git -C git log -1 --format='%an <%ae>'
+    $bin/jj -R jj log --no-graph -r @- -T 'author.name() ++ " <" ++ author.email() ++ ">\n"'
+  '';
   common =
-    { lib, ... }:
+    { config, lib, ... }:
     {
       imports = [
+        inputs.home-manager.nixosModules.home-manager
         ../../users/claude-agent/user.nix
         ../../users/claude-agent/tap.nix
+        ../../users/claude-agent/identity.nix
       ];
+      home-manager = {
+        useGlobalPkgs = true;
+        useUserPackages = true;
+        users.claude-agent.home.stateVersion = config.system.stateVersion;
+      };
+      programs.gnupg.agent.enable = true;
       systemd.slices."user-1500".sliceConfig.MemoryMax = lib.mkForce "300M";
       systemd.services."user@1500".environment.CLAUDE_SESSION_MEMORY_MAX = lib.mkForce "100M";
       # what notes' `just agent-tap-install` and the deploy's token step leave behind
@@ -55,7 +80,12 @@ let
       environment.etc."claude-agent/pool-token".text = "token\n";
       users.users.ironmoon.uid = 1000;
       users.users.ironmoon.isNormalUser = true;
-      environment.systemPackages = [ pkgs.python3 ];
+      users.users.ironmoon.linger = true;
+      environment.systemPackages = [
+        pkgs.python3
+        pkgs.git
+        pkgs.gnupg
+      ];
       virtualisation.memorySize = 1024;
       # the test instrumentation panics on any OOM, and the caps' kills are what this test checks
       boot.kernel.sysctl."vm.panic_on_oom" = 0;
@@ -63,6 +93,7 @@ let
 in
 pkgs.testers.runNixOSTest {
   name = "claude-agent";
+  node.specialArgs = { inherit my-lib; };
 
   nodes.desktop = common;
   nodes.laptop = {
@@ -88,6 +119,15 @@ pkgs.testers.runNixOSTest {
         desktop.wait_for_unit("claude-agent-ssh-key.service")
         desktop.succeed("[ \"$(stat -c '%U %a' /home/claude-agent/.ssh/id_ed25519)\" = 'claude-agent 600' ]")
 
+    with subtest("its signing key, made at boot, is its own and private, and its unit prints the public half alone"):
+        desktop.wait_for_unit("claude-agent-gpg-key.service")
+        private = "/home/claude-agent/.gnupg/private-keys-v1.d"
+        desktop.succeed(f"[ \"$(stat -c '%U %a' {private})\" = 'claude-agent 700' ]")
+        modes = desktop.succeed(f"stat -c '%U %a' {private}/*.key").splitlines()
+        assert modes and set(modes) == {"claude-agent 600"}, modes
+        printed = desktop.succeed("journalctl -b -u claude-agent-gpg-key -o cat")
+        assert "BEGIN PGP PUBLIC KEY BLOCK" in printed and "PRIVATE" not in printed, printed
+
     with subtest("nothing in his home reaches it"):
         desktop.succeed("install -d -m 700 -o ironmoon /home/ironmoon/.ssh")
         desktop.succeed("install -m 600 -o ironmoon /dev/null /home/ironmoon/.ssh/id_ed25519")
@@ -100,6 +140,29 @@ pkgs.testers.runNixOSTest {
         assert out == "claude-agent", out
         rules = desktop.execute("sudo -l -U claude-agent")[1]
         assert "is not allowed to run sudo" in rules, rules
+
+    with subtest("the account reaches neither his signing key nor his gpg-agent, even started by him"):
+        desktop.wait_for_unit("user@1000.service")
+        desktop.succeed("su ironmoon -c '${gpg} --batch --pinentry-mode loopback --passphrase \"\" --quick-gen-key \"IRONM00N <me@ironmoon.dev>\" ed25519 sign never'")
+        sock = desktop.succeed("su ironmoon -c '${pkgs.gnupg}/bin/gpgconf --list-dirs agent-socket'").strip()
+        assert sock == "/run/user/1000/gnupg/S.gpg-agent", sock
+        refused(asAgent(f"python3 ${connect} {sock}"), "Permission denied")
+        listed = desktop.succeed("su ironmoon -c 'sudo -n -u claude-agent ${gpg} --batch --list-secret-keys --with-colons' 2>&1")
+        uids = [line.split(":")[9] for line in listed.splitlines() if line.startswith("uid:")]
+        assert uids == ["${agent}"], listed
+
+    with subtest("its commits, by git and by jj, name it and verify against its key and not his"):
+        desktop.wait_for_file("/home/claude-agent/.config/jj/config.toml")
+        desktop.wait_for_file("/home/claude-agent/.config/git/config")
+        authors = desktop.succeed(asAgent("${commit}")).splitlines()
+        assert authors == ["${agent}"] * 2, authors
+        for who, account in (("agent", "claude-agent"), ("his", "ironmoon")):
+            desktop.succeed(f"su {account} -c '${gpg} --armor --export' > /tmp/{who}.asc")
+            desktop.succeed(f"install -d -m 700 /tmp/ring-{who} && ${gpg} --homedir /tmp/ring-{who} --import /tmp/{who}.asc")
+        for repo in ("git", "jj"):
+            verify = lambda who: f"GNUPGHOME=/tmp/ring-{who} git -c safe.directory='*' -C /home/claude-agent/{repo} verify-commit HEAD"
+            desktop.succeed(verify("agent"))
+            desktop.fail(verify("his"))
 
     with subtest("a session's scope is killed alone at its cap"):
         env = desktop.succeed(asAgent("systemctl --user show-environment"))
