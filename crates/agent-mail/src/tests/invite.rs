@@ -72,7 +72,10 @@ async fn a_new_invitation_is_an_event_in_the_default_calendar_that_stalwart_send
     assert_eq!(event["organizerCalendarAddress"], "mailto:agent+pool@example.org");
     let uid = event["uid"].as_str().unwrap();
     assert!(uid.len() == 32 + "@example.org".len() && uid.ends_with("@example.org"), "{uid}");
-    assert_eq!(event["participants"]["organizer"]["roles"], json!({ "owner": true }));
+    assert_eq!(
+        event["participants"]["organizer"],
+        json!({ "calendarAddress": "mailto:agent+pool@example.org", "roles": { "owner": true } })
+    );
     assert_eq!(event["participants"]["invited0"]["calendarAddress"], format!("mailto:{HIM}"));
 }
 

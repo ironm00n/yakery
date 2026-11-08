@@ -115,23 +115,19 @@ pub struct Invitation<'a> {
     pub description: Option<&'a str>,
     pub location: Option<&'a str>,
     pub organizer: &'a str,
+    /// Whether the organizer is listed attending too, which Stalwart writes only for one with an answer.
     pub organizer_attends: bool,
     pub invited: &'a [Person<'a>],
 }
 
 impl Invitation<'_> {
     pub fn event(&self) -> Value {
-        // JSCalendar's roles are a set, each present role true
-        let roles: Map<String, Value> = [("owner", true), ("attendee", self.organizer_attends)]
-            .into_iter()
-            .filter(|(_, held)| *held)
-            .map(|(role, _)| (role.to_string(), json!(true)))
-            .collect();
-        let organizer = json!({
-            "calendarAddress": mailto(self.organizer),
-            "roles": roles,
-            "participationStatus": "accepted",
-        });
+        let mut organizer =
+            json!({"calendarAddress": mailto(self.organizer), "roles": {"owner": true}});
+        if self.organizer_attends {
+            organizer["roles"]["attendee"] = json!(true);
+            organizer["participationStatus"] = json!("accepted");
+        }
         let invited = self.invited.iter().enumerate().map(|(n, p)| {
             let mut person = json!({"calendarAddress": mailto(p.address), "roles": {"attendee": true}, "expectReply": true});
             if let Some(name) = p.name {

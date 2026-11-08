@@ -37,7 +37,7 @@ fn an_agents_invitation_names_it_organizer_only_and_him_invited() {
             "duration": "PT30M",
             "organizerCalendarAddress": "mailto:agent+scheduler@example.org",
             "participants": {
-                "organizer": {"calendarAddress": "mailto:agent+scheduler@example.org", "roles": {"owner": true}, "participationStatus": "accepted"},
+                "organizer": {"calendarAddress": "mailto:agent+scheduler@example.org", "roles": {"owner": true}},
                 "invited0": {"calendarAddress": "mailto:owner@example.org", "roles": {"attendee": true}, "expectReply": true},
             },
         })
@@ -61,8 +61,8 @@ fn a_booked_meeting_has_its_organizer_attending_and_the_invitee_named() {
     }
     .event();
     assert_eq!(
-        event["participants"]["organizer"]["roles"],
-        json!({"owner": true, "attendee": true})
+        event["participants"]["organizer"],
+        json!({"calendarAddress": "mailto:owner@example.org", "roles": {"owner": true, "attendee": true}, "participationStatus": "accepted"})
     );
     assert_eq!(event["participants"]["invited0"]["name"], "Ada Lovelace");
     assert_eq!(event["description"], "hi");

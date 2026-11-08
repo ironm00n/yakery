@@ -646,6 +646,9 @@ let
         assert copy["organizerCalendarAddress"] == "mailto:agent+invite@${domain}", copy
         assert (copy["start"], copy["timeZone"]) == ("2027-01-06T10:00:00", "America/New_York"), copy
         assert copy["participants"][his(copy)].get("participationStatus", "needs-action") == "needs-action", copy
+        print("owner@'s copy's participants:", copy["participants"])
+        organizer = [p for p in copy["participants"].values() if p.get("calendarAddress") == "mailto:agent+invite@${domain}"]
+        assert all(p.get("participationStatus") is None for p in organizer), ("agent@ only organizes", organizer)
         listed = host1.succeed(f"{agent} invites --topic invite")
         assert listed.startswith(made) and "${logins.owner} needs-action" in listed, listed
 
