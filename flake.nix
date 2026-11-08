@@ -375,6 +375,10 @@
           pkgs = test-pkgs;
           inherit inputs my-lib;
         };
+        claude-identity = import ./nix/tests/claude-identity.nix {
+          pkgs = pkgs-map.${system};
+          home = self.nixosConfigurations.desktop.config.home-manager.users.ironmoon;
+        };
         stack = import ./nix/tests/stack.nix { pkgs = test-pkgs; };
         ksycoca = import ./nix/tests/ksycoca.nix { pkgs = test-pkgs; };
         ok-color = import ./nix/tests/ok-color.nix { pkgs = test-pkgs; };
