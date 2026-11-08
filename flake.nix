@@ -320,35 +320,59 @@
 
     checks = lib.mapAttrs (
       system: deployLib:
+      let
+        # VM tests boot from a store image, which is root's as on a host, unless they boot from a disk;
+        # the host's store shared in instead belongs to the build's user under single-user nix, and
+        # ssh refuses config it reads from there
+        test-pkgs =
+          let
+            pkgs = pkgs-map.${system};
+          in
+          pkgs
+          // {
+            testers = pkgs.testers // {
+              runNixOSTest =
+                test:
+                pkgs.testers.runNixOSTest {
+                  imports = [ test ];
+                  nodeDefaults =
+                    { config, lib, ... }:
+                    {
+                      virtualisation.useNixStoreImage = lib.mkDefault (!config.virtualisation.useBootLoader);
+                    };
+                };
+            };
+          };
+      in
       deployLib.deployChecks self.deploy
       // lib.optionalAttrs (system == "x86_64-linux") {
-        oom = import ./nix/tests/oom.nix { pkgs = pkgs-map.${system}; };
-        stack = import ./nix/tests/stack.nix { pkgs = pkgs-map.${system}; };
-        ksycoca = import ./nix/tests/ksycoca.nix { pkgs = pkgs-map.${system}; };
-        ok-color = import ./nix/tests/ok-color.nix { pkgs = pkgs-map.${system}; };
-        stalwart-backup = import ./nix/tests/stalwart-backup.nix { pkgs = pkgs-map.${system}; };
-        stalwart-push = import ./nix/tests/stalwart-push.nix { pkgs = pkgs-map.${system}; };
-        borg-hop = import ./nix/tests/borg-hop.nix { pkgs = pkgs-map.${system}; };
-        backup = import ./nix/tests/backup.nix { pkgs = pkgs-map.${system}; };
-        zitadel = import ./nix/tests/zitadel.nix { pkgs = pkgs-map.${system}; };
-        agent-mail = import ./nix/tests/agent-mail.nix { pkgs = pkgs-map.${system}; };
-        initrd-network = import ./nix/tests/initrd-network.nix { pkgs = pkgs-map.${system}; };
+        oom = import ./nix/tests/oom.nix { pkgs = test-pkgs; };
+        stack = import ./nix/tests/stack.nix { pkgs = test-pkgs; };
+        ksycoca = import ./nix/tests/ksycoca.nix { pkgs = test-pkgs; };
+        ok-color = import ./nix/tests/ok-color.nix { pkgs = test-pkgs; };
+        stalwart-backup = import ./nix/tests/stalwart-backup.nix { pkgs = test-pkgs; };
+        stalwart-push = import ./nix/tests/stalwart-push.nix { pkgs = test-pkgs; };
+        borg-hop = import ./nix/tests/borg-hop.nix { pkgs = test-pkgs; };
+        backup = import ./nix/tests/backup.nix { pkgs = test-pkgs; };
+        zitadel = import ./nix/tests/zitadel.nix { pkgs = test-pkgs; };
+        agent-mail = import ./nix/tests/agent-mail.nix { pkgs = test-pkgs; };
+        initrd-network = import ./nix/tests/initrd-network.nix { pkgs = test-pkgs; };
         bulwark = import ./nix/tests/bulwark.nix {
-          pkgs = pkgs-map.${system};
+          pkgs = test-pkgs;
           pkgs-node = pkgs-node-map.${system};
         };
-        scheduler-stalwart = import ./nix/tests/scheduler-stalwart.nix { pkgs = pkgs-map.${system}; };
-        scheduler-booking = import ./nix/tests/scheduler-booking.nix { pkgs = pkgs-map.${system}; };
-        scheduler-feeds = import ./nix/tests/scheduler-feeds.nix { pkgs = pkgs-map.${system}; };
-        outlook-sync = import ./nix/tests/outlook-sync.nix { pkgs = pkgs-map.${system}; };
+        scheduler-stalwart = import ./nix/tests/scheduler-stalwart.nix { pkgs = test-pkgs; };
+        scheduler-booking = import ./nix/tests/scheduler-booking.nix { pkgs = test-pkgs; };
+        scheduler-feeds = import ./nix/tests/scheduler-feeds.nix { pkgs = test-pkgs; };
+        outlook-sync = import ./nix/tests/outlook-sync.nix { pkgs = test-pkgs; };
         outlook-sync-write = import ./nix/tests/outlook-sync.nix {
-          pkgs = pkgs-map.${system};
+          pkgs = test-pkgs;
           write = true;
         };
-        submission-signer = import ./nix/tests/submission-signer.nix { pkgs = pkgs-map.${system}; };
-        agentd = import ./nix/tests/agentd.nix { pkgs = pkgs-map.${system}; };
+        submission-signer = import ./nix/tests/submission-signer.nix { pkgs = test-pkgs; };
+        agentd = import ./nix/tests/agentd.nix { pkgs = test-pkgs; };
         agent-slack = import ./nix/tests/agent-slack.nix {
-          pkgs = pkgs-map.${system};
+          pkgs = test-pkgs;
           inherit inputs;
         };
         # every member's tests, the shared crates' included, which no package runs; agent-mail's load the system's roots
@@ -368,7 +392,7 @@
         );
         treefmt = treefmtEval.${system}.config.build.check self;
         desktop-boot = import ./nix/tests/desktop-boot.nix {
-          pkgs = pkgs-map.${system};
+          pkgs = test-pkgs;
           inherit inputs my-lib;
         };
       }

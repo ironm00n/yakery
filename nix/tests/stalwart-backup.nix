@@ -144,13 +144,12 @@ pkgs.testers.runNixOSTest {
           assert name == "error" or "p" in result.get("notCreated", {}), result
 
       with subtest("the dump archives alice's mail through the backup account"):
-          server.wait_until_succeeds(
+          run_job()
+          server.succeed(
               "rm -rf /tmp/restore && mkdir /tmp/restore"
-              " && systemctl start --wait borgbackup-job-stalwart.service"
               " && borg-job-stalwart extract --stdout ::$(borg-job-stalwart list --short --last 1) stalwart.dump | tar -x -C /tmp/restore"
               f" && sqlite3 /tmp/restore/{alice}.sqlite 'SELECT data FROM emails JOIN blobs ON blobs.id = emails.blob_id'"
-              " | grep -q 'Subject: kept'",
-              timeout=120,
+              " | grep -q 'Subject: kept'"
           )
 
       with subtest("the archives are named by account id, groups included, with a manifest of addresses"):
