@@ -8,7 +8,7 @@ let
   agents = import ../vms/agents/agents.nix { inherit lib; };
   key = "/etc/agentd.key";
   apiAddress = "127.0.0.9";
-  refusals = "journalctl -u agentd -p warning -o cat | grep -cx \\\"api tunnel: uid $(id -u stranger) is not an agent\\\"";
+  refusals = "journalctl -u agentd -p warning..warning -o cat | grep -cx \\\"api tunnel: uid $(id -u stranger) is not an agent\\\"";
 in
 pkgs.testers.runNixOSTest {
   name = "agentd";
@@ -73,9 +73,14 @@ pkgs.testers.runNixOSTest {
         vm.wait_until_succeeds(f"test $(${refusals}) -gt {before}")
         vm.succeed("test -S /run/agentd/api.sock")
 
-    with subtest("the control socket takes a vsock connection, and drops a peer that is not the host"):
+    with subtest("the control socket takes a vsock connection, and drops a peer that is not the host, staying up"):
+        serving = vm.succeed("systemctl show -P MainPID agentd.service").strip()
         status, out = vm.execute("agentctl --cid 1 --key ${key} wake alpha hello 2>&1")
         assert status == 1 and ("early eof" in out or "Broken pipe" in out), out
+        before = refused()
+        connect("stranger", "UNIX-CONNECT:/run/agentd/api.sock")
+        vm.wait_until_succeeds(f"test $(${refusals}) -gt {before}")
+        assert vm.succeed("systemctl show -P MainPID agentd.service").strip() == serving, "agentd restarted"
 
     with subtest("without systemd's sockets agentd refuses to run"):
         status, out = vm.execute(
