@@ -339,6 +339,10 @@
                     { config, lib, ... }:
                     {
                       virtualisation.useNixStoreImage = lib.mkDefault (!config.virtualisation.useBootLoader);
+                      # Nix writes in the store when root opens it, registering the image's paths first
+                      virtualisation.writableStore = lib.mkDefault (
+                        config.virtualisation.useNixStoreImage || config.virtualisation.mountHostNixStore
+                      );
                     };
                 };
             };
