@@ -331,6 +331,8 @@
             failedAtEnd = {
               # its last sync is of a feed that can't be read, which fails it
               scheduler-feeds = [ "calendar-feeds.service" ];
+              # oomd kills it, and the test reads its Result
+              oom-bundle = [ "swaphog.service" ];
             };
           in
           pkgs
