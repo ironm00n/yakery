@@ -320,11 +320,11 @@ in
 
                   ${lib.optionalString cfg.plan.enableDefaultPlan ''
                     # Defaults can be overridden with `services.stalwart.plan.sequence`
-                    stalwart-cli apply --file ${writePlan defaultPlan} || exit
+                    stalwart-cli apply --file ${writePlan defaultPlan}
                   ''}
 
                   ${lib.optionalString (cfg.plan.sequence != [ ]) ''
-                    stalwart-cli apply --file ${writePlan cfg.plan.sequence} || exit
+                    stalwart-cli apply --file ${writePlan cfg.plan.sequence}
                   ''}
                 fi
               '')
