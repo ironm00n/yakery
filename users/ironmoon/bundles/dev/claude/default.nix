@@ -45,7 +45,7 @@ let
     + lib.concatMapStrings (path: "/${lib.removePrefix ".claude/" path}\n") (lib.attrNames skills)
     + "!stignore\n#include stignore\n"
   );
-  agentEmail = "${ironmoon.mail.agents.sharedLocalPart}@${ironmoon.domain}";
+  agentEmail = ironmoon.mail.agents.identity.email;
   # jj.toml's agent identity scope is the one list of repos; git gets the same identity in the same repos
   agentIdentity =
     let
@@ -53,7 +53,9 @@ let
         lib.findFirst (s: s ? user) (throw "jj.toml has no identity scope")
           (builtins.fromTOML (builtins.readFile ./jj.toml))."--scope";
     in
-    assert lib.assertMsg (scope.user.email == agentEmail) "jj.toml's agent email isn't ${agentEmail}";
+    assert lib.assertMsg (
+      scope.user == ironmoon.mail.agents.identity
+    ) "jj.toml's agent identity isn't ${builtins.toJSON ironmoon.mail.agents.identity}";
     scope;
   owner = cfg.account == "owner";
   # settings.json names paths under Owen's home; another account's copy has its own home in their place

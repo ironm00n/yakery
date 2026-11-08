@@ -21,6 +21,11 @@ rec {
     agents = {
       domain = "agent.${domain}";
       sharedLocalPart = "agent";
+      # whom its commits name, in each account's agent scope
+      identity = {
+        name = "ironmoon's agent";
+        email = "${mail.agents.sharedLocalPart}@${domain}";
+      };
     };
   };
   schedule = {

@@ -21,4 +21,5 @@ private-commits = "working_copies()"
   "~/workspace/spytial",
 ]
 [--scope.user]
+name = "ironmoon's agent"
 email = "agent@ironmoon.dev"
