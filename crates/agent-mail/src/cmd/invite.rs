@@ -4,7 +4,10 @@
 use std::process::ExitCode;
 
 use invitation::{At, Details, Invitation, Length, Person, Zone, address, mailto};
-use jiff::Timestamp;
+use jiff::{
+    Span, SpanRelativeTo, Timestamp,
+    civil::{DateTime, time},
+};
 use ring::digest::{SHA256, digest};
 use text::Address;
 
@@ -23,6 +26,7 @@ wire! {
         Calendar in "Calendar/get" { id: String = "id", default: bool = "isDefault" }
         Event in "CalendarEvent/get" {
             id: String = "id", title: String = "title", start: String = "start", zone: String = "timeZone",
+            duration: String = "duration",
             organizer: String = "organizerCalendarAddress",
             participants: HashMap<String, Participant> = "participants",
         }
@@ -155,11 +159,31 @@ async fn mine(mail: &Mail, login: &Login, id: &str, topic: Option<&Topic>) -> Re
 }
 
 pub async fn run(args: Args) -> Result<ExitCode> {
-    succeed!("{}", invite(&Mail::open().await?, args).await?)
+    succeed!("{}", invite(&Mail::open().await?, args, Timestamp::now()).await?)
+}
+
+/// Stalwart keeps an event already over and sends nothing for it.
+fn to_come(ends: Timestamp, now: Timestamp) -> Result<()> {
+    ensure!(
+        ends > now,
+        "an event ending at {ends} is over, and Stalwart sends no invitation for it"
+    );
+    Ok(())
+}
+
+/// Where Stalwart ends an event from `start` with the stored `duration`, as calcard reckons it: each day 24 hours, and
+/// no duration at all the end of the start's day in `zone`.
+fn stalwarts_end(start: Timestamp, duration: &str, zone: &Zone) -> Result<Timestamp> {
+    if duration.is_empty() {
+        let day = start.to_zoned(zone.time_zone());
+        return Ok(day.with().time(time(23, 59, 59, 0)).build()?.timestamp());
+    }
+    let span: Span = duration.parse().with_context(|| format!("the duration {duration:?}"))?;
+    Ok(start.checked_add(span.to_duration(SpanRelativeTo::days_are_24_hours())?)?)
 }
 
 /// The invitation's id.
-pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
+pub async fn invite(mail: &Mail, args: Args, now: Timestamp) -> Result<String> {
     match args {
         Args::New(new) => {
             let login = mail.login();
@@ -171,6 +195,10 @@ pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
                 .filter(|(n, a)| !envelope.to[..*n].contains(a))
                 .map(|(_, a)| a)
                 .collect();
+            to_come(new.start.checked_add(new.duration.get())?, now)?;
+            if let Some(own) = to.iter().find(|a| login.reaches(&a.to_string())) {
+                bail!("{own} is the login's own address, which Stalwart sends no invitation to");
+            }
             let invited: Vec<Person> =
                 to.iter().map(|a| Person { address: a, name: None }).collect();
             let uid = uid(&envelope.from, &to, &new.title, new.start, new.duration);
@@ -206,12 +234,21 @@ pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
         }
         Args::Update(update) => {
             let event = mine(mail, mail.login(), &update.id, update.topic.as_ref()).await?;
-            let zone = match (update.start, update.zone) {
-                (None, _) => None,
-                (Some(_), Some(zone)) => Some(zone),
-                (Some(_), None) => Some(Zone::named(&event.zone).or_else(|_| deployment_zone())?),
+            let held = Zone::named(&event.zone).or_else(|_| deployment_zone())?;
+            let stored_start = || -> Result<Timestamp> {
+                let local: DateTime = (event.start.parse())
+                    .with_context(|| format!("event {}'s start {:?}", update.id, event.start))?;
+                Ok(local.to_zoned(held.time_zone())?.timestamp())
             };
-            let start = update.start.zip(zone.as_ref()).map(|(when, zone)| At { when, zone });
+            let starts = update.start.map_or_else(stored_start, Ok)?;
+            let zone = update.zone.unwrap_or(held);
+            let ends = match update.duration {
+                Some(length) => starts.checked_add(length.get())?,
+                None => stalwarts_end(starts, &event.duration, &zone)
+                    .with_context(|| format!("event {}'s end", update.id))?,
+            };
+            to_come(ends, now)?;
+            let start = update.start.map(|when| At { when, zone: &zone });
             let change = Details {
                 title: update.title.as_deref(),
                 description: update.text.note.as_deref(),
