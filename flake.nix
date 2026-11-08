@@ -351,6 +351,7 @@
         ksycoca = import ./nix/tests/ksycoca.nix { pkgs = test-pkgs; };
         ok-color = import ./nix/tests/ok-color.nix { pkgs = test-pkgs; };
         stalwart-backup = import ./nix/tests/stalwart-backup.nix { pkgs = test-pkgs; };
+        vm-store = import ./nix/tests/vm-store.nix { pkgs = test-pkgs; };
         stalwart-push = import ./nix/tests/stalwart-push.nix { pkgs = test-pkgs; };
         borg-hop = import ./nix/tests/borg-hop.nix { pkgs = test-pkgs; };
         backup = import ./nix/tests/backup.nix { pkgs = test-pkgs; };
