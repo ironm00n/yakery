@@ -119,15 +119,16 @@ fn deployment_zone() -> Result<Zone> {
 /// `invite new` run again finds the event an earlier run may have made instead of inviting twice.
 fn uid(
     organizer: &Address,
-    invited: &[String],
+    invited: &[&Address],
     title: &str,
     start: Timestamp,
     duration: Length,
 ) -> String {
-    let mut invited: Vec<String> = invited.iter().map(|a| a.to_lowercase()).collect();
+    let lower = |a: &Address| a.to_string().to_lowercase();
+    let mut invited: Vec<String> = invited.iter().map(|a| lower(a)).collect();
     invited.sort();
-    let from = organizer.to_string().to_lowercase();
-    let key = format!("{from}\n{}\n{title}\n{start}\n{duration}", invited.join("\n"));
+    let key = json!([lower(organizer), invited, title, start.to_string(), duration.to_string()]);
+    let key = key.to_string();
     let hash = private::hex::encode(digest(&SHA256, key.as_bytes()).as_ref());
     format!("{}@{}", &hash[..32], organizer.domain())
 }
@@ -166,10 +167,13 @@ pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
                 Recipients::check(login, sender(login, new.topic.as_ref(), None)?, new.to, vec![])?;
             let zone = new.zone.map_or_else(deployment_zone, Ok)?;
             let start = At { when: new.start, zone: &zone };
-            let addresses: Vec<String> = envelope.to.iter().map(Address::to_string).collect();
+            let to: Vec<&Address> = (envelope.to.iter().enumerate())
+                .filter(|(n, a)| !envelope.to[..*n].contains(a))
+                .map(|(_, a)| a)
+                .collect();
             let invited: Vec<Person> =
-                envelope.to.iter().map(|a| Person { address: a, name: None }).collect();
-            let uid = uid(&envelope.from, &addresses, &new.title, new.start, new.duration);
+                to.iter().map(|a| Person { address: a, name: None }).collect();
+            let uid = uid(&envelope.from, &to, &new.title, new.start, new.duration);
             let mut event = Invitation {
                 uid: &uid,
                 title: &new.title,

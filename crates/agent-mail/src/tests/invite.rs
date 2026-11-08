@@ -204,6 +204,34 @@ async fn an_invitation_made_again_is_the_one_already_made() {
     assert_eq!(invite(&mail, asked(&renamed)).await.unwrap(), "e2");
 }
 
+/// `NEW` with `changes`, each an option with its value, in place of the option's own.
+fn new_with(changes: &[(&str, &str)]) -> invite::Args {
+    let kept =
+        NEW[1..].chunks(2).filter(|pair| !changes.iter().any(|(option, _)| *option == pair[0]));
+    let changed = changes.iter().flat_map(|(option, value)| [*option, *value]);
+    let words: Vec<&str> =
+        ["new"].into_iter().chain(kept.flatten().copied()).chain(changed).collect();
+    asked(&words)
+}
+
+#[tokio::test]
+async fn invitations_differ_whenever_their_people_or_title_do_and_an_address_counts_once() {
+    let dir = Scratch::new("invite-key");
+    let (_wire, server, mail) = mail(&dir, with_calendars(vec![])).await;
+    let mail = mail.unwrap();
+    let two = new_with(&[("--to", HIM), ("--to", "zed@example.org"), ("--title", "T")]);
+    assert_eq!(invite(&mail, two).await.unwrap(), "e1");
+    let one = new_with(&[("--to", HIM), ("--title", "zed@example.org\nT")]);
+    assert_eq!(invite(&mail, one).await.unwrap(), "e2", "a title that spells another address");
+    let twice = new_with(&[("--to", HIM), ("--to", HIM)]);
+    assert_eq!(invite(&mail, twice).await.unwrap(), "e3");
+    assert_eq!(invite(&mail, asked(NEW)).await.unwrap(), "e3", "the same address given once");
+    let server = server.borrow();
+    assert_eq!(server.events.len(), 3);
+    let invited = &server.events[2]["participants"];
+    assert_eq!(invited.as_object().unwrap().len(), 2, "the organizer and him once: {invited}");
+}
+
 #[tokio::test]
 async fn invites_lists_the_logins_invitations_with_each_answer() {
     let dir = Scratch::new("invites");
