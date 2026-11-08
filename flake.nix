@@ -378,6 +378,7 @@
         forgejo-mail = import ./nix/tests/forgejo-mail.nix { pkgs = test-pkgs; };
         agent-inbound = import ./nix/tests/agent-inbound.nix { pkgs = test-pkgs; };
         stalwart-rate-limit = import ./nix/tests/stalwart-rate-limit.nix { pkgs = test-pkgs; };
+        zitadel-mail = import ./nix/tests/zitadel-mail.nix { pkgs = test-pkgs; };
         agentd = import ./nix/tests/agentd.nix { pkgs = test-pkgs; };
         agent-slack = import ./nix/tests/agent-slack.nix {
           pkgs = test-pkgs;

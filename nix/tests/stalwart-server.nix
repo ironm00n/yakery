@@ -19,6 +19,18 @@ let
   jmap = "http://${loopback.address}:${toString loopback.port}";
 
   hostName = "hetzner-cx33-1";
+  # the server's /64; its public IPv6 address is ::2 in it
+  ipv6Prefix = "2001:db8:1";
+  # a documentation address for each host, as data.ips has an entry for each
+  hostIps = lib.listToAttrs (
+    lib.imap1 (i: host: lib.nameValuePair host { ipv4.address = "192.0.2.${toString i}"; }) (
+      lib.attrNames (
+        lib.filterAttrs (
+          host: type: type == "directory" && builtins.pathExists (../../hosts + "/${host}/configuration.nix")
+        ) (builtins.readDir ../../hosts)
+      )
+    )
+  );
   recoveryPassword = "recovery";
   unavailableFlag = "/run/s3-unavailable";
   # Object Storage's answer when it is down, word for word
@@ -112,15 +124,18 @@ let
             borg.stalwart = "/dev/null";
           };
           # the host's addresses are the VM's
-          data.ips = ips // {
-            ${hostName} = {
-              ipv4.address = config.networking.primaryIPAddress;
-              ipv6 = {
-                prefix = "2001:db8:1";
-                prefixLength = 64;
+          data.ips =
+            hostIps
+            // ips
+            // {
+              ${hostName} = {
+                ipv4.address = config.networking.primaryIPAddress;
+                ipv6 = {
+                  prefix = ipv6Prefix;
+                  prefixLength = 64;
+                };
               };
             };
-          };
         };
       };
 
@@ -207,6 +222,7 @@ in
 {
   inherit
     domain
+    ipv6Prefix
     my-lib
     s3
     unavailableFlag
@@ -216,8 +232,8 @@ in
 
   # `users` are made in the bundle's domain with the role it gives a user; `tlsHosts` are vhosts a
   # test adds outside bundles.reverse-proxy; `stalwartS3Endpoint` puts something between Stalwart
-  # and the switch, which stays at `(s3 config).endpoint`; `ips` are other hosts' addresses, as the
-  # secrets repo's `data.ips` lists them
+  # and the switch, which stays at `(s3 config).endpoint`; `ips` are the addresses of the other hosts
+  # a test runs, as the secrets repo's `data.ips` lists them
   node =
     {
       users ? [ ],

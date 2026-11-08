@@ -117,7 +117,7 @@ in
 
   # `zitadel` must name the node above, and `https` a curl command line ending at its origin
   python = ''
-    import json
+    import json  # noqa: F811
 
     def api(method, path, token, body=None):
         data = f"-d '{json.dumps(body)}' -H 'Content-Type: application/json'" if body is not None else ""

@@ -10,7 +10,10 @@
 
   # TODO: swap the module everywhere once hetzner-cx33-1 stops running 2.71.7
   disabledModules = [ "services/web-apps/zitadel.nix" ];
-  bundles.zitadel.enable = true;
+  bundles.zitadel = {
+    enable = true;
+    mail.enable = true;
+  };
 
   system.stateVersion = "26.11";
 }
