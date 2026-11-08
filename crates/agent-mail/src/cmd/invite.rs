@@ -120,7 +120,7 @@ fn deployment_zone() -> Result<Zone> {
 }
 
 /// An invitation's uid, from what makes it the same invitation, the addresses as they compare, without case, so
-/// `invite new` run again finds the event an earlier run may have made instead of inviting twice.
+/// `invite new` run again finds the event an earlier run made instead of inviting twice; not one still running.
 fn uid(
     organizer: &Address,
     invited: &[&Address],

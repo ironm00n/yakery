@@ -139,7 +139,8 @@ pub struct Person<'a> {
 }
 
 pub struct Invitation<'a> {
-    /// What makes a create sent again the same event: Stalwart refuses a second event with it.
+    /// What makes a create sent again the same event: Stalwart refuses a create whose uid it holds, though it checks
+    /// before writing, so two creates at once can both pass.
     pub uid: &'a str,
     pub title: &'a str,
     pub start: At<'a>,
