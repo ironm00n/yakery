@@ -630,6 +630,13 @@ let
         session = json.loads(host1.succeed(f"curl -fsSL -H 'Authorization: Bearer {bearer(host1)}' https://${mail.host}/.well-known/jmap"))
         assert "urn:ietf:params:jmap:calendars" in session["primaryAccounts"], session["primaryAccounts"]
 
+    with subtest("an invitation at the first of the two 01:30s the night New York's clocks go back lands, its start in UTC"):
+        host1.succeed(f"{agent} invite new --topic fold --to ${logins.owner} --title 'Fold test' --start 2027-11-07T05:30:00Z --duration 30m")
+        retry(lambda _: owners_copy("Fold test") is not None, timeout_seconds=60)
+        fold = owners_copy("Fold test")
+        print("owner@'s copy of the invitation in the repeated hour:", fold)
+        assert fold["start"] == "2027-11-07T05:30:00" and fold.get("timeZone") in ("Etc/UTC", "UTC"), fold
+
     with subtest("an invitation from a topic lands in owner@'s default calendar, awaiting his answer"):
         made = host1.succeed(f"{agent} invite new --topic invite --to ${logins.owner} --title 'Invite test' --start 2027-01-06T15:00:00Z --duration 30m").strip()
         retry(lambda _: owners_copy("Invite test") is not None, timeout_seconds=60)

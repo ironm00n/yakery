@@ -88,7 +88,7 @@ fn a_change_sets_only_the_parts_given() {
 }
 
 #[test]
-fn a_start_in_an_hour_the_zone_repeats_is_written_in_utc_when_it_is_the_second() {
+fn a_start_in_an_hour_the_zone_repeats_is_written_in_utc_whichever_instance_it_is() {
     let start = |utc: &str| {
         serde_json::Value::Object(
             Details { start: Some(at(utc)), ..Details::default() }.properties(),
@@ -96,11 +96,15 @@ fn a_start_in_an_hour_the_zone_repeats_is_written_in_utc_when_it_is_the_second()
     };
     assert_eq!(
         start("2026-11-01T05:30:00Z"),
-        json!({"start": "2026-11-01T01:30:00", "timeZone": "America/New_York"})
+        json!({"start": "2026-11-01T05:30:00", "timeZone": "Etc/UTC"})
     );
     assert_eq!(
         start("2026-11-01T06:30:00Z"),
         json!({"start": "2026-11-01T06:30:00", "timeZone": "Etc/UTC"})
+    );
+    assert_eq!(
+        start("2026-11-01T04:30:00Z"),
+        json!({"start": "2026-11-01T00:30:00", "timeZone": "America/New_York"})
     );
 }
 
