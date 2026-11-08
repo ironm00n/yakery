@@ -3,7 +3,7 @@
 
 use std::process::ExitCode;
 
-use invitation::{At, Details, Invitation, Length, Person, Zone, mailto};
+use invitation::{At, Details, Invitation, Length, Person, Zone, address, mailto};
 use jiff::Timestamp;
 use ring::digest::{SHA256, digest};
 use text::Address;
@@ -138,14 +138,18 @@ async fn made(mail: &Mail, uid: &str) -> Result<Option<String>> {
 
 /// From the shared login, another topic's invitation isn't this session's to change.
 async fn mine(mail: &Mail, login: &Login, id: &str, topic: Option<&Topic>) -> Result<Event> {
-    let organizer = mailto(&sender(login, topic, None)?);
+    let organizer = sender(login, topic, None)?;
     let event = mail
         .get::<Event>(&[id])
         .await?
         .into_iter()
         .next()
         .with_context(|| format!("no event {id}"))?;
-    ensure!(event.organizer == organizer, "event {id} isn't an invitation from {organizer}");
+    ensure!(
+        address(&event.organizer).as_ref() == Some(&organizer),
+        "event {id} isn't an invitation from {}",
+        mailto(&organizer)
+    );
     Ok(event)
 }
 
@@ -250,10 +254,11 @@ pub async fn list(args: List) -> Result<ExitCode> {
 
 pub async fn invitations(mail: &Mail, args: &List) -> Result<Vec<String>> {
     let login = mail.login();
+    let from = args.topic.as_ref().map(|t| sender(login, Some(t), None)).transpose()?;
     let ours = |organizer: &str| {
-        organizer.strip_prefix("mailto:").is_some_and(|a| match &args.topic {
-            Some(topic) => login.topic(a).as_ref() == Some(topic),
-            None => login.owns(a),
+        address(organizer).is_some_and(|a| match &from {
+            Some(from) => a == *from,
+            None => login.owns(&a.to_string()),
         })
     };
     let lines = mail
@@ -268,7 +273,8 @@ pub async fn invitations(mail: &Mail, args: &List) -> Result<Vec<String>> {
                 .filter(|p| !p.roles.contains_key("owner"))
                 .map(|p| {
                     let answer = if p.answer.is_empty() { "needs-action" } else { &p.answer };
-                    format!("{} {answer}", p.address.trim_start_matches("mailto:"))
+                    let shown = address(&p.address).map_or(p.address.clone(), |a| a.to_string());
+                    format!("{shown} {answer}")
                 })
                 .collect();
             format!("{}  {} {}  {}  {}", e.id, e.start, e.zone, e.title, answers.join(", "))

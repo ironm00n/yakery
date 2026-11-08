@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use invitation::{At, Details, Invitation, Length, Person, Zone, mailto};
+use invitation::{At, Details, Invitation, Length, Person, Zone, address, mailto};
 use serde_json::json;
 use text::Address;
 
@@ -126,4 +126,18 @@ fn a_calendar_address_keeps_its_local_part_as_one_part() {
     assert_eq!(mailto("agent+pool@example.org"), "mailto:agent+pool@example.org");
     assert_eq!(mailto("x%40evil.com#@example.org"), "mailto:x%2540evil.com%23@example.org");
     assert_eq!(mailto("a=b?c@example.org"), "mailto:a%3Db%3Fc@example.org");
+}
+
+#[test]
+fn a_calendar_address_names_the_address_mailto_wrote() {
+    for given in ["owner@example.org", "x%40evil.com#@example.org", "a=b?c@example.org"] {
+        let given: Address = given.parse().unwrap();
+        assert_eq!(address(&mailto(&given)).map(|a| a.to_string()), Some(given.to_string()));
+    }
+    assert_eq!(address("MAILTO:a%3db@example.org"), Some("a=b@example.org".parse().unwrap()));
+    for refused in
+        ["owner@example.org", "mailto:a%3@example.org", "mailto:a%+3@example.org", "mailto:x@"]
+    {
+        assert_eq!(address(refused), None, "{refused}");
+    }
 }

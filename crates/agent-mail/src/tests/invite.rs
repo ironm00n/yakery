@@ -162,6 +162,21 @@ async fn an_update_keeps_the_events_zone_and_another_topics_invitation_is_refuse
 }
 
 #[tokio::test]
+async fn an_invitation_is_the_topics_whatever_the_case_of_its_organizer() {
+    let dir = Scratch::new("invite-cased");
+    let mut stalwart = with_calendars(vec![]);
+    stalwart.events = vec![held("Agent+Pool@Example.org", "America/New_York")];
+    let (_wire, _server, mail) = mail(&dir, stalwart).await;
+    let mail = mail.unwrap();
+    let Ok(Command::Invites(listed)) = command(&["invites", "--topic", "pool"]) else {
+        panic!("not invites")
+    };
+    assert_eq!(invitations(&mail, &listed).await.unwrap().len(), 1);
+    let renamed = asked(&["update", "e1", "--topic", "pool", "--title", "renamed"]);
+    assert_eq!(invite(&mail, renamed).await.unwrap(), "e1");
+}
+
+#[tokio::test]
 async fn an_invitation_made_again_is_the_one_already_made() {
     let dir = Scratch::new("invite-again");
     let (_wire, server, mail) = mail(&dir, with_calendars(vec![])).await;
@@ -226,6 +241,23 @@ async fn invites_lists_the_logins_invitations_with_each_answer() {
     assert_eq!(
         invitations(&mail, &list(&[])).await.unwrap(),
         [line("e1", "accepted"), line("e2", "needs-action")]
+    );
+}
+
+#[tokio::test]
+async fn invites_lists_each_address_as_given_not_as_its_calendar_address_encodes_it() {
+    let dir = Scratch::new("invites-encoded");
+    let mut stalwart = with_calendars(vec![]);
+    stalwart.events = vec![json!({
+        "id": "e1", "title": "t", "start": "2026-11-06T15:00:00", "timeZone": "America/New_York",
+        "organizerCalendarAddress": "mailto:agent+pool@example.org",
+        "participants": { "invited0": { "calendarAddress": "mailto:a%3Db@example.org", "roles": { "attendee": true } } },
+    })];
+    let (_wire, _server, mail) = mail(&dir, stalwart).await;
+    let Ok(Command::Invites(list)) = command(&["invites"]) else { panic!("not invites") };
+    assert_eq!(
+        invitations(&mail.unwrap(), &list).await.unwrap(),
+        ["e1  2026-11-06T15:00:00 America/New_York  t  a=b@example.org needs-action"]
     );
 }
 

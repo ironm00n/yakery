@@ -119,6 +119,20 @@ pub fn mailto(address: &Address) -> String {
     format!("mailto:{local}@{}", address.domain())
 }
 
+/// The address a `mailto:` calendar address names, however its local part is percent-encoded.
+pub fn address(calendar: &str) -> Option<Address> {
+    let scheme = calendar.get(..7).filter(|s| s.eq_ignore_ascii_case("mailto:"))?;
+    let mut pieces = calendar[scheme.len()..].split('%');
+    let first = pieces.next()?.as_bytes().to_vec();
+    let decoded = pieces.try_fold(first, |mut out, piece| {
+        let hex = piece.get(..2).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))?;
+        out.push(u8::from_str_radix(hex, 16).ok()?);
+        out.extend(piece[2..].bytes());
+        Some(out)
+    })?;
+    String::from_utf8(decoded).ok()?.parse().ok()
+}
+
 pub struct Person<'a> {
     pub address: &'a Address,
     pub name: Option<&'a str>,
