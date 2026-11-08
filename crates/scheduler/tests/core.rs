@@ -1,8 +1,10 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::LazyLock;
 
 use jiff::SignedDuration;
 use serde_json::Value;
+use text::Address;
 
 use super::*;
 use crate::checked::Checked;
@@ -22,9 +24,11 @@ struct Fake {
     refuse: Cell<bool>,
 }
 
+static OWNER: LazyLock<Address> = LazyLock::new(|| "owner@example.test".parse().unwrap());
+
 impl Calendar for &Fake {
-    fn owner(&self) -> &str {
-        "owner@example.test"
+    fn owner(&self) -> &Address {
+        &OWNER
     }
 
     async fn busy(&self, period: Period) -> Result<Vec<Period>> {

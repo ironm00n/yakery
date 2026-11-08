@@ -5,7 +5,7 @@ use anyhow::{Context, Result, ensure};
 use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
 use serde_json::{Map, Value, json};
-use text::text;
+use text::{Address, text};
 
 /// Only a tz database zone, whose name JSCalendar's `timeZone` takes.
 #[derive(Clone, Debug)]
@@ -111,18 +111,16 @@ impl Details<'_> {
 
 /// `address` as a JSCalendar calendar address: a `mailto:` URI, its local part percent-encoded as RFC 6068 says, so
 /// a `%`, `#` or `?` in it stays part of the address.
-pub fn mailto(address: &str) -> String {
-    let (local, domain) = address.rsplit_once('@').unwrap_or((address, ""));
+pub fn mailto(address: &Address) -> String {
     let kept = |b: u8| b.is_ascii_alphanumeric() || b"-._~!$'()*+,;".contains(&b);
-    let local: String = local
-        .bytes()
+    let local: String = (address.local().bytes())
         .map(|b| if kept(b) { char::from(b).to_string() } else { format!("%{b:02X}") })
         .collect();
-    format!("mailto:{local}@{domain}")
+    format!("mailto:{local}@{}", address.domain())
 }
 
 pub struct Person<'a> {
-    pub address: &'a str,
+    pub address: &'a Address,
     pub name: Option<&'a str>,
 }
 
@@ -134,7 +132,7 @@ pub struct Invitation<'a> {
     pub duration: Length,
     pub description: Option<&'a str>,
     pub location: Option<&'a str>,
-    pub organizer: &'a str,
+    pub organizer: &'a Address,
     /// Whether the organizer is listed attending too, which Stalwart writes only for one with an answer.
     pub organizer_attends: bool,
     pub invited: &'a [Person<'a>],

@@ -2,6 +2,7 @@ use std::sync::LazyLock;
 
 use invitation::{At, Details, Invitation, Length, Person, Zone, mailto};
 use serde_json::json;
+use text::Address;
 
 static NEW_YORK: LazyLock<Zone> = LazyLock::new(|| Zone::named("America/New_York").unwrap());
 
@@ -12,7 +13,8 @@ fn at(utc: &str) -> At<'static> {
 #[test]
 fn an_agents_invitation_names_it_organizer_only_and_him_invited() {
     let start = at("2026-11-06T20:00:00Z");
-    let invited = [Person { address: "owner@example.org", name: None }];
+    let owner: Address = "owner@example.org".parse().unwrap();
+    let invited = [Person { address: &owner, name: None }];
     let event = Invitation {
         uid: "u1@example.org",
         title: "Review the sync page",
@@ -20,7 +22,7 @@ fn an_agents_invitation_names_it_organizer_only_and_him_invited() {
         start,
         duration: "30m".parse().unwrap(),
         location: None,
-        organizer: "agent+scheduler@example.org",
+        organizer: &"agent+scheduler@example.org".parse().unwrap(),
         organizer_attends: false,
         invited: &invited,
     }
@@ -46,7 +48,8 @@ fn an_agents_invitation_names_it_organizer_only_and_him_invited() {
 #[test]
 fn a_booked_meeting_has_its_organizer_attending_and_the_invitee_named() {
     let start = at("2026-10-27T15:00:00Z");
-    let invited = [Person { address: "ada@example.org", name: Some("Ada Lovelace") }];
+    let ada: Address = "ada@example.org".parse().unwrap();
+    let invited = [Person { address: &ada, name: Some("Ada Lovelace") }];
     let event = Invitation {
         uid: "u2@example.org",
         title: "Research chat with Ada Lovelace",
@@ -54,7 +57,7 @@ fn a_booked_meeting_has_its_organizer_attending_and_the_invitee_named() {
         start,
         duration: "30m".parse().unwrap(),
         location: Some("Room 101"),
-        organizer: "owner@example.org",
+        organizer: &"owner@example.org".parse().unwrap(),
         organizer_attends: true,
         invited: &invited,
     }
@@ -118,6 +121,7 @@ fn a_start_in_an_hour_the_zone_repeats_is_written_in_utc_whichever_instance_it_i
 
 #[test]
 fn a_calendar_address_keeps_its_local_part_as_one_part() {
+    let mailto = |address: &str| mailto(&address.parse().unwrap());
     assert_eq!(mailto("owner@example.org"), "mailto:owner@example.org");
     assert_eq!(mailto("agent+pool@example.org"), "mailto:agent+pool@example.org");
     assert_eq!(mailto("x%40evil.com#@example.org"), "mailto:x%2540evil.com%23@example.org");

@@ -17,13 +17,14 @@ use invitation::{At, Invitation, Person};
 use jiff::Timestamp;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use text::Address;
 
 use crate::link::{Booking, Created, Digest, Limits};
 use crate::policy::Policy;
 use crate::slots::{Period, weeks};
 
 pub trait Calendar {
-    fn owner(&self) -> &str;
+    fn owner(&self) -> &Address;
     async fn busy(&self, period: Period) -> Result<Vec<Period>>;
     async fn create(&self, event: Value) -> Result<Created>;
 }
@@ -31,13 +32,14 @@ pub trait Calendar {
 /// The booking's JSCalendar event, without the calendar, which only [`Stalwart`] knows.
 pub fn event(
     policy: &Policy,
-    owner: &str,
+    owner: &Address,
     digest: Digest,
     limits: &Limits,
     booking: &Booking,
 ) -> Value {
     let booker = &booking.booker;
     let note = if booker.note.is_empty() { String::new() } else { format!("{}\n\n", booker.note) };
+    let address: Address = booker.address.parse().expect("a checked form's address parses");
     Invitation {
         uid: &format!("{digest}@{}", policy.host),
         title: &format!("{} with {}", limits.title.as_deref().unwrap_or("Meeting"), booker.name),
@@ -47,7 +49,7 @@ pub fn event(
         location: limits.location.as_deref(),
         organizer: owner,
         organizer_attends: true,
-        invited: &[Person { address: &booker.address, name: Some(&booker.name) }],
+        invited: &[Person { address: &address, name: Some(&booker.name) }],
     }
     .event()
 }
@@ -68,7 +70,7 @@ struct Http {
 pub struct Stalwart {
     http: Http,
     login: Login,
-    owner: String,
+    owner: Address,
     owner_id: String,
     bookings: String,
     groups: Vec<String>,
@@ -113,6 +115,9 @@ impl Stalwart {
         };
         login.account = own.to_string();
         let (owner_id, owner) = (owner_id.to_string(), name(owner));
+        let owner: Address = owner
+            .parse()
+            .with_context(|| format!("the account {owner:?} is named by no address"))?;
 
         let calendars = http.call(&login, "Calendar/get", json!({"accountId": owner_id})).await?;
         let [bookings] = calendars["list"].as_array().map(Vec::as_slice).unwrap_or_default() else {
@@ -206,7 +211,7 @@ struct Busy {
 }
 
 impl Calendar for Stalwart {
-    fn owner(&self) -> &str {
+    fn owner(&self) -> &Address {
         &self.owner
     }
 

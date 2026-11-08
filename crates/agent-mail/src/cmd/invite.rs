@@ -138,7 +138,7 @@ async fn made(mail: &Mail, uid: &str) -> Result<Option<String>> {
 
 /// From the shared login, another topic's invitation isn't this session's to change.
 async fn mine(mail: &Mail, login: &Login, id: &str, topic: Option<&Topic>) -> Result<Event> {
-    let organizer = mailto(&sender(login, topic, None)?.to_string());
+    let organizer = mailto(&sender(login, topic, None)?);
     let event = mail
         .get::<Event>(&[id])
         .await?
@@ -164,7 +164,7 @@ pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
             let start = At { when: new.start, zone: &zone };
             let addresses: Vec<String> = envelope.to.iter().map(Address::to_string).collect();
             let invited: Vec<Person> =
-                addresses.iter().map(|a| Person { address: a, name: None }).collect();
+                envelope.to.iter().map(|a| Person { address: a, name: None }).collect();
             let uid = uid(&envelope.from, &addresses, &new.title, new.start, new.duration);
             let mut event = Invitation {
                 uid: &uid,
@@ -173,7 +173,7 @@ pub async fn invite(mail: &Mail, args: Args) -> Result<String> {
                 duration: new.duration,
                 description: new.text.note.as_deref(),
                 location: new.text.location.as_deref(),
-                organizer: &envelope.from.to_string(),
+                organizer: &envelope.from,
                 organizer_attends: false,
                 invited: &invited,
             }

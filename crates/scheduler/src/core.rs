@@ -220,7 +220,7 @@ impl<C: Calendar> Answers<BookAsk> for Core<C> {
                 start,
                 duration: link.limits.duration.get(),
                 booker: booking.booker,
-                owner: self.calendar.owner().into(),
+                owner: self.calendar.owner().to_string(),
             }),
             _ => Err(Refusal::Unavailable),
         })
