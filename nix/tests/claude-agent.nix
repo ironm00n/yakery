@@ -41,27 +41,25 @@ let
     family, address = (socket.AF_UNIX, sys.argv[1]) if "/" in sys.argv[1] else (socket.AF_INET, ("127.0.0.1", int(sys.argv[1])))
     socket.socket(family).connect(address)
   '';
-  common = {
-    imports = [ ../../bundles/claude-agent.nix ];
-    bundles.claude-agent = {
-      enable = true;
-      owner = "ironmoon";
-      memoryMax = "300M";
-      sessionMemoryMax = "100M";
-      ownerPorts = [ 8384 ];
-      tap = {
-        profile = tap;
-        poolTokenFile = "/etc/pool.key";
-      };
+  common =
+    { lib, ... }:
+    {
+      imports = [
+        ../../users/claude-agent/user.nix
+        ../../users/claude-agent/tap.nix
+      ];
+      systemd.slices."user-1500".sliceConfig.MemoryMax = lib.mkForce "300M";
+      systemd.services."user@1500".environment.CLAUDE_SESSION_MEMORY_MAX = lib.mkForce "100M";
+      # what notes' `just agent-tap-install` and the deploy's token step leave behind
+      systemd.tmpfiles.rules = [ "L+ /nix/var/nix/profiles/claude-agent-tap - - - - ${tap}" ];
+      environment.etc."claude-agent/pool-token".text = "token\n";
+      users.users.ironmoon.uid = 1000;
+      users.users.ironmoon.isNormalUser = true;
+      environment.systemPackages = [ pkgs.python3 ];
+      virtualisation.memorySize = 1024;
+      # the test instrumentation panics on any OOM, and the caps' kills are what this test checks
+      boot.kernel.sysctl."vm.panic_on_oom" = 0;
     };
-    users.users.ironmoon.uid = 1000;
-    environment.etc."pool.key".text = "token\n";
-    users.users.ironmoon.isNormalUser = true;
-    environment.systemPackages = [ pkgs.python3 ];
-    virtualisation.memorySize = 1024;
-    # the test instrumentation panics on any OOM, and the caps' kills are what this test checks
-    boot.kernel.sysctl."vm.panic_on_oom" = 0;
-  };
 in
 pkgs.testers.runNixOSTest {
   name = "claude-agent";
@@ -70,7 +68,7 @@ pkgs.testers.runNixOSTest {
   nodes.laptop = {
     imports = [ common ];
     services.openssh.enable = true;
-    bundles.claude-agent.authorizedKeys = [ keys.snakeOilPublicKey ];
+    users.users.claude-agent.openssh.authorizedKeys.keys = [ keys.snakeOilPublicKey ];
   };
 
   testScript = ''
