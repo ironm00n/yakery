@@ -1,7 +1,9 @@
-# hetzner-cx33-1's Stalwart in a VM: its stalwart, reverse-proxy and backup bundles, departing from
-# the host only in `overrides`. Garage stands in for Hetzner's Object Storage at the bundle's own
-# endpoint, behind a switch that answers as nbg1 did on 2026-10-26 while `unavailableFlag` exists.
-# A test adds to the node, and no test picks steps out of the bundle's plan.
+# hetzner-cx33-1's stalwart, reverse-proxy and backup bundles in a VM, changed for the VM in
+# `overrides`. The node sets only the stalwart bundle's third domain: the host's own settings
+# (sending, receiving, signing, shared and service mailboxes, catch-all, webhooks) are left out,
+# and a test adds what it needs. Garage stands in for Hetzner's Object Storage at the bundle's own
+# endpoint, behind a switch that answers as Object Storage does when it is down while
+# `unavailableFlag` exists. No test picks steps out of the bundle's plan.
 { pkgs }:
 let
   inherit (pkgs) lib;
@@ -19,7 +21,7 @@ let
   hostName = "hetzner-cx33-1";
   recoveryPassword = "recovery";
   unavailableFlag = "/run/s3-unavailable";
-  # what nbg1 answered Stalwart with, Code and Message as logged
+  # Object Storage's answer when it is down, word for word
   unavailable = ''<?xml version="1.0" encoding="UTF-8"?><Error><Code>ServiceUnavailable</Code><Message>Service is unable to handle request.</Message></Error>'';
 
   # The blob store the bundle gives Stalwart, which the switch serves at the same endpoint
@@ -306,14 +308,16 @@ in
     admin_id: str
     account_ids: dict[str, str]
 
-    # stalwart-apply-plan links the plan it applied and only then restarts out of recovery mode
+    # stalwart-apply-plan links the plan it applied and only then restarts out of recovery mode; a
+    # failed apply leaves the unit failed, and stops the wait at once
     def wait_for_stalwart():
         server.wait_until_succeeds(
-            "test -L /var/lib/stalwart/.plan.ndjson"
-            " && [ $(systemctl show -P ActiveState stalwart-apply-plan.service) = inactive ]",
+            "state=$(systemctl show -P ActiveState stalwart-apply-plan.service);"
+            " [ $state = failed ] || { [ $state = inactive ] && test -L /var/lib/stalwart/.plan.ndjson; }",
             timeout=600,
         )
-        assert server.succeed("systemctl show -P Result stalwart-apply-plan.service").strip() == "success"
+        result = server.succeed("systemctl show -P Result stalwart-apply-plan.service").strip()
+        assert result == "success", f"stalwart-apply-plan ended with {result}"
         server.wait_for_unit("stalwart.service")
         server.wait_until_succeeds("curl -sf ${jmap}/healthz/ready")
         server.wait_until_succeeds(f"curl -sf -H {shlex.quote('Authorization: ' + admin)} ${jmap}/jmap/session")
