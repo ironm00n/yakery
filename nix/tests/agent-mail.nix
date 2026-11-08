@@ -518,7 +518,7 @@ let
             for node, ahead in zip([host1, host2], offsets):
                 at = int((start + ahead) * 1e9)
                 node.succeed(
-                    f"systemd-run --uid=agent -E PATH=/run/current-system/sw/bin --unit=both-{round} -p StandardOutput=file:/tmp/both-{round}.out"
+                    f"systemd-run --collect --uid=agent -E PATH=/run/current-system/sw/bin --unit=both-{round} -p StandardOutput=file:/tmp/both-{round}.out"
                     f" sh -c 'while [ $(date +%s%N) -lt {at} ]; do :; done; exec agent-mail wait --topic both --timeout 5s'"
                 )
             claimed = []

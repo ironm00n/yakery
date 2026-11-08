@@ -327,24 +327,39 @@
         test-pkgs =
           let
             pkgs = pkgs-map.${system};
+            # the units a check may leave failed in a VM, by the check's name
+            failedAtEnd = {
+              # its last sync is of a feed that can't be read, which fails it
+              scheduler-feeds = [ "calendar-feeds.service" ];
+            };
           in
           pkgs
           // {
             testers = pkgs.testers // {
               runNixOSTest =
                 test:
-                pkgs.testers.runNixOSTest {
-                  imports = [ test ];
-                  nodeDefaults =
-                    { config, lib, ... }:
-                    {
-                      virtualisation.useNixStoreImage = lib.mkDefault (!config.virtualisation.useBootLoader);
-                      # Nix writes in the store when root opens it, registering the image's paths first
-                      virtualisation.writableStore = lib.mkDefault (
-                        config.virtualisation.useNixStoreImage || config.virtualisation.mountHostNixStore
-                      );
-                    };
-                };
+                pkgs.testers.runNixOSTest (
+                  { config, ... }:
+                  {
+                    imports = [ test ];
+                    nodeDefaults =
+                      { config, lib, ... }:
+                      {
+                        virtualisation.useNixStoreImage = lib.mkDefault (!config.virtualisation.useBootLoader);
+                        # Nix writes in the store when root opens it, registering the image's paths first
+                        virtualisation.writableStore = lib.mkDefault (
+                          config.virtualisation.useNixStoreImage || config.virtualisation.mountHostNixStore
+                        );
+                      };
+                    testScript = lib.mkAfter ''
+                      for machine in machines_qemu:
+                          if machine.is_up():
+                              failed = set(machine.succeed("systemctl list-units --state=failed --no-legend --plain | cut -d' ' -f1").split())
+                              left = failed - set(${builtins.toJSON (failedAtEnd.${config.name} or [ ])})
+                              assert not left, f"{machine.name} ends with failed units: {sorted(left)}"
+                    '';
+                  }
+                );
             };
           };
       in

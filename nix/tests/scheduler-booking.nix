@@ -194,7 +194,7 @@ pkgs.testers.runNixOSTest {
         expect("front.seccomp", "Seccomp:\t2" in server.succeed(f"grep Seccomp: /proc/{pid}/status"))
         # the front can't be made to connect anywhere, so a stand-in runs as its user with its
         # families, beside a control without them
-        reach = "systemd-run -q --wait --pipe -p User=scheduler-front {} curl -sS -o /dev/null http://127.0.0.1:8080/healthz/ready 2>&1"
+        reach = "systemd-run -q --wait --pipe --collect -p User=scheduler-front {} curl -sS -o /dev/null http://127.0.0.1:8080/healthz/ready 2>&1"
         code, out = server.execute(reach.format("-p RestrictAddressFamilies=" + families))
         observe("front.reach-stalwart", [code, out.strip()[-200:]])
         expect("front.reach-stalwart.refused", code == 7, [code, out])
