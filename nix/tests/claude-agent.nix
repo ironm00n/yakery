@@ -147,8 +147,7 @@ pkgs.testers.runNixOSTest {
     with subtest("its key logs in to itself on the laptop and never to him"):
         laptop.wait_for_unit("sshd.service")
         desktop.succeed("install -m 600 -o claude-agent ${keys.snakeOilPrivateKey} /home/claude-agent/.ssh/test_key")
-        # -F /dev/null: ssh refuses the system config's include from a store that isn't root's, as under xb
-        ssh = "ssh -F /dev/null -i /home/claude-agent/.ssh/test_key -o StrictHostKeyChecking=no -o BatchMode=yes"
+        ssh = "ssh -i /home/claude-agent/.ssh/test_key -o StrictHostKeyChecking=no -o BatchMode=yes"
         out = desktop.succeed(asAgent(f"{ssh} claude-agent@laptop id -un")).strip()
         assert out == "claude-agent", out
         refused(asAgent(f"{ssh} ironmoon@laptop true"), "Permission denied (publickey")
