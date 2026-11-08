@@ -12,6 +12,7 @@
     ../common/interactive
     ./networking.nix
     ./agent-vm.nix
+    ../../users/claude-agent
   ];
 
   bundles = {
@@ -26,6 +27,8 @@
     vpn.mullvad.enable = true;
     vpn.globalprotect.enable = true;
   };
+
+  users.users.ironmoon.uid = 1000;
 
   services.fwupd.enable = true;
 
