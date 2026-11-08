@@ -179,14 +179,14 @@ let
 
   # in the fancy-regex syntax sieve-rs's :regex reads; sieve-rs unescapes \\n, \\r and \\t in a
   # string to control characters, so no backslash precedes those
-  agentAddress = "([^@\r\n]*@${lib.escapeRegex agentDomain}|${lib.escapeRegex agentLocalPart}(\\+[^@\r\n]*)?@${lib.escapeRegex domain})";
+  subdomainAgent = "[^@\r\n]*@${lib.escapeRegex agentDomain}";
   alternatives = addresses: lib.concatMapStringsSep "|" lib.escapeRegex addresses;
   # one whole recipient of the CRLF-joined list
   agentRecipient =
     except:
     "(^|\n)${
       lib.optionalString (except != [ ]) "(?!(${alternatives except})(\r|$))"
-    }${agentAddress}(\r|$)";
+    }${subdomainAgent}(\r|$)";
   agentSenders =
     correspondents:
     lib.optional (correspondents != [ ]) ''address :all :is "from" ${sieveList correspondents}''
@@ -202,7 +202,7 @@ let
       map (correspondent: {
         inherit agent correspondent;
       })
-    ) cfg.agentCorrespondentsFor
+    ) (lib.filterAttrs (agent: _: (accountOf agent).host == agentDomain) cfg.agentCorrespondentsFor)
   );
   # Stalwart delivers a subaddress to its account, which is all the DATA stage sees of it
   grantsByAccount = lib.mapAttrs (_: map (grant: grant.correspondent)) (
@@ -217,7 +217,7 @@ let
     correspondent: agents:
     let
       anyAgent = agentRecipient [ ];
-      otherAgent = "(?i)^(?!(${alternatives agents})$)${agentAddress}$";
+      otherAgent = "(?i)^(?!(${alternatives agents})$)${subdomainAgent}$";
     in
     ''
       if allof (envelope :all :regex "to" ${builtins.toJSON anyAgent}, address :all :is "from" ${builtins.toJSON correspondent}, address :all :regex ["to", "cc"] ${builtins.toJSON otherAgent}) {
@@ -423,7 +423,8 @@ in
         Addresses outside ${domain} that ${agentLocalPart}@${domain} and the agents on ${agentDomain} may
         exchange mail with, besides ${domain} and its subdomains. Agents' mail to anyone else is
         refused at RCPT, or bounced when it reaches the queue another way, such as a Sieve redirect.
-        Mail to the agents over port 25 is refused unless it passes DMARC as one of these senders.
+        Mail to the agents on ${agentDomain} over port 25 is refused unless it passes DMARC as one of
+        these senders; ${agentLocalPart}@${domain} and its topics take anyone's.
       '';
     };
     agentCorrespondentsFor = lib.mkOption {
@@ -434,8 +435,8 @@ in
       };
       description = ''
         More correspondents, by the agent address that alone may exchange mail with them. Over
-        port 25, mail from one reaches only the accounts of the addresses it is listed for, and its
-        To and Cc may name no other agent address, since agent-mail hands a session the mail that
+        port 25, mail from one reaches only the accounts on ${agentDomain} it is listed for, and its
+        To and Cc may name no other address there, since agent-mail hands a session the mail that
         names its topic. Stalwart sees only the account a subaddress belongs to, in either
         direction, so every subaddress of that account may send to them; agent-mail keeps
         ${agentLocalPart}@${domain}'s topics apart.
