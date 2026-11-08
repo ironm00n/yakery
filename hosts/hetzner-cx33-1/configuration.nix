@@ -14,6 +14,7 @@
   imports = [
     ./hardware-configuration.nix
     ./program-accounts.nix
+    ./ban-exempt.nix
     ../common/server
     ../common/hetzner-cloud
   ];
@@ -32,12 +33,6 @@
     ];
     catchAll = "catchall";
     signSubmissions = true;
-    banExempt."Northeastern University (AS156)" = [
-      "129.10.0.0/16"
-      "144.91.0.0/18"
-      "155.33.0.0/16"
-      "204.167.52.0/24"
-    ];
     # the seat pool's signups, read by the pool on oracle-a1-flex-3
     serviceMailboxes.join = {
       senderDomain = "northeastern.edu";
