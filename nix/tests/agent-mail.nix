@@ -38,6 +38,9 @@ let
       cores = 2;
     };
     services.zitadel.settings.DefaultInstance.Features.LoginV2.Required = false;
+    # at ZITADEL's default bcrypt cost of 14 a password change (two hashes) took about 10 s here under TCG, as long as
+    # agent-mail's whole request bound, so the test hashes at the least cost ZITADEL's own limits accept
+    services.zitadel.settings.SystemDefaults.PasswordHasher.Hasher.Cost = 10;
     services.nginx.virtualHosts.${auth.host} = {
       enableACME = lib.mkForce false;
       sslCertificate = "${tls}/${auth.host}/cert.pem";
