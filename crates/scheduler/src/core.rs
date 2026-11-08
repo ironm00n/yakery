@@ -180,7 +180,11 @@ impl<C: Calendar> Answers<LinkAsk> for Core<C> {
             State::Claiming(_) => Shown::Pending,
             State::Booked { booking, .. } => Shown::Booked(booking.start),
         };
-        Ok(Ok(LinkView { title: link.limits.title.clone(), duration: link.limits.duration, state }))
+        Ok(Ok(LinkView {
+            title: link.limits.title.clone(),
+            duration: link.limits.duration.get(),
+            state,
+        }))
     }
 }
 
@@ -214,7 +218,7 @@ impl<C: Calendar> Answers<BookAsk> for Core<C> {
         Ok(match store.links().get(&digest).map(|l| &l.state) {
             Some(State::Booked { .. }) => Ok(Booked {
                 start,
-                duration: link.limits.duration,
+                duration: link.limits.duration.get(),
                 booker: booking.booker,
                 owner: self.calendar.owner().into(),
             }),

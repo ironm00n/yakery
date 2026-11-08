@@ -11,7 +11,7 @@ fn limits(from: &str, until: &str, minutes: i64, gap: i64, hours: &[&str]) -> Li
     let issue = Issue {
         from: from.parse().unwrap(),
         until: until.parse().unwrap(),
-        duration: SignedDuration::from_mins(minutes),
+        duration: format!("PT{minutes}M").parse().unwrap(),
         gap: format!("PT{gap}M").parse().unwrap(),
         hours: hours.iter().map(|h| h.parse().unwrap()).collect(),
         title: None,

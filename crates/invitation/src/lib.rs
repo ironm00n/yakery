@@ -1,10 +1,11 @@
 //! The JSCalendar that Stalwart's `CalendarEvent/set` takes and, with `sendSchedulingMessages`, writes and sends the
 //! iTIP messages from.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
 use serde_json::{Map, Value, json};
+use text::text;
 
 /// Only a tz database zone, whose name JSCalendar's `timeZone` takes.
 #[derive(Clone, Debug)]
@@ -43,6 +44,25 @@ impl std::str::FromStr for Zone {
     }
 }
 
+/// How long an event lasts, as Stalwart reads JSCalendar's `duration`: above zero, in whole seconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Length(SignedDuration);
+
+impl Length {
+    pub fn get(self) -> SignedDuration {
+        self.0
+    }
+}
+
+text! {
+    Length(|s| {
+        let length: SignedDuration = s.parse()?;
+        let whole = length.is_positive() && length.subsec_nanos() == 0;
+        ensure!(whole, "{s} isn't a length above zero in whole seconds");
+        Ok(Length(length))
+    }, |l| l.0);
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct At<'a> {
     pub when: Timestamp,
@@ -54,7 +74,7 @@ pub struct Details<'a> {
     pub title: Option<&'a str>,
     pub description: Option<&'a str>,
     pub start: Option<At<'a>>,
-    pub duration: Option<SignedDuration>,
+    pub duration: Option<Length>,
     pub location: Option<&'a str>,
 }
 
@@ -111,7 +131,7 @@ pub struct Invitation<'a> {
     pub uid: &'a str,
     pub title: &'a str,
     pub start: At<'a>,
-    pub duration: SignedDuration,
+    pub duration: Length,
     pub description: Option<&'a str>,
     pub location: Option<&'a str>,
     pub organizer: &'a str,

@@ -11,7 +11,7 @@ pub fn issue(from: &str, until: &str) -> Issue {
     Issue {
         from: from.parse().unwrap(),
         until: until.parse().unwrap(),
-        duration: SignedDuration::from_mins(30),
+        duration: "30m".parse().unwrap(),
         gap: Gap::FLOOR,
         hours: vec![],
         title: None,
@@ -50,9 +50,12 @@ fn limits_bound_window_duration_and_gap() {
     let mut forged = serde_json::to_value(issue("2026-10-26", "2026-10-26")).unwrap();
     forged["gap"] = "PT4M".into();
     assert!(serde_json::from_value::<Limits>(forged).is_err(), "the core checks what `link` sends");
+    let mut fraction = serde_json::to_value(issue("2026-10-26", "2026-10-26")).unwrap();
+    fraction["duration"] = "PT30M0.5S".into();
+    assert!(serde_json::from_value::<Limits>(fraction).is_err(), "Stalwart reads no fraction");
     assert!(
         Checked::new(Issue {
-            duration: SignedDuration::from_mins(10),
+            duration: "10m".parse().unwrap(),
             ..issue("2026-10-26", "2026-10-26")
         })
         .is_err()

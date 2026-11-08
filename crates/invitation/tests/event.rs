@@ -1,7 +1,6 @@
 use std::sync::LazyLock;
 
-use invitation::{At, Details, Invitation, Person, Zone, mailto};
-use jiff::SignedDuration;
+use invitation::{At, Details, Invitation, Length, Person, Zone, mailto};
 use serde_json::json;
 
 static NEW_YORK: LazyLock<Zone> = LazyLock::new(|| Zone::named("America/New_York").unwrap());
@@ -19,7 +18,7 @@ fn an_agents_invitation_names_it_organizer_only_and_him_invited() {
         title: "Review the sync page",
         description: None,
         start,
-        duration: SignedDuration::from_mins(30),
+        duration: "30m".parse().unwrap(),
         location: None,
         organizer: "agent+scheduler@example.org",
         organizer_attends: false,
@@ -53,7 +52,7 @@ fn a_booked_meeting_has_its_organizer_attending_and_the_invitee_named() {
         title: "Research chat with Ada Lovelace",
         description: Some("hi"),
         start,
-        duration: SignedDuration::from_mins(30),
+        duration: "30m".parse().unwrap(),
         location: Some("Room 101"),
         organizer: "owner@example.org",
         organizer_attends: true,
@@ -74,6 +73,15 @@ fn only_a_named_zone_of_the_database_is_a_zone() {
     assert_eq!(NEW_YORK.name(), "America/New_York");
     assert!(Zone::named("-05:00").is_err());
     assert!("Nowhere/Else".parse::<Zone>().is_err());
+}
+
+#[test]
+fn a_length_is_above_zero_in_whole_seconds() {
+    assert_eq!("90m".parse::<Length>().unwrap().to_string(), "PT1H30M");
+    for refused in ["0s", "-30m", "30m 500ms", "PT0.5S"] {
+        let e = refused.parse::<Length>().unwrap_err().to_string();
+        assert_eq!(e, format!("{refused} isn't a length above zero in whole seconds"));
+    }
 }
 
 #[test]

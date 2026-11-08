@@ -6,6 +6,7 @@ use std::fmt;
 use std::num::NonZeroU32;
 
 use anyhow::{Result, anyhow, bail, ensure};
+use invitation::Length;
 use jiff::civil::Date;
 use jiff::{SignedDuration, Timestamp, ToSpan};
 use private::{Secret, hex, random};
@@ -80,7 +81,7 @@ pub struct Issue {
     #[arg(long)]
     pub until: Date,
     #[arg(long)]
-    pub duration: SignedDuration,
+    pub duration: Length,
     #[arg(long, default_value_t = Gap::FLOOR)]
     pub gap: Gap,
     /// Bookable hours in place of the policy's, like "sat 13:00-17:00"; repeatable
@@ -101,7 +102,7 @@ impl Check for Issue {
         let weeks = self.from <= self.until && self.until <= self.from + MOST_WEEKS.weeks();
         ensure!(weeks, "a link's window is one day to {MOST_WEEKS} weeks");
         ensure!(
-            DURATIONS.contains(&self.duration),
+            DURATIONS.contains(&self.duration.get()),
             "a meeting lasts {:#} to {:#}",
             DURATIONS.start(),
             DURATIONS.end()
@@ -345,7 +346,7 @@ impl Links {
             State::Open => None,
             State::Claiming(Claim { booking: b, .. }) | State::Booked { booking: b, .. } => {
                 Some(Taken {
-                    period: Period::starting(b.start, l.limits.duration),
+                    period: Period::starting(b.start, l.limits.duration.get()),
                     gap: l.limits.gap,
                 })
             }

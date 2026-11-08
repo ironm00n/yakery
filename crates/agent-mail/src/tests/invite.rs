@@ -246,7 +246,7 @@ async fn an_invitation_listing_that_stalwart_cut_at_its_get_limit_is_refused() {
 }
 
 #[test]
-fn an_invitation_lasts_a_length_above_zero() {
+fn an_invitation_lasts_a_length_above_zero_in_whole_seconds() {
     let with = |duration: &str| {
         let given = format!("--duration={duration}");
         let args: Vec<&str> =
@@ -254,7 +254,7 @@ fn an_invitation_lasts_a_length_above_zero() {
         command(&[&["invite"], &args[..]].concat()).map(drop)
     };
     assert!(with("30m").is_ok());
-    for refused in ["-30m", "0s", "PT0S"] {
+    for refused in ["-30m", "0s", "PT0S", "30m 500ms"] {
         assert!(
             with(refused).unwrap_err().contains(&format!("{refused} isn't a length above zero")),
             "{refused}"

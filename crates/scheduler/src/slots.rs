@@ -85,7 +85,7 @@ pub fn slots(
     busy: &[Period],
     taken: &[Taken],
 ) -> Vec<Timestamp> {
-    let (length, gap) = (limits.duration, gap(policy, limits));
+    let (length, gap) = (limits.duration.get(), gap(policy, limits));
     let clear = |slot: Period| {
         busy.iter()
             .map(|b| b.padded(gap.get()))

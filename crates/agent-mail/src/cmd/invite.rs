@@ -3,8 +3,8 @@
 
 use std::process::ExitCode;
 
-use invitation::{At, Details, Invitation, Person, Zone, mailto};
-use jiff::{SignedDuration, Timestamp};
+use invitation::{At, Details, Invitation, Length, Person, Zone, mailto};
+use jiff::Timestamp;
 use ring::digest::{SHA256, digest};
 use text::Address;
 
@@ -61,8 +61,8 @@ pub struct New {
     #[arg(long)]
     start: Timestamp,
     /// ISO 8601 (`PT30M`) or `30m`.
-    #[arg(long, value_parser = length)]
-    duration: SignedDuration,
+    #[arg(long)]
+    duration: Length,
     /// The event's time zone, which calendar apps show it in and keep its local time by; the deployment's by default.
     #[arg(long)]
     zone: Option<Zone>,
@@ -82,8 +82,8 @@ pub struct Update {
     title: Option<String>,
     #[arg(long)]
     start: Option<Timestamp>,
-    #[arg(long, value_parser = length)]
-    duration: Option<SignedDuration>,
+    #[arg(long)]
+    duration: Option<Length>,
     #[arg(long, requires = "start")]
     zone: Option<Zone>,
     #[command(flatten)]
@@ -111,16 +111,6 @@ pub struct List {
     topic: Option<Topic>,
 }
 
-/// A length of time above zero.
-fn length(text: &str) -> Result<SignedDuration, String> {
-    let length: SignedDuration = text.parse().map_err(|e| format!("{e}"))?;
-    if length > SignedDuration::ZERO {
-        Ok(length)
-    } else {
-        Err(format!("{text} isn't a length above zero"))
-    }
-}
-
 fn deployment_zone() -> Result<Zone> {
     Zone::named(TIME_ZONE).context("the deployment's time zone")
 }
@@ -132,7 +122,7 @@ fn uid(
     invited: &[String],
     title: &str,
     start: Timestamp,
-    duration: SignedDuration,
+    duration: Length,
 ) -> String {
     let mut invited: Vec<String> = invited.iter().map(|a| a.to_lowercase()).collect();
     invited.sort();
