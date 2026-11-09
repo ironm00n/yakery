@@ -2,4 +2,6 @@
 {
   name = "agent";
   uid = 1500;
+  # its credentials, under its home: tokens Owen copies in, never in the store
+  secrets = ".secrets";
 }

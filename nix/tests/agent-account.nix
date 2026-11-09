@@ -34,6 +34,7 @@ let
         shared.node
         inputs.home-manager.nixosModules.home-manager
         ../../users/agent/identity.nix
+        ../../users/agent/forges.nix
       ];
       home-manager = {
         useGlobalPkgs = true;
@@ -125,6 +126,15 @@ pkgs.testers.runNixOSTest {
     with subtest("its own key, made at boot, is its own and private"):
         desktop.wait_for_unit("${account.name}-ssh-key.service")
         desktop.succeed("[ \"$(stat -c '%U %a' /home/${account.name}/.ssh/id_ed25519)\" = '${account.name} 600' ]")
+
+    with subtest("its secrets are its own alone, and git signs in to each forge as its account there with the token it holds"):
+        secrets = "/home/${account.name}/${account.secrets}"
+        desktop.succeed(f"[ \"$(stat -c '%U %a' {secrets})\" = '${account.name} 700' ]")
+        refused(asHim(f"ls {secrets}"), "Permission denied")
+        for host, user, token in (("code.ironmoon.dev", "agent", "forgejo-agent-pat"), ("github.com", "ironmoon-agent", "gh-agent-pat")):
+            desktop.succeed(asAgent(f"echo {token}-value > {secrets}/{token}"))
+            filled = desktop.succeed(asAgent(f"printf 'protocol=https\\nhost={host}\\n\\n' | /etc/profiles/per-user/${account.name}/bin/git credential fill"))
+            assert f"username={user}\npassword={token}-value\n" in filled, filled
 
     with subtest("its signing key, made at boot, is its own and private, and its unit prints the public half alone and leaves nothing running"):
         keyUnit = lambda prop: f"systemctl show ${account.name}-gpg-key -p {prop} --value"

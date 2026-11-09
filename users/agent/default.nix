@@ -8,6 +8,7 @@ in
     ./user.nix
     ./fence.nix
     ./identity.nix
+    ./forges.nix
     ./claude
   ];
   home-manager.users.${name}.home.stateVersion = config.system.stateVersion;
