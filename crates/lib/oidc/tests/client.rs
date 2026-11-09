@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::*;
 
-/// The key and certificate outlook-sync proved itself with before this crate.
+/// A test key and its certificate, the same pair as outlook-sync's test fixture.
 fn fixture() -> (Vec<u8>, Vec<u8>) {
     let read = |name: &str| {
         let path =

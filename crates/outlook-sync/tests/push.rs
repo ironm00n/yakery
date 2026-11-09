@@ -17,7 +17,7 @@ const HOUR: Duration = Duration::from_secs(3600);
 
 #[test]
 fn only_a_state_change_naming_the_owner_wakes_the_loop() {
-    // the forms Stalwart 0.16.27 sends
+    // the forms Stalwart 0.16.27 sends, which nix/tests/stalwart-push.nix runs it to see
     let owners = "event: state\ndata: {\"@type\":\"StateChange\",\"changed\":{\"h\":{\"CalendarEvent\":\"saq\"}}}\n\n";
     let others = "event: state\ndata: {\"@type\":\"StateChange\",\"changed\":{\"g\":{\"CalendarEvent\":\"sam\"}}}\n\n";
     assert!(changed(owners, "h"));

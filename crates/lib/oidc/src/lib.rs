@@ -49,7 +49,8 @@ pub struct OAuthError {
 
 macro_rules! codes {
     ($($code:ident = $name:literal),* $(,)?) => {
-        /// An OAuth error code: RFC 6749 5.2's and 4.1.2.1's, and RFC 8628 3.5's.
+        /// An OAuth error code an endpoint answers with: RFC 6749 5.2's and RFC 8628 3.5's. A sign-in's return
+        /// names its own error (RFC 6749 4.1.2.1), which [`crate::Denied::Error`] keeps as sent.
         #[derive(Clone, Debug, PartialEq, Eq)]
         pub enum ErrorCode { $($code,)* Other(String) }
 
