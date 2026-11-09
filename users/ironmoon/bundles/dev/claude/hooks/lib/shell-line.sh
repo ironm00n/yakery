@@ -70,8 +70,8 @@ read_segments() {
   exit 2
 }
 
-# The absolute path a word names, from base dir $2 (empty when unknown); nothing if it can't be read
-# off the line.
+# The absolute path a word names, from base dir $2 (empty when unknown), symlinks resolved unless
+# $3 is -s; nothing if it can't be read off the line.
 dir_of() {
   local p=$1
   [[ $p == '~' || $p == '~/'* ]] && p=$HOME${p:1}
@@ -79,7 +79,7 @@ dir_of() {
   p=${p//'$HOME'/$HOME}
   [[ -z $p || $p == *[\$\`*?[$mask]* || ($p != /* && -z $2) ]] && return
   [[ $p == /* ]] || p=$2/$p
-  realpath -m -- "$p"
+  realpath -m ${3-} -- "$p"
 }
 
 # Calls $1 on each simple command of line $2 run from dir $3, with `w`, `fed` and `chdir` set by

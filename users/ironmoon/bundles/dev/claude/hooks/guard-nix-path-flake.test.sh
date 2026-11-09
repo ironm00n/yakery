@@ -3,6 +3,9 @@ NOGIT=$(mktemp -d)
 GIT=$(mktemp -d)
 git -C "$GIT" init -q
 mkdir -p "$NOGIT/sub" "$GIT/sub"
+SP=$(realpath "$(command -v bash)")
+SP=${SP%/bin/bash}
+ln -s "$SP" "$NOGIT/result"
 trap 'rm -rf -- "$NOGIT" "$GIT"' EXIT
 
 check() {
@@ -68,3 +71,17 @@ check PASS "$NOGIT" "nix build --impure --no-link --expr '(import /abs/path/run.
 check PASS "$NOGIT" 'nix build -f ./default.nix'
 check PASS "$NOGIT" 'nix develop --file shell.nix -c true'
 check DENY "$NOGIT" "nix build -f default.nix --override-input dep path:$NOGIT"
+
+check PASS "$NOGIT" "nix profile add $SP"
+check PASS "$NOGIT" "nix build $SP^out"
+check PASS "$NOGIT" "nix run $SP"
+check PASS "$NOGIT" "nix shell $SP/bin -c true"
+check PASS "$NOGIT" 'nix build ./result'
+check PASS "$GIT" "sudo -u agent sh -c 'nix profile add $SP'"
+check DENY "$GIT" "sudo -u agent sh -c 'cd $NOGIT && nix develop'"
+check DENY "$NOGIT" 'nix profile add .'
+check DENY "$NOGIT" "nix build path:$SP"
+check DENY "$NOGIT" "nix build $SP#default"
+check DENY "$NOGIT" "nix build $SP/bin^out"
+check DENY "$NOGIT" 'nix build ./result/bin'
+check DENY "$GIT" "nix build $NOGIT^out"
