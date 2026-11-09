@@ -1,20 +1,19 @@
 { pkgs, name }:
 let
   shared = import ./agent-node.nix { inherit pkgs name; };
-  inherit (shared) uid;
   checkout = "/home/ironmoon/workspace/redox";
   memory = "/home/ironmoon/.claude/projects/-home-ironmoon-workspace-redox/memory";
   lane = "${checkout}/claude/unboca";
   top = "/shr";
   share = "${top}/workspace/redox";
   shareMemory = "${top}/.claude/projects/-shr-workspace-redox/memory";
-  # his ACLs, as he sets them by hand on his tree: the lane's dir and the memory dir are the account's to write, with
-  # what it makes there his to write too, and the repo stores, recordings and audio are closed to it
+  # his ACLs, as he sets them by hand on his tree: the lane's dir and the memory dir are the accounts' to write, with
+  # what they make there his to write too, and the repo stores, recordings and audio are closed to them
   acls = pkgs.writeShellScript "acls" ''
     set -eu
     PATH=${pkgs.acl}/bin
-    setfacl -R -P -m u:${uid}:rwX,d:u:${uid}:rwX,d:u:ironmoon:rwX ${lane} ${memory}
-    setfacl -m u:${uid}:--- ${checkout}/.jj ${checkout}/.git ${lane}/rec ${lane}/talk.m4a
+    setfacl -R -P -m g:shr:rwX,d:g:shr:rwX,d:u:ironmoon:rwX ${lane} ${memory}
+    setfacl -m g:shr:--- ${checkout}/.jj ${checkout}/.git ${lane}/rec ${lane}/talk.m4a
   '';
 in
 pkgs.testers.runNixOSTest {

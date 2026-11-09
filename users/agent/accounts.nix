@@ -1,9 +1,12 @@
-# The accounts agents run as, by name, each with its uid (its group's gid too) and its own anthropic-tap's loopback
-# port. Every module here holds for each of them.
+# The accounts agents run as, by name, each with its uid (its group's gid too), its own anthropic-tap's loopback port
+# and whether it is privileged (privileged.nix). Every module here holds for each of them.
 builtins.mapAttrs
   (
     name: account:
-    account
+    {
+      privileged = false;
+    }
+    // account
     // {
       inherit name;
       # its credentials, under its home: tokens Owen copies in, never in the store
@@ -19,5 +22,6 @@ builtins.mapAttrs
     agent-privileged = {
       uid = 1501;
       tapPort = 8892;
+      privileged = true;
     };
   }

@@ -12,8 +12,14 @@ rec {
     held = b"\x01" * (int(sys.argv[1]) << 20)
   '';
   listen = pkgs.writeText "listen.py" ''
-    import socket, sys
-    server = socket.create_server(("127.0.0.1", int(sys.argv[1])))
+    import os, socket, sys
+    if "/" in sys.argv[1]:
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(sys.argv[1])
+        os.chmod(sys.argv[1], 0o660)
+        server.listen()
+    else:
+        server = socket.create_server(("127.0.0.1", int(sys.argv[1])))
     while True:
         server.accept()[0].close()
   '';
@@ -28,6 +34,7 @@ rec {
     {
       imports = [
         ../../users/agent/user.nix
+        ../../users/agent/privileged.nix
         ../../users/agent/fence.nix
       ];
       systemd.slices."user-${uid}".sliceConfig.MemoryMax = lib.mkForce "300M";

@@ -25,11 +25,15 @@ let
             assertion =
               !(lib.elem group config.users.users.${name}.extraGroups)
               && !(lib.elem name (config.users.groups.${group}.members or [ ]));
-            message = "users/agent: ${name} is in ${group}, which is root by another name";
+            message = "users/agent: ${name} is in ${group}, which no agent account may join";
           })
           [
             "wheel"
             "docker"
+            "libvirtd"
+            "kvm"
+            "wireshark"
+            "netbird"
           ]
         ++ [
           {

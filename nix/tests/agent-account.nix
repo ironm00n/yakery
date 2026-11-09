@@ -9,11 +9,15 @@ let
   inherit (shared)
     accounts
     account
+    others
     uid
     connect
     listen
     hog
     ;
+  names = map (a: a.name);
+  # the accounts it may run as
+  below = if account.privileged then names (builtins.filter (a: !a.privileged) others) else [ ];
   keys = import "${pkgs.path}/nixos/tests/ssh-keys.nix" pkgs;
   gpg = "${pkgs.gnupg}/bin/gpg";
   agent = "ironmoon's agent <agent@ironmoon.dev>";
@@ -167,11 +171,29 @@ pkgs.testers.runNixOSTest {
         refused(asAgent("cat /home/ironmoon/.ssh/id_ed25519"), "Permission denied")
         refused(asAgent("cat /home/ironmoon/notes.md"), "Permission denied")
 
-    with subtest("he becomes the agent; the agent becomes no one"):
+    with subtest("he becomes the account, and it becomes another only if it is privileged and the other isn't"):
         out = desktop.succeed("su ironmoon -c 'sudo -n -u ${account.name} id -un'").strip()
         assert out == "${account.name}", out
-        rules = desktop.execute("sudo -l -U ${account.name}")[1]
-        assert "is not allowed to run sudo" in rules, rules
+        for other in ${builtins.toJSON below}:
+            assert (out := desktop.succeed(asAgent(f"sudo -n -u {other} id -un")).strip()) == other, out
+        for other in ["ironmoon", "root"] + ${builtins.toJSON (pkgs.lib.subtractLists below (names others))}:
+            desktop.fail(asAgent(f"sudo -n -u {other} true"))
+        if ${builtins.toJSON below} == []:
+            rules = desktop.execute("sudo -l -U ${account.name}")[1]
+            assert "is not allowed to run sudo" in rules, rules
+
+    with subtest("the approval socket answers him and a privileged account, and no other"):
+        desktop.succeed("python3 ${listen} /run/approve.sock >/dev/null 2>&1 &")
+        desktop.wait_for_file("/run/approve.sock")
+        desktop.succeed("chgrp approve-requesters /run/approve.sock")
+        desktop.succeed(asHim("python3 ${connect} /run/approve.sock"))
+        connects = asAgent("python3 ${connect} /run/approve.sock")
+        ${
+          if account.privileged then
+            "desktop.succeed(connects)"
+          else
+            ''refused(connects, "Permission denied")''
+        }
 
     with subtest("the account reaches neither his signing key nor his gpg-agent, even started by him"):
         desktop.wait_for_unit("user@1000.service")

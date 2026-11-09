@@ -4,6 +4,7 @@
 {
   imports = [
     ./user.nix
+    ./privileged.nix
     ./fence.nix
     ./identity.nix
     ./forges.nix
