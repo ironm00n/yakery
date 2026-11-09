@@ -100,7 +100,9 @@ in
     enable = lib.mkEnableOption "ZITADEL at ${hostname}";
     mail.enable = lib.mkEnableOption ''
       ZITADEL's mail through Stalwart's submission listener as zitadel@, its provider set again at
-      each start through the admin API with an IAM owner's token
+      each start through the admin API with an IAM owner's token. Reading that mail takes a ZITADEL
+      sign-in, so a lost sign-in can't be reset by mail; the way back in is in the private notes
+      repo's homelab/zitadel-break-glass.md
     '';
   };
 
