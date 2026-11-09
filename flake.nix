@@ -424,6 +424,7 @@
           builtins.seq (workspace.checked workspace.members) "touch $out"
         );
         treefmt = treefmtEval.${system}.config.build.check self;
+        agent-groups = import ./nix/tests/agent-groups.nix { pkgs = test-pkgs; };
         desktop-boot = import ./nix/tests/desktop-boot.nix {
           pkgs = test-pkgs;
           inherit inputs my-lib;

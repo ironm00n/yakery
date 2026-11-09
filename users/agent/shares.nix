@@ -62,6 +62,7 @@ in
       }
     ];
     users.groups.${group}.members = builtins.attrNames (import ./accounts.nix);
+    agent.groupsWithHim = [ group ];
     fileSystems = config.agent.shares;
     # systemd makes a missing bind source as root, which would put a root-owned dir in his home
     systemd.units = lib.mapAttrs' (
