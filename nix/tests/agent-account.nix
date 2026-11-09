@@ -146,6 +146,11 @@ pkgs.testers.runNixOSTest {
             filled = desktop.succeed(asAgent(f"printf 'protocol=https\\nhost={host}\\n\\n' | /etc/profiles/per-user/${account.name}/bin/git credential fill"))
             assert f"username={user}\npassword={token}-value\n" in filled, filled
 
+    with subtest("xb takes every account, and no other uid, as an agent"):
+        listed = desktop.succeed("grep -v '^#' /etc/xb/agent-uids").split()
+        expected = [desktop.succeed(f"id -u {name}").strip() for name in everyAccount]
+        assert sorted(listed) == sorted(expected), (listed, expected)
+
     with subtest("its sessions run whatever xb's deploy last put in place, and only he places it"):
         desktop.succeed("[ \"$(stat -c '%U %a' /var/lib/xb)\" = 'ironmoon 755' ]")
         refused(asAgent("mkdir /var/lib/xb/v0"), "Permission denied")
