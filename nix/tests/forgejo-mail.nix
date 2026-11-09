@@ -77,8 +77,14 @@ pkgs.testers.runNixOSTest {
       virtualisation.memorySize = 2048;
       security.pki.certificateFiles = nodes.server.security.pki.certificateFiles;
       networking.interfaces.eth1 = overlay oracle-a1-flex-1;
-      # as NetBird's DNS answers peers
-      networking.hosts.${hetzner-cx33-1.v4} = [ stalwart.my-lib.ironmoon.mail.host ];
+      # flex-1's resolver answers the mail host with its public address, as public DNS does
+      services.dnsmasq = {
+        enable = true;
+        settings = {
+          no-resolv = true;
+          address = "/${stalwart.my-lib.ironmoon.mail.host}/${nodes.server.networking.primaryIPAddress}";
+        };
+      };
 
       # the app password exists only once the server has applied its plan
       sops.secrets.forgejo-smtp_password.path = passwordFile;
