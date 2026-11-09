@@ -16,8 +16,7 @@
     "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS": "15",
     "GIT_CONFIG_COUNT": "1",
     "GIT_CONFIG_KEY_0": "include.path",
-    "GIT_CONFIG_VALUE_0": "~/.config/git/claude-identity",
-    "TMPDIR": "/tmp/claude-1000"
+    "GIT_CONFIG_VALUE_0": "~/.config/git/claude-identity"
   },
   "attribution": {
     "commit": "\"{Assisted,Generated}-by: <model-id>[:effort] [harness[:version]]\" (see project policy for more info about nested agents)",
