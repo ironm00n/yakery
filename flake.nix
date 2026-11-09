@@ -207,6 +207,7 @@
       in
       [
         ./hosts/options.nix
+        ./hosts/no-vm-test-builds.nix
         (base-config ctx)
         { host.use-secrets = use-secrets; }
       ] ++ lib.optionals use-secrets [

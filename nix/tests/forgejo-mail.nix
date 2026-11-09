@@ -70,6 +70,7 @@ pkgs.testers.runNixOSTest {
         ../../hosts/oracle-a1-flex-1/forgejo.nix
         ../../hosts/oracle-a1-flex-1/postgres.nix
         ../../bundles/reverse-proxy.nix
+        ./forgejo-package.nix
       ];
       _module.args = {
         inherit (stalwart) my-lib;
