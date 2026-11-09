@@ -8,6 +8,25 @@
 }:
 let
   accounts = builtins.attrValues (import ./accounts.nix);
+  # every group a user is in, by its own entry or by a group's
+  groupsOf =
+    user:
+    let
+      entry = config.users.users.${user};
+    in
+    lib.unique (
+      [ entry.group ]
+      ++ entry.extraGroups
+      ++ lib.attrNames (lib.filterAttrs (_: group: lib.elem user group.members) config.users.groups)
+    );
+  # his, and the two that are root by another name even once he leaves them
+  barred = lib.subtractLists config.agent.groupsWithHim (
+    groupsOf "ironmoon"
+    ++ [
+      "wheel"
+      "docker"
+    ]
+  );
   account =
     {
       name,
@@ -19,33 +38,26 @@ let
       home = config.users.users.${name}.home;
     in
     {
-      assertions =
-        map
-          (group: {
-            assertion =
-              !(lib.elem group config.users.users.${name}.extraGroups)
-              && !(lib.elem name (config.users.groups.${group}.members or [ ]));
-            message = "users/agent: ${name} is in ${group}, which no agent account may join";
-          })
-          [
-            "wheel"
-            "docker"
-            "libvirtd"
-            "kvm"
-            "wireshark"
-            "netbird"
-          ]
-        ++ [
+      assertions = [
+        (
+          let
+            shared = lib.intersectLists barred (groupsOf name);
+          in
           {
-            assertion =
-              !(lib.any (lib.flip lib.elem config.nix.settings.trusted-users) [
-                name
-                "@${name}"
-                "*"
-              ]);
-            message = "users/agent: ${name} is a nix trusted user, which is root by another name";
+            assertion = shared == [ ];
+            message = "users/agent: ${name} is in ${lib.concatStringsSep ", " shared}, which no agent account may join (agent.groupsWithHim lists the groups it shares with him on purpose)";
           }
-        ];
+        )
+        {
+          assertion =
+            !(lib.any (lib.flip lib.elem config.nix.settings.trusted-users) [
+              name
+              "@${name}"
+              "*"
+            ]);
+          message = "users/agent: ${name} is a nix trusted user, which is root by another name";
+        }
+      ];
 
       users.groups.${name}.gid = uid;
       users.users.${name} = {
@@ -92,6 +104,12 @@ let
     };
 in
 {
+  options.agent.groupsWithHim = lib.mkOption {
+    type = with lib.types; listOf str;
+    default = [ ];
+    description = "The groups of his that an agent account may join, each because sharing it is its point.";
+  };
+
   config = lib.mkMerge (
     [
       {

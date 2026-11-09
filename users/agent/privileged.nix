@@ -8,6 +8,7 @@ let
 in
 {
   users.groups.approve-requesters.members = [ "ironmoon" ] ++ names accounts.right;
+  agent.groupsWithHim = [ "approve-requesters" ];
   security.sudo.extraRules = lib.optional (accounts.right != [ ] && accounts.wrong != [ ]) {
     users = names accounts.right;
     runAs = lib.concatStringsSep "," (names accounts.wrong);
