@@ -99,22 +99,25 @@ pkgs.testers.runNixOSTest {
         [fpr] = fingerprints(listing(homedir))
         return fpr
 
-    def asAccount(args):
-        return desktop.succeed(asHim(f"sudo -n -u ${account.name} ${gpg} --batch {args}"))
+    def asAccount(args, name="${account.name}"):
+        return desktop.succeed(asHim(f"sudo -n -u {name} ${gpg} --batch {args}"))
 
-    def agentKeys():
-        files = desktop.succeed("ls /home/${account.name}/.gnupg/private-keys-v1.d")
-        return files, fingerprints(asAccount("--with-colons --list-secret-keys"))
+    def agentKeys(name="${account.name}"):
+        files = desktop.succeed(f"ls /home/{name}/.gnupg/private-keys-v1.d")
+        return files, fingerprints(asAccount("--with-colons --list-secret-keys", name))
+
+    everyAccount = ${builtins.toJSON (builtins.attrNames accounts)}
+    allKeys = lambda: [agentKeys(name) for name in everyAccount]
 
     agentPid = lambda: desktop.succeed(asAgent("systemctl --user show gpg-agent.service -p MainPID --value")).strip()
 
     def adopt(homedir, fpr):
-        return asHim(f"${account.name}-adopt-gpg-key {homedir} {shlex.quote(fpr)}")
+        return asHim(f"agent-adopt-gpg-key {homedir} {shlex.quote(fpr)}")
 
     def refusedAdopt(homedir, fpr, reason):
-        before = agentKeys()
+        before = allKeys()
         refused(adopt(homedir, fpr), reason)
-        assert agentKeys() == before, (fpr, before, agentKeys())
+        assert allKeys() == before, (fpr, before, allKeys())
 
     def commits(dir):
         authors = desktop.succeed(asAgent(f"${commit} {dir}")).splitlines()
@@ -153,8 +156,9 @@ pkgs.testers.runNixOSTest {
         assert (got := session("~/.local/state/xb/current/bin/xb")) == "v2", got
 
     with subtest("its signing key, made at boot, is its own and private, and its unit prints the public half alone and leaves nothing running"):
-        keyUnit = lambda prop: f"systemctl show ${account.name}-gpg-key -p {prop} --value"
-        desktop.wait_until_succeeds(f"[ \"$({keyUnit('ExecMainExitTimestampMonotonic')})\" != 0 ] && ! {keyUnit('ActiveState')} | grep -q activating")
+        keyUnit = lambda prop, name="${account.name}": f"systemctl show {name}-gpg-key -p {prop} --value"
+        for name in everyAccount:
+            desktop.wait_until_succeeds(f"[ \"$({keyUnit('ExecMainExitTimestampMonotonic', name)})\" != 0 ] && ! {keyUnit('ActiveState', name)} | grep -q activating")
         assert (got := [desktop.succeed(keyUnit(prop)).strip() for prop in ("ActiveState", "Result")]) == ["inactive", "success"], got
         desktop.succeed("! grep -qs ${account.name}-gpg-key /proc/[0-9]*/cgroup")
         private = "/home/${account.name}/.gnupg/private-keys-v1.d"
@@ -216,7 +220,7 @@ pkgs.testers.runNixOSTest {
         sessionAgent = agentPid()
         assert sessionAgent != "0", sessionAgent
 
-    with subtest("adopt-gpg-key takes a primary key's whole fingerprint alone, and changes no keyring on any other"):
+    with subtest("adopt-gpg-key takes a primary key's whole fingerprint alone, and changes no account's keyring on any other"):
         [his] = fingerprints(listing("/home/ironmoon/.gnupg"))
         moved = "/home/ironmoon/.local/share/agent-gnupg"
         fpr = makeRevocable(moved, "${agent}", his)
@@ -254,12 +258,12 @@ pkgs.testers.runNixOSTest {
         desktop.succeed(asHim(f"install -d -m 700 {stub} && ${gpg} --homedir {full} --batch --export-secret-subkeys {stubFpr} | ${gpg} --homedir {stub} --batch --import"))
         refusedAdopt(stub, stubFpr, f"{stub} doesn't hold every secret part of {stubFpr}")
 
-    with subtest("adopt-gpg-key copies the agent's key, subkey, revoker and all, in place of every key the account holds, and its commits verify"):
+    with subtest("adopt-gpg-key copies the agent's key, subkey, revoker and all, into every account in place of every key it holds, and its commits verify"):
         other = "/home/ironmoon/.local/share/other-gnupg"
         makeRevocable(other, "someone <someone@ironmoon.dev>", his)
         desktop.succeed(asHim(f"${gpg} --homedir {other} --batch --export-secret-keys | sudo -n -u ${account.name} ${gpg} --batch --import"))
         desktop.succeed(adopt(moved, fpr))
-        assert (got := agentKeys()[1]) == [fpr], got
+        assert (got := [keys for _, keys in allKeys()]) == [[fpr]] * len(everyAccount), got
         assert (got := fingerprints(asAccount("--with-colons --list-keys"), "pub")) == [fpr], got
         desktop.succeed("systemctl restart ${account.name}-gpg-key")
         desktop.succeed("journalctl --sync")
@@ -280,7 +284,7 @@ pkgs.testers.runNixOSTest {
         plain = "/home/ironmoon/.local/share/plain-gnupg"
         plainFpr = makeKey(plain, "${agent}")
         desktop.succeed("echo 'import-options show-only' > /home/${account.name}/.gnupg/gpg.conf")
-        refused(adopt(plain, plainFpr), f"the agent account doesn't hold {plainFpr} alone")
+        refused(adopt(plain, plainFpr), f"${account.name} doesn't hold {plainFpr} alone")
         assert (got := agentKeys()[1]) == [], got
         desktop.succeed("rm /home/${account.name}/.gnupg/gpg.conf && systemctl restart ${account.name}-gpg-key")
         assert len(got := agentKeys()[1]) == 1, got
