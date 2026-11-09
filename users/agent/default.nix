@@ -10,6 +10,7 @@ in
     ./identity.nix
     ./forges.nix
     ./xb.nix
+    ./shares.nix
     ./claude
   ];
   home-manager.users.${name}.home.stateVersion = config.system.stateVersion;
