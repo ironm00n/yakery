@@ -56,16 +56,17 @@ let
   get-stalwart-secret = stalwart-secrets.get-path;
   credential = name: "/run/credentials/stalwart.service/${name}";
   certDir = config.security.acme.certs.${hostname}.directory;
-  smtpTls = cfg.receiving.enable || cfg.submission.enable;
-  smtpListener = name: port: addresses: {
-    inherit name;
+  tls = cfg.receiving.enable || cfg.submission.enable || cfg.imap.enable;
+  tlsListener = protocol: tlsImplicit: name: port: addresses: {
+    inherit name protocol tlsImplicit;
     bind = toSet (
       map (a: if lib.hasInfix ":" a then "[${a}]:${toString port}" else "${a}:${toString port}") addresses
     );
-    protocol = "smtp";
     useTls = true;
-    tlsImplicit = false;
   };
+  smtpListener = tlsListener "smtp" false;
+  # the NetBird overlay addresses, which NetBird's DNS sends peers to
+  overlay = my-lib.netbird.addresses config.networking.hostName;
 
   defaults = import ./default-perms.nix {
     inherit lib;
@@ -133,23 +134,31 @@ let
   );
   agentRcptForbidden = "(${isAgentSender}) && !(${agentMayReach})";
 
-  # RCPT-stage scripts see only the recipient being added
-  unreceivable =
+  # RCPT-stage scripts see only the recipient being added, as the client wrote it: before Stalwart takes off a
+  # subaddress or rewrites it
+  refuseUnreceivable =
     let
-      unreceiving =
-        lib.concatLists (
-          lib.mapAttrsToList localPartsOf (
-            lib.filterAttrs (_: account: !account.receivesMail) cfg.programAccounts
-          )
-        )
-        ++ cfg.groups;
+      unreceiving = lib.filterAttrs (_: account: !account.receivesMail) cfg.programAccounts;
+      refused = lib.concatMap serviceAddresses (
+        lib.concatLists (lib.mapAttrsToList localPartsOf unreceiving) ++ cfg.groups
+      );
+      taken = lib.concatMap (account: map (local: "${local}+*@${domain}") account.receivesSubaddressed) (
+        lib.attrValues unreceiving
+      );
+      tests = [
+        ''envelope :all :matches "to" ${sieveList refused}''
+      ]
+      ++ lib.optional (taken != [ ]) ''not envelope :all :matches "to" ${sieveList taken}'';
     in
     ''
-      require ["envelope", "reject"];
-      if envelope :all :matches "to" ${sieveList (lib.concatMap serviceAddresses unreceiving)} {
+      if allof (${lib.concatStringsSep ", " tests}) {
         reject "550 5.1.1 mailbox unavailable";
       }
     '';
+  unreceivable = ''
+    require ["envelope", "reject"];
+    ${refuseUnreceivable}
+  '';
 
   sieveList = strings: "[${lib.concatMapStringsSep ", " builtins.toJSON strings}]";
 
@@ -267,6 +276,7 @@ let
       ''
         require ["envelope", "reject", "variables"];
       ''
+      refuseUnreceivable
     ]
     ++ lib.mapAttrsToList (
       name: mailbox:
@@ -466,6 +476,10 @@ in
       Mail is taken only from an account signed in there, and sign-in is offered only once STARTTLS
       is done
     '';
+    imap.enable = lib.mkEnableOption ''
+      IMAP with implicit TLS on port 993 of the NetBird overlay addresses only, for a program on a
+      peer that reads its account's mailbox
+    '';
     certificate = lib.mkOption {
       type = lib.types.submodule {
         options = {
@@ -522,6 +536,12 @@ in
               description = "Other local parts at ${domain} the account sends from, and receives at as it does at its own.";
             };
             receivesMail = lib.mkEnableOption "mail to the account, which is otherwise refused at RCPT";
+            receivesSubaddressed = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              example = [ "code" ];
+              description = "Its own local parts whose subaddresses take mail, as `code+<anything>@${domain}` does, while the bare addresses stay refused.";
+            };
             description = lib.mkOption {
               type = lib.types.str;
               default = "program account";
@@ -572,6 +592,13 @@ in
         message = "bundles.stalwart.programAccounts, their aliases and bundles.stalwart.groups must be local parts no other account at ${domain} has";
       }
       {
+        assertion = lib.all (
+          { name, value }:
+          lib.all (local: lib.elem local (localPartsOf name value)) value.receivesSubaddressed
+        ) (lib.attrsToList cfg.programAccounts);
+        message = "bundles.stalwart.programAccounts.<name>.receivesSubaddressed must name the account's own local parts";
+      }
+      {
         # the addresses agent-mail sends from
         assertion = lib.all (
           agent:
@@ -614,7 +641,7 @@ in
         s3_secret_key = get-stalwart-secret "s3_secret_key";
         dkim_tsig = "${tsig.dir}/secret";
       }
-      // lib.optionalAttrs smtpTls {
+      // lib.optionalAttrs tls {
         tls_certificate = cfg.certificate.chain;
         tls_key = cfg.certificate.key;
       };
@@ -657,13 +684,14 @@ in
             }
             // lib.optionalAttrs cfg.receiving.enable { smtp = smtpListener "smtp" 25 hostnameAddresses; }
             // lib.optionalAttrs cfg.submission.enable {
-              submission = smtpListener "submission" 587 (
-                hostnameAddresses ++ my-lib.netbird.addresses config.networking.hostName
-              );
+              submission = smtpListener "submission" 587 (hostnameAddresses ++ overlay);
+            }
+            // lib.optionalAttrs cfg.imap.enable {
+              imaps = tlsListener "imap" true "imaps" 993 overlay;
             }
           ))
           (reconcile "Certificate" [ "certificate" ] (
-            lib.optionalAttrs smtpTls {
+            lib.optionalAttrs tls {
               mail = {
                 certificate = fileSecret (credential "tls_certificate");
                 privateKey = fileSecret (credential "tls_key");
@@ -761,7 +789,7 @@ in
             defaultHostname = hostname;
             defaultDomainId = ref "ironmoon";
             # SMTP clients often send no SNI
-            defaultCertificateId = if smtpTls then ref "mail" else null;
+            defaultCertificateId = if tls then ref "mail" else null;
           })
           (upsertOn1 "Account" "root" [ "name" "domainId" ] {
             "@type" = "User";
@@ -837,43 +865,38 @@ in
               "else" = "false";
             };
           })
-          (reconcile "SieveSystemScript" [ "name" ] (
-            {
-              inbound = {
-                name = "inbound";
-                description = "Refuses mail to the agents and the service mailboxes from anyone but their senders";
-                isActive = true;
-                contents = inbound;
-              };
-              unreceivable = {
-                name = "unreceivable";
-                description = "Refuses accounts that can't receive, so their bounces can't go to forged senders";
-                isActive = true;
-                contents = unreceivable;
-              };
-            }
-            // lib.optionalAttrs (cfg.serviceMailboxes != { }) {
-              submitted = {
-                name = "submitted";
-                description = "Keeps each service mailbox to its recipients, and every other account away from it";
-                isActive = true;
-                contents = submitted;
-              };
-            }
-          ))
+          (reconcile "SieveSystemScript" [ "name" ] {
+            inbound = {
+              name = "inbound";
+              description = "Refuses mail to the agents and the service mailboxes from anyone but their senders";
+              isActive = true;
+              contents = inbound;
+            };
+            unreceivable = {
+              name = "unreceivable";
+              description = "Refuses accounts that can't receive, so their bounces can't go to forged senders";
+              isActive = true;
+              contents = unreceivable;
+            };
+            submitted = {
+              name = "submitted";
+              description = "Refuses accounts that can't receive, and keeps each service mailbox to its recipients and every other account away from it";
+              isActive = true;
+              contents = submitted;
+            };
+          })
           (update "MtaStageRcpt" {
             script = {
-              match =
-                lib.optional (cfg.serviceMailboxes != { }) {
+              match = [
+                {
                   "if" = "!is_empty(authenticated_as)";
                   "then" = "'submitted'";
                 }
-                ++ [
-                  {
-                    "if" = "local_port == 25";
-                    "then" = "'unreceivable'";
-                  }
-                ];
+                {
+                  "if" = "local_port == 25";
+                  "then" = "'unreceivable'";
+                }
+              ];
               "else" = "false";
             };
           })
@@ -1057,9 +1080,10 @@ in
     ]
     ++ lib.optional cfg.receiving.enable 25
     ++ lib.optional cfg.submission.enable 587;
+    bundles.vpn.netbird.allowedTCPPorts = lib.optional cfg.imap.enable 993;
     # Stalwart reads the certificate files only at start
-    security.acme.certs.${hostname}.reloadServices = lib.optional smtpTls "stalwart.service";
-    systemd.services.stalwart = lib.mkIf smtpTls {
+    security.acme.certs.${hostname}.reloadServices = lib.optional tls "stalwart.service";
+    systemd.services.stalwart = lib.mkIf tls {
       wants = [ "acme-${hostname}.service" ];
       after = [ "acme-${hostname}.service" ];
     };

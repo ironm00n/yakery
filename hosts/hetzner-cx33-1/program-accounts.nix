@@ -19,14 +19,27 @@ let
     "authenticate"
     "emailSend"
   ];
+  # Forgejo's incoming email: it waits in IDLE, fetches what is unseen, and flags and expunges what it handled
+  reading = [
+    "emailReceive"
+    "imapAuthenticate"
+    "imapCapability"
+    "imapSelect"
+    "imapSearch"
+    "imapFetch"
+    "imapStore"
+    "imapExpunge"
+    "imapIdle"
+  ];
   inherit (my-lib.ironmoon.mail) senders;
 in
 {
   bundles.stalwart.programAccounts = {
     forgejo = {
-      permissions = sending;
+      permissions = sending ++ reading;
       allowedIps = from "oracle-a1-flex-1";
       aliases = [ senders.forgejo ];
+      receivesSubaddressed = [ senders.forgejo ];
       description = "Forgejo on oracle-a1-flex-1";
     };
     zitadel = {

@@ -109,6 +109,10 @@ let
     {
       # sops-nix stays out of tests; every secret a bundle declares is a file of test data
       imports = [ secretFiles ];
+      # and the test network is NetBird's interface
+      networking.firewall.interfaces.enp1s0 = {
+        inherit (config.bundles.vpn.netbird) allowedTCPPorts allowedUDPPorts;
+      };
       _module.args = {
         # test data stays off the real domain, and the test network stands in for NetBird at /admin
         my-lib = my-lib // {
@@ -246,6 +250,7 @@ in
         ../../bundles/stalwart
         ../../bundles/reverse-proxy.nix
         ../../bundles/backup.nix
+        ../../bundles/vpn/netbird.nix
         (overrides { inherit tlsHosts stalwartS3Endpoint ips; })
       ];
 

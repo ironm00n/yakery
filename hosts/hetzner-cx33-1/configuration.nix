@@ -27,6 +27,7 @@
     receiving.enable = true;
     sending.enable = true;
     submission.enable = true;
+    imap.enable = true;
     sharedMailboxes = [
       "catchall"
       "pool"
