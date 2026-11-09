@@ -1,81 +1,85 @@
-# Its commits name the agent identity and are signed with its own OpenPGP key, for GitHub's ironmoon-agent and Forgejo's
-# agent user: one he copies in with agent-adopt-gpg-key, or else one the account makes on the host as it does its
-# ssh key.
+# Each account's commits name the agent identity and are signed with its own OpenPGP key, for GitHub's ironmoon-agent
+# and Forgejo's agent user: one he copies in with <account>-adopt-gpg-key, or else one the account makes on the host as
+# it does its ssh key.
 {
-  config,
   lib,
   pkgs,
   my-lib,
   ...
 }:
 let
-  inherit (import ./account.nix) name;
-  agent = config.users.users.${name};
   inherit (my-lib.ironmoon.mail.agents) identity;
   inherit (identity) email;
   gpg = lib.getExe' pkgs.gnupg "gpg";
-  userManager = "user@${toString agent.uid}.service";
-  adopt = "${name}-adopt-gpg-key";
-in
-{
-  environment.systemPackages = [
-    (pkgs.writeShellApplication {
-      name = adopt;
-      runtimeInputs = [ pkgs.gnupg ];
-      runtimeEnv = {
-        inherit email;
-        account = name;
-      };
-      text = builtins.readFile ./adopt-gpg-key.sh;
-    })
-  ];
+  account =
+    { name, uid, ... }:
+    let
+      userManager = "user@${toString uid}.service";
+      adopt = "${name}-adopt-gpg-key";
+    in
+    {
+      environment.systemPackages = [
+        (pkgs.writeShellApplication {
+          name = adopt;
+          runtimeInputs = [ pkgs.gnupg ];
+          runtimeEnv = {
+            inherit email;
+            account = name;
+          };
+          text = builtins.readFile ./adopt-gpg-key.sh;
+        })
+      ];
 
-  # ed25519: GnuPG 2.4 makes it a v4 key, which GitHub and Forgejo both read
-  systemd.services."${name}-gpg-key" = {
-    wantedBy = [ "multi-user.target" ];
-    # its user manager holds the account's gpg-agent socket; a gpg run before that starts its own agent, which exits 2
-    wants = [ userManager ];
-    after = [ userManager ];
-    # not RemainAfterExit, so the keyboxd its gpg starts ends with it
-    serviceConfig = {
-      Type = "oneshot";
-      User = name;
-    };
-    # its journal ends with the public half, for adding it where the agent pushes
-    script = ''
-      set -o pipefail
-      ${gpg} --batch --list-secret-keys ${email} >/dev/null 2>&1 ||
-        ${gpg} --batch --pinentry-mode loopback --passphrase "" --quick-gen-key "${identity.name} <${email}>" ed25519 sign never
-      # git and jj name the key by its email, and the account holds no key but that one
-      keys=$(${gpg} --batch --with-colons --list-secret-keys | grep -c '^sec:')
-      [ "$keys" = 1 ] || { echo "$keys secret keys, not ${email}'s alone; ${adopt} leaves one" >&2; exit 1; }
-      # the journal drops empty lines, and a whitespace line still ends the armor's headers
-      ${gpg} --batch --armor --export ${email} | sed 's/^$/ /'
-    '';
-  };
-
-  home-manager.users.${name} = {
-    programs.git = {
-      enable = true;
-      settings.user = identity;
-      signing = {
-        key = email;
-        signByDefault = true;
-        format = "openpgp";
-        signer = gpg;
+      # ed25519: GnuPG 2.4 makes it a v4 key, which GitHub and Forgejo both read
+      systemd.services."${name}-gpg-key" = {
+        wantedBy = [ "multi-user.target" ];
+        # its user manager holds the account's gpg-agent socket; a gpg run before that starts its own agent, which exits 2
+        wants = [ userManager ];
+        after = [ userManager ];
+        # not RemainAfterExit, so the keyboxd its gpg starts ends with it
+        serviceConfig = {
+          Type = "oneshot";
+          User = name;
+        };
+        # its journal ends with the public half, for adding it where the agent pushes
+        script = ''
+          set -o pipefail
+          ${gpg} --batch --list-secret-keys ${email} >/dev/null 2>&1 ||
+            ${gpg} --batch --pinentry-mode loopback --passphrase "" --quick-gen-key "${identity.name} <${email}>" ed25519 sign never
+          # git and jj name the key by its email, and the account holds no key but that one
+          keys=$(${gpg} --batch --with-colons --list-secret-keys | grep -c '^sec:')
+          [ "$keys" = 1 ] || { echo "$keys secret keys, not ${email}'s alone; ${adopt} leaves one" >&2; exit 1; }
+          # the journal drops empty lines, and a whitespace line still ends the armor's headers
+          ${gpg} --batch --armor --export ${email} | sed 's/^$/ /'
+        '';
       };
-    };
-    programs.jujutsu = {
-      enable = true;
-      settings = {
-        user = identity;
-        signing = {
-          behavior = "own";
-          backend = "gpg";
-          key = email;
-          backends.gpg.program = gpg;
+
+      home-manager.users.${name} = {
+        programs.git = {
+          enable = true;
+          settings.user = identity;
+          signing = {
+            key = email;
+            signByDefault = true;
+            format = "openpgp";
+            signer = gpg;
+          };
+        };
+        programs.jujutsu = {
+          enable = true;
+          settings = {
+            user = identity;
+            signing = {
+              behavior = "own";
+              backend = "gpg";
+              key = email;
+              backends.gpg.program = gpg;
+            };
+          };
         };
       };
     };
-  };
+in
+{
+  config = lib.mkMerge (map account (builtins.attrValues (import ./accounts.nix)));
 }

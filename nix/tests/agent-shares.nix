@@ -1,6 +1,6 @@
-{ pkgs }:
+{ pkgs, name }:
 let
-  shared = import ./agent-node.nix { inherit pkgs; };
+  shared = import ./agent-node.nix { inherit pkgs name; };
   inherit (shared) uid;
   checkout = "/home/ironmoon/workspace/redox";
   memory = "/home/ironmoon/.claude/projects/-home-ironmoon-workspace-redox/memory";
@@ -18,7 +18,7 @@ let
   '';
 in
 pkgs.testers.runNixOSTest {
-  name = "agent-shares";
+  name = "${name}-shares";
 
   nodes.desktop =
     { config, ... }:
@@ -49,7 +49,7 @@ pkgs.testers.runNixOSTest {
             assert show("ConditionTimestampMonotonic") != "0" and show("ConditionResult") == "no", unit
         desktop.fail("test -e /home/ironmoon/workspace || test -e /home/ironmoon/.claude")
 
-    with subtest("he binds his checkout and memory dir under ${top}, which only root and the account traverse"):
+    with subtest("he binds his checkout and memory dir under ${top}, which only root and the accounts traverse"):
         done(asHim(
             "mkdir -p ${lane}/rec ${checkout}/.jj ${checkout}/.git ${memory}"
             " && echo top > ${checkout}/README && echo lane > ${lane}/notes.md && echo voice > ${lane}/rec/a.txt"
@@ -57,7 +57,7 @@ pkgs.testers.runNixOSTest {
             " && echo mem > ${memory}/MEMORY.md && ${acls}"
         ))
         desktop.succeed("systemctl start " + shlex.join(mounts))
-        assert desktop.succeed("stat -c '%U %G %a' ${top}").strip() == "root agent 710"
+        assert desktop.succeed("stat -c '%U %G %a' ${top}").strip() == "root shr 710"
         for path in ["${share}", "${shareMemory}"]:
             assert desktop.succeed(f"stat -c %U {path}").strip() == "ironmoon", path
 
@@ -100,7 +100,7 @@ pkgs.testers.runNixOSTest {
         booted(desktop)
         for unit in mounts:
             desktop.wait_for_unit(unit)
-        assert desktop.succeed("stat -c '%U %G %a' ${top}").strip() == "root agent 710"
+        assert desktop.succeed("stat -c '%U %G %a' ${top}").strip() == "root shr 710"
         assert desktop.succeed(asAgent("cat ${shareMemory}/new.md")).strip() == "a\nb"
         refused(asAgent("cat ${share}/.jj/x"), "Permission denied")
         refused(asEve("ls ${top}"), "Permission denied")

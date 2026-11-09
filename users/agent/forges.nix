@@ -1,8 +1,7 @@
-# Its git pushes and fetches over https sign in to each forge as the agent's own account there, with the token he copies
-# into its secrets dir.
+# Each account's git pushes and fetches over https sign in to each forge as the agent's own account there, with the
+# token he copies into its secrets dir.
 { lib, pkgs, ... }:
 let
-  inherit (import ./account.nix) name secrets;
   forges = {
     "https://code.ironmoon.dev" = {
       username = "agent";
@@ -14,6 +13,7 @@ let
     };
   };
   helper =
+    secrets:
     { username, token }:
     pkgs.writeShellScript "git-credential-${token}" ''
       [ "$1" = get ] || exit 0
@@ -21,7 +21,9 @@ let
     '';
 in
 {
-  home-manager.users.${name}.programs.git.settings.credential = lib.mapAttrs (_: forge: {
-    helper = "${helper forge}";
-  }) forges;
+  home-manager.users = builtins.mapAttrs (_: account: {
+    programs.git.settings.credential = lib.mapAttrs (_: forge: {
+      helper = "${helper account.secrets forge}";
+    }) forges;
+  }) (import ./accounts.nix);
 }

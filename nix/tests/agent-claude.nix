@@ -1,8 +1,9 @@
-{ pkgs }:
+{ pkgs, name }:
 let
-  shared = import ./agent-node.nix { inherit pkgs; };
+  shared = import ./agent-node.nix { inherit pkgs name; };
   inherit (shared)
     account
+    others
     uid
     connect
     listen
@@ -43,7 +44,7 @@ let
   token = value: land "pool-token" "umask 077 && echo ${value} >";
 in
 pkgs.testers.runNixOSTest {
-  name = "agent-claude";
+  name = "${name}-claude";
 
   nodes.desktop =
     { lib, ... }:
@@ -108,9 +109,10 @@ pkgs.testers.runNixOSTest {
         desktop.succeed(asAgent("cat /var/lib/${tapUser}/ca.pem"))
         refused(asAgent("cat /var/lib/${tapUser}/ca.key"), "Permission denied")
 
-    with subtest("only the account reaches its tap's port, and only he reads the tap"):
-        desktop.wait_until_succeeds(asAgent("python3 ${connect} 8891"))
-        refused("su ironmoon -c 'python3 ${connect} 8891'", "Connection refused")
+    with subtest("only the account reaches its tap's port, neither he nor another account, and only he reads the tap"):
+        desktop.wait_until_succeeds(asAgent("python3 ${connect} ${toString account.tapPort}"))
+        for other in ["ironmoon"] + ${builtins.toJSON (map (a: a.name) others)}:
+            refused(f"su {other} -c 'python3 ${connect} ${toString account.tapPort}'", "Connection refused")
         desktop.succeed("su ironmoon -c 'python3 ${connect} /run/${tapUser}/events.sock'")
         refused(asAgent("python3 ${connect} /run/${tapUser}/events.sock"), "Permission denied")
 

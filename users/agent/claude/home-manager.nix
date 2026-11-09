@@ -1,5 +1,6 @@
 # Its Claude Code settings are Owen's module as the agent's, and its sessions' supervisor is his unit, from the
 # claude-tap its profile holds.
+{ secrets, ... }:
 { config, ... }:
 let
   inherit (config.lib.file) mkOutOfStoreSymlink;
@@ -14,8 +15,7 @@ in
     account = "agent";
   };
   # the account's own secrets, where his sessions' habits and settings look for them
-  home.file.".claude/secrets".source =
-    mkOutOfStoreSymlink "${home}/${(import ../account.nix).secrets}";
+  home.file.".claude/secrets".source = mkOutOfStoreSymlink "${home}/${secrets}";
   xdg.configFile = {
     "systemd/user/claude-sessions.service".source = sessions;
     "systemd/user/default.target.wants/claude-sessions.service".source = sessions;

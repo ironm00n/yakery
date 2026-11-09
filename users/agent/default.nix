@@ -1,8 +1,6 @@
-# The account agents run as when Owen starts them there, whatever the tool; each tool is a layer of its own beside it.
+# The accounts agents run as when Owen starts them there (accounts.nix), whatever the tool; each tool is a layer of its
+# own beside them.
 { config, ... }:
-let
-  inherit (import ./account.nix) name;
-in
 {
   imports = [
     ./user.nix
@@ -13,5 +11,7 @@ in
     ./shares.nix
     ./claude
   ];
-  home-manager.users.${name}.home.stateVersion = config.system.stateVersion;
+  home-manager.users = builtins.mapAttrs (_: _: { home.stateVersion = config.system.stateVersion; }) (
+    import ./accounts.nix
+  );
 }
