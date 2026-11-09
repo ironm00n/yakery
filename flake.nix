@@ -371,12 +371,6 @@
       deployLib.deployChecks self.deploy
       // lib.optionalAttrs (system == "x86_64-linux") {
         oom = import ./nix/tests/oom.nix { pkgs = test-pkgs; };
-        agent-account = import ./nix/tests/agent-account.nix {
-          pkgs = test-pkgs;
-          inherit inputs my-lib;
-        };
-        agent-claude = import ./nix/tests/agent-claude.nix { pkgs = test-pkgs; };
-        agent-shares = import ./nix/tests/agent-shares.nix { pkgs = test-pkgs; };
         claude-identity = import ./nix/tests/claude-identity.nix {
           pkgs = pkgs-map.${system};
           home = self.nixosConfigurations.desktop.config.home-manager.users.ironmoon;
@@ -435,6 +429,23 @@
           inherit inputs my-lib;
         };
       }
+      # each account agents run as, checked whole
+      // lib.optionalAttrs (system == "x86_64-linux") (
+        lib.concatMapAttrs (name: _: {
+          "${name}-account" = import ./nix/tests/agent-account.nix {
+            pkgs = test-pkgs;
+            inherit inputs my-lib name;
+          };
+          "${name}-claude" = import ./nix/tests/agent-claude.nix {
+            pkgs = test-pkgs;
+            inherit name;
+          };
+          "${name}-shares" = import ./nix/tests/agent-shares.nix {
+            pkgs = test-pkgs;
+            inherit name;
+          };
+        }) (import ./users/agent/accounts.nix)
+      )
     ) inputs.deploy-rs.lib;
 
     homeConfigurations = eachSystem ({ system, pkgs }:

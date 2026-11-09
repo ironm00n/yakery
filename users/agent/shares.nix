@@ -1,5 +1,5 @@
-# His projects the account works in, each bound under `top` in his home's layout with its Claude memory dir, so no data
-# moves. `top` is root's, so the account owns no part of a mount path; what it may read or write inside is his ACLs'
+# His projects the accounts work in, each bound under `top` in his home's layout with its Claude memory dir, so no data
+# moves. `top` is root's, so no account owns any part of a mount path; what it may read or write inside is his ACLs'
 # call, never a rule here, since an owner change on a mount point would land on his tree.
 {
   config,
@@ -8,8 +8,9 @@
   ...
 }:
 let
-  inherit (import ./account.nix) name;
   top = "/shr";
+  # the accounts' own, to traverse `top`
+  group = baseNameOf top;
   # checkouts under his home
   projects = [ "workspace/redox" ];
   his = config.users.users.ironmoon.home;
@@ -36,7 +37,10 @@ let
     ];
   };
   binds = lib.concatMap (
-    project: lib.zipListsWith (where: dir: lib.nameValuePair where (bind dir)) (dirs top project) (dirs his project)
+    project:
+    lib.zipListsWith (where: dir: lib.nameValuePair where (bind dir)) (dirs top project) (
+      dirs his project
+    )
   ) projects;
 in
 {
@@ -57,6 +61,7 @@ in
         message = "users/agent/shares.nix: a share lies inside another, which would put its mount point in his tree";
       }
     ];
+    users.groups.${group}.members = builtins.attrNames (import ./accounts.nix);
     fileSystems = config.agent.shares;
     # systemd makes a missing bind source as root, which would put a root-owned dir in his home
     systemd.units = lib.mapAttrs' (
@@ -69,7 +74,7 @@ in
     # before systemd mounts anything, at boot and at each switch
     system.activationScripts.agent-shares = {
       deps = [ "users" ];
-      text = "install -d -m 0710 -o root -g ${name} ${top}";
+      text = "install -d -m 0710 -o root -g ${group} ${top}";
     };
   };
 }

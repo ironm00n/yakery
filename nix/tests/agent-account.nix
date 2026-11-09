@@ -2,10 +2,12 @@
   pkgs,
   inputs,
   my-lib,
+  name,
 }:
 let
-  shared = import ./agent-node.nix { inherit pkgs; };
+  shared = import ./agent-node.nix { inherit pkgs name; };
   inherit (shared)
+    accounts
     account
     uid
     connect
@@ -40,7 +42,7 @@ let
       home-manager = {
         useGlobalPkgs = true;
         useUserPackages = true;
-        users.${account.name}.home.stateVersion = config.system.stateVersion;
+        users = builtins.mapAttrs (_: _: { home.stateVersion = config.system.stateVersion; }) accounts;
       };
       programs.gnupg.agent.enable = true;
       environment.systemPackages = [
@@ -50,7 +52,7 @@ let
     };
 in
 pkgs.testers.runNixOSTest {
-  name = "agent-account";
+  name = "${name}-account";
   node.specialArgs = { inherit my-lib; };
 
   nodes.desktop = common;

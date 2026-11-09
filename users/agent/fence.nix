@@ -1,4 +1,4 @@
-# The loopback fence: each port listed for him answers his uid alone, and each listed for the account answers it alone.
+# The loopback fence: each port listed for him answers his uid alone, and each listed for an account answers it alone.
 {
   config,
   lib,
@@ -6,9 +6,8 @@
   ...
 }:
 let
-  inherit (import ./account.nix) name;
   cfg = config.agent.loopback;
-  table = "${name}-loopback";
+  table = "agent-loopback";
   only =
     uid: port:
     "ip daddr 127.0.0.1 tcp dport ${toString port} meta skuid != ${toString uid} reject with tcp reset";
@@ -16,7 +15,7 @@ let
     chain output {
       type filter hook output priority filter; policy accept;
       ${lib.concatStringsSep "\n  " (
-        map (only config.users.users.${name}.uid) cfg.own
+        lib.concatLists (lib.mapAttrsToList (name: map (only config.users.users.${name}.uid)) cfg.own)
         ++ map (only config.users.users.ironmoon.uid) cfg.his
       )}
     }
@@ -29,9 +28,9 @@ in
       description = "Loopback ports of his own services, which no other uid reaches.";
     };
     own = lib.mkOption {
-      type = with lib.types; listOf port;
-      default = [ ];
-      description = "Loopback ports of the account's own services, which no other uid reaches.";
+      type = with lib.types; attrsOf (listOf port);
+      default = { };
+      description = "Loopback ports of each account's own services, by its name, which no other uid reaches.";
     };
     unit = lib.mkOption {
       type = lib.types.str;
@@ -56,7 +55,7 @@ in
       content = fence;
     };
     systemd.services.${table} = lib.mkIf (!config.networking.nftables.enable) {
-      description = "his loopback services answer him alone, and the account's answer it alone";
+      description = "his loopback services answer him alone, and each account's answer it alone";
       wantedBy = [ "multi-user.target" ];
       before = [ "network-pre.target" ];
       serviceConfig = {

@@ -1,7 +1,10 @@
-# What the agent account's checks share: a host with the account on it beside his, and the test script's helpers.
-{ pkgs }:
+# What an agent account's checks share: a host with every account on it beside his, and the test script's helpers for
+# the one checked.
+{ pkgs, name }:
 rec {
-  account = import ../../users/agent/account.nix;
+  accounts = import ../../users/agent/accounts.nix;
+  account = accounts.${name};
+  others = builtins.attrValues (removeAttrs accounts [ name ]);
   uid = toString account.uid;
   # Holds the MiB it is given, every page touched: bytearray(n) alone gets lazy zero pages.
   hog = pkgs.writeText "hog.py" ''
