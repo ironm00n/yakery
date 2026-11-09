@@ -12,7 +12,7 @@ use private::{now, random::below};
 use text::Address;
 
 use crate::{
-    BACKOFF, RECHECK, STALE, SUBMISSION_KEY,
+    BACKOFF, RECHECK, REOPEN, STALE, SUBMISSION_KEY,
     address::{SessionId, Topic},
     authority::{self, Word},
     jmap::wire,
@@ -193,6 +193,12 @@ pub fn timeout(s: &str) -> Result<Duration> {
     Ok(Duration::from_secs(secs))
 }
 
+/// At least `least`, and up to `spread` more, drawn at random.
+fn jittered(least: Duration, spread: Duration) -> Duration {
+    let ms = spread.as_millis().max(1) as usize;
+    least + Duration::from_millis(below(ms).unwrap_or(0) as u64)
+}
+
 pub fn covers(topics: &[Address], threads: &HashSet<String>, m: &Addressed) -> bool {
     threads.contains(&m.thread) || names(topics, m.to.iter().chain(&m.cc))
 }
@@ -210,9 +216,11 @@ struct Watch<'a> {
     topics: Vec<Address>,
     starts: Vec<String>,
     deadline: Option<Instant>,
-    /// Kept with the topics alone: each scan reads every member of the watched threads, so a new one needs no full
-    /// check.
-    cursor: Cursor<Vec<Address>>,
+    /// Kept with the topics and threads it checked for: a whole check reads the watched threads' members, so a set
+    /// that changed starts over in full.
+    cursor: Cursor<(Vec<Address>, Vec<String>)>,
+    /// Each watched mail's thread, resolved once, since a mail never changes thread.
+    thread_of: HashMap<String, String>,
     lost: HashSet<String>,
     started: Instant,
     scanned: Option<Instant>,
@@ -280,17 +288,29 @@ impl Watch<'_> {
     }
 
     async fn threads(&mut self) -> Result<HashSet<String>> {
-        let mut current = vec![];
-        for (start, now) in self.starts.iter().zip(self.mail.currents(&self.starts).await?) {
+        let unresolved: Vec<String> = (self.starts.iter())
+            .filter(|s| !self.thread_of.contains_key(*s) && !self.lost.contains(*s))
+            .cloned()
+            .collect();
+        let mut current = HashMap::new();
+        for (start, now) in unresolved.iter().zip(self.mail.currents(&unresolved).await?) {
             match now {
-                Some(now) => current.push(now),
-                None if self.lost.insert(start.clone()) => {
+                Some(now) => {
+                    current.insert(now.as_str().to_owned(), start.clone());
+                }
+                None => {
+                    self.lost.insert(start.clone());
                     note!("{start} is gone; no longer watching its thread")
                 }
-                None => {}
             }
         }
-        Ok(self.mail.get::<Email>(&current).await?.into_iter().map(|m| m.thread).collect())
+        let ids: Vec<&String> = current.keys().collect();
+        for m in self.mail.get::<Addressed>(&ids).await? {
+            if let Some(start) = current.get(&m.id) {
+                self.thread_of.insert(start.clone(), m.thread);
+            }
+        }
+        Ok(self.starts.iter().filter_map(|s| self.thread_of.get(s).cloned()).collect())
     }
 
     async fn scan(&mut self) -> Result<Scan> {
@@ -298,22 +318,26 @@ impl Watch<'_> {
         let threads = self.threads().await?;
         let (mut cursor, this) = (self.cursor.clone(), &*self);
         let scan = cursor.check(
-            this.topics.clone(),
+            (this.topics.clone(), this.starts.clone()),
             async |since| this.mail.changes(since).await,
             async || this.everything().await,
-            async |ids| this.triage(&threads, ids).await,
+            async |ids, whole| this.triage(&threads, ids, whole).await,
         );
         let scan = scan.await;
         self.cursor = cursor;
         scan
     }
 
+    /// Only a whole check reads the watched threads' members: a reply after the cursor's state is among the changes.
     async fn triage(
         &self,
         threads: &HashSet<String>,
         mut ids: BTreeSet<String>,
+        whole: bool,
     ) -> Result<(Scan, BTreeSet<String>)> {
-        ids.extend(self.mail.members(&threads.iter().collect::<Vec<_>>()).await?);
+        if whole {
+            ids.extend(self.mail.members(&threads.iter().collect::<Vec<_>>()).await?);
+        }
         let (login, inbox) = (self.mail.login(), &self.inbox);
         let all: Vec<Addressed> = self.mail.get(&ids.into_iter().collect::<Vec<_>>()).await?;
         let watched = all
@@ -416,7 +440,7 @@ impl Watch<'_> {
     }
 
     async fn until_due(&mut self) -> Result<Option<(Vec<Email>, Ready)>> {
-        let mut backoff = BACKOFF;
+        let (mut backoff, mut reopen) = (BACKOFF, REOPEN);
         loop {
             let before = self.scanned;
             let e = match self.settle().await {
@@ -424,29 +448,36 @@ impl Watch<'_> {
                 Err(e) => e,
             };
             if self.scanned != before {
-                backoff = BACKOFF;
+                (backoff, reopen) = (BACKOFF, REOPEN);
             }
             let since = self.scanned.unwrap_or(self.started).elapsed();
             if since >= STALE {
                 return Err(e.context(format!("no scan finished in {}s", STALE.as_secs())));
             }
-            let sign_in = |why: String| (backoff, true, format!("{why}; signing in again"));
+            let sign_in = |why: String| {
+                (jittered(backoff, backoff), true, format!("{why}; signing in again"))
+            };
             let (pause, reconnect, why) = match Failure::of(&e) {
                 Failure::Idle => continue,
                 Failure::Config | Failure::PasswordRefused => return Err(e),
+                // Every wait on a host loses its stream when Stalwart restarts; drawn apart, their scans don't
+                // arrive together, and the spread doubles while the drops come in a row.
                 Failure::Dropped => {
-                    (Duration::from_secs(1), false, format!("{e:#}; reopening the push stream"))
+                    let pause = jittered(Duration::from_secs(1), reopen);
+                    reopen = (reopen * 2).min(STALE);
+                    (pause, false, format!("{e:#}; reopening the push stream"))
                 }
                 Failure::Busy(after) => {
                     let why = "stalwart stays over its request limit; checking again";
-                    (after.unwrap_or_default().max(Duration::from_secs(30)), false, why.into())
+                    let least = after.unwrap_or_default().max(Duration::from_secs(30));
+                    (jittered(least, REOPEN), false, why.into())
                 }
                 Failure::TokenRefused => sign_in("the access token expired".into()),
                 Failure::Unprocessed | Failure::Transient => sign_in(format!("{e:#}")),
             };
             // The last attempt comes at the bound, so an outage shorter than it is waited out.
             let pause = pause.min(STALE - since);
-            warn!("{why} in {}s", pause.as_secs());
+            warn!("{why} in {:.1}s", pause.as_secs_f64());
             if !self.pause(pause).await {
                 return match self.scanned {
                     Some(_) => Ok(None),
@@ -504,6 +535,7 @@ pub async fn watch(mail: &Mail, args: Args) -> Result<ExitCode> {
         cursor,
         topics: vec![],
         starts: vec![],
+        thread_of: HashMap::new(),
         lost: HashSet::new(),
         started: Instant::now(),
         scanned: None,

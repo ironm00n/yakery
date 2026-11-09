@@ -202,7 +202,7 @@ async fn check(
     full: &Cell<u32>,
 ) -> (bool, Vec<String>) {
     let head = changes.last().map_or("s0", |c| c.0);
-    let seen = RefCell::new(vec![]);
+    let (seen, counted) = (RefCell::new(vec![]), full.get());
     let changed = async |since: &str| {
         let after = changes
             .iter()
@@ -214,7 +214,12 @@ async fn check(
         full.set(full.get() + 1);
         Ok((vec!["old".to_owned()], "s0".to_owned()))
     };
-    let triage = async |ids: BTreeSet<String>| {
+    let triage = async |ids: BTreeSet<String>, whole: bool| {
+        assert_eq!(
+            whole,
+            full.get() > counted,
+            "triage is told a check is whole exactly when it reads everything"
+        );
         *seen.borrow_mut() = ids.into_iter().collect();
         Ok(((), due.context("the get failed")?.iter().map(|i| i.to_string()).collect()))
     };

@@ -118,6 +118,7 @@ let
     recheck = 45;
     backoff = 1;
     stale = 90;
+    reopen = 10;
   };
 
   agent-mail =

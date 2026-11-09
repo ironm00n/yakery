@@ -19,4 +19,5 @@
   AGENT_MAIL_RECHECK_SECS = toString periods.recheck;
   AGENT_MAIL_BACKOFF_SECS = toString periods.backoff;
   AGENT_MAIL_STALE_SECS = toString periods.stale;
+  AGENT_MAIL_REOPEN_SECS = toString periods.reopen;
 }

@@ -200,23 +200,24 @@ impl<W> Default for Cursor<W> {
 }
 
 impl<W: PartialEq> Cursor<W> {
+    /// `triage` is told whether this check is whole, which is when mail the cursor can't see changing must be read.
     pub async fn check<T>(
         &mut self,
         watched: W,
         changes: impl AsyncFn(&str) -> Result<Option<(Vec<String>, String)>>,
         everything: impl AsyncFn() -> Result<(Vec<String>, String)>,
-        triage: impl AsyncFnOnce(BTreeSet<String>) -> Result<(T, BTreeSet<String>)>,
+        triage: impl AsyncFnOnce(BTreeSet<String>, bool) -> Result<(T, BTreeSet<String>)>,
     ) -> Result<T> {
         let changed = match &self.since {
             Some((was, since)) if *was == watched => changes(since).await?,
             _ => None,
         };
-        let (ids, state) = match changed {
-            Some(changed) => changed,
-            None => everything().await?,
+        let ((ids, state), whole) = match changed {
+            Some(changed) => (changed, false),
+            None => (everything().await?, true),
         };
         let (found, pending) =
-            triage(ids.into_iter().chain(self.pending.iter().cloned()).collect()).await?;
+            triage(ids.into_iter().chain(self.pending.iter().cloned()).collect(), whole).await?;
         *self = Cursor { since: Some((watched, state)), pending };
         Ok(found)
     }

@@ -62,6 +62,7 @@ periods! {
     RECHECK = "AGENT_MAIL_RECHECK_SECS" | 150;
     BACKOFF = "AGENT_MAIL_BACKOFF_SECS" | 5;
     STALE = "AGENT_MAIL_STALE_SECS" | 300;
+    REOPEN = "AGENT_MAIL_REOPEN_SECS" | 30;
 }
 
 const _: () = assert!(

@@ -18,7 +18,7 @@ use tokio::time::Instant;
 
 use super::*;
 use crate::{
-    RECHECK,
+    BACKOFF, RECHECK, REOPEN,
     address::SessionId,
     auth::{Auth, Http},
     cmd::{read, wait},
@@ -824,8 +824,12 @@ async fn a_wait_signs_in_again_when_its_token_expires_and_then_claims() {
     let (_wire, server, mail) = mail(&dir, stalwart).await;
     assert_eq!(wait::watch(&mail.unwrap(), watching(600)).await.unwrap(), ExitCode::SUCCESS);
     let server = server.borrow();
-    let opened: Vec<u64> = server.opened.iter().map(|d| d.as_secs()).collect();
-    assert_eq!(opened, [0, 5], "the second stream opens after the 5 s pause");
+    let [first, second] = server.opened[..] else { panic!("{:?}", server.opened) };
+    assert_eq!(first, Duration::ZERO);
+    assert!(
+        (BACKOFF..BACKOFF * 2).contains(&second),
+        "the second stream opens after the 5 to 10 s pause: {second:?}"
+    );
     assert!(server.log.iter().any(|l| l.starts_with("POST /oauth/v2/token")));
     assert!(server.log.iter().any(|l| l == "POST /jmap/ Email/set @t2"));
     assert_eq!(server.emails[0]["keywords"]["$seen"], true);
@@ -994,12 +998,18 @@ async fn a_wait_reopens_an_idle_silent_or_dropped_stream_and_gives_up_at_its_dea
     let (_wire, server, mail) = mail(&dir, stalwart).await;
     assert_eq!(wait::watch(&mail.unwrap(), watching(400)).await.unwrap(), ExitCode::from(2));
     let server = server.borrow();
-    let opened: Vec<u64> = server.opened.iter().map(|d| d.as_secs()).collect();
-    assert_eq!(
-        opened,
-        [0, 150, 186, 187, 337],
-        "idle reopens at once; one silent past 35 s or closed, after 1 s; the last lasts to the deadline"
+    let opened = &server.opened;
+    let after = |i: usize| opened[i] - opened[i - 1];
+    let secs = Duration::from_secs;
+    let reopening = secs(1)..secs(1) + REOPEN;
+    assert_eq!(opened.len(), 5, "{opened:?}");
+    assert_eq!(after(1), secs(150), "idle reopens at once");
+    assert!(
+        reopening.contains(&(after(2) - secs(35))),
+        "one silent past 35 s, 1 to 31 s later: {opened:?}"
     );
+    assert!(reopening.contains(&after(3)), "one closed, 1 to 31 s later: {opened:?}");
+    assert_eq!(after(4), secs(150), "the last lasts to the deadline");
     let checks =
         server.log.iter().filter(|l| l.contains("Email/query") || l.contains("Email/changes"));
     assert_eq!(checks.count(), opened.len(), "one check per stream, so a ping wakes nothing");
@@ -1093,9 +1103,9 @@ async fn a_wait_fails_once_no_scan_has_finished_for_5_minutes_and_rides_out_a_sh
         "5 minutes after the scan at 150 s"
     );
     assert_eq!(
-        through_outage(vec![email("a1", json!({}))], 0..250, 3600).await,
+        through_outage(vec![email("a1", json!({}))], 0..300, 3600).await,
         (300, "delivered".into()),
-        "the retry due at 315 s comes at the bound instead"
+        "a retry due past 300 s comes at the bound instead"
     );
     assert_eq!(
         through_outage(vec![], 0..u64::MAX, 60).await,
