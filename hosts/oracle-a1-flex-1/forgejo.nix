@@ -30,8 +30,6 @@ let
   get-forgejo-secret = forgejo-secrets.get-path;
 in
 {
-  imports = [ ../../modules/forgejo-wake.nix ];
-
   # this host resolves names through public DNS, and cx33-1 serves IMAP only over NetBird
   networking.hosts = lib.genAttrs (my-lib.netbird.addresses "hetzner-cx33-1") (_: [ host ]);
 
@@ -227,23 +225,6 @@ in
   };
 
   systemd.services.forgejo.requires = [ "postgresql.target" ];
-
-  services.forgejo-wake = {
-    enable = true;
-    repository = "agents/work";
-    account = "agent";
-    # the issues Owen owns are dispatch's to follow
-    routes.owen = "dispatch";
-    fallback = "dispatch";
-    to = "${my-lib.ironmoon.mail.agents.sharedLocalPart}+{lane}@${my-lib.ironmoon.domain}";
-    smtp = {
-      host = conf.settings.mailer.SMTP_ADDR;
-      port = conf.settings.mailer.SMTP_PORT;
-      login = conf.settings.mailer.USER;
-      from = conf.settings.mailer.FROM;
-      passwordFile = get-forgejo-secret "smtp_password";
-    };
-  };
 
   bundles.reverse-proxy = {
     enable = true;

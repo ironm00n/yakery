@@ -705,30 +705,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
-name = "forgejo-wake"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "bytes",
- "clap",
- "http-body-util",
- "hyper",
- "hyper-util",
- "jiff",
- "private",
- "ring",
- "rustls",
- "rustls-platform-verifier",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rustls",
- "yakery-log",
- "yakery-serve",
-]
-
-[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

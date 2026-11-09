@@ -395,7 +395,6 @@
         };
         submission-signer = import ./nix/tests/submission-signer.nix { pkgs = test-pkgs; };
         forgejo-mail = import ./nix/tests/forgejo-mail.nix { pkgs = test-pkgs; };
-        forgejo-wake = import ./nix/tests/forgejo-wake.nix { pkgs = test-pkgs; };
         agent-inbound = import ./nix/tests/agent-inbound.nix { pkgs = test-pkgs; };
         stalwart-rate-limit = import ./nix/tests/stalwart-rate-limit.nix { pkgs = test-pkgs; };
         zitadel-mail = import ./nix/tests/zitadel-mail.nix { pkgs = test-pkgs; };
