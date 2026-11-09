@@ -7,7 +7,7 @@
   ...
 }:
 let
-  inherit (import ./account.nix) name uid;
+  inherit (import ./account.nix) name uid secrets;
   home = config.users.users.${name}.home;
 in
 {
@@ -62,6 +62,7 @@ in
     overrideStrategy = "asDropin";
     sliceConfig.MemoryMax = "16G";
   };
+  systemd.tmpfiles.rules = [ "d ${home}/${secrets} 0700 ${name} ${name} -" ];
   # made on the host it serves, so no other account's key is ever copied to it
   systemd.services."${name}-ssh-key" = {
     wantedBy = [ "multi-user.target" ];

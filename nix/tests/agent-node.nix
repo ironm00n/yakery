@@ -41,7 +41,7 @@ rec {
 
   python = ''
     import shlex
-    asAgent = lambda cmd: f"su ${account.name} -c 'XDG_RUNTIME_DIR=/run/user/${uid} {cmd}'"
+    asAgent = lambda cmd: "su ${account.name} -c " + shlex.quote(f"XDG_RUNTIME_DIR=/run/user/${uid} {cmd}")
     asHim = lambda cmd: "su ironmoon -c " + shlex.quote(cmd)
     sliceOoms = lambda: int(desktop.succeed("sed -n 's/^oom //p' /sys/fs/cgroup/user.slice/user-${uid}.slice/memory.events.local"))
 
