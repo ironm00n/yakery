@@ -1,0 +1,33 @@
+[package]
+name = "forgejo-wake"
+version = "0.1.0"
+description = "Forgejo's webhook for a repository's issue comments: a person's comment is mailed to the lane its issue's owner label names"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "forgejo-wake"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+bytes.workspace = true
+clap.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+jiff.workspace = true
+private.workspace = true
+ring.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
+tokio-rustls.workspace = true
+yakery-log.workspace = true
+yakery-serve.workspace = true
+
+[lints]
+workspace = true

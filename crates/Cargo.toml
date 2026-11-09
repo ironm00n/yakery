@@ -12,6 +12,7 @@ members = [
     "agent-slack",
     "submission-signature",
     "submission-signer",
+    "forgejo-wake",
     "invitation",
     "lib/text",
     "lib/private",
