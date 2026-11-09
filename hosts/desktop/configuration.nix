@@ -12,7 +12,7 @@
     ../common/interactive
     ./networking.nix
     ./agent-vm.nix
-    ../../users/claude-agent
+    ../../users/agent
   ];
 
   bundles = {
