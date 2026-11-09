@@ -1,9 +1,10 @@
 # oracle-a1-flex-1's Forgejo mailing through cx33-1's Stalwart and its program accounts: a mention
 # arrives From code@, sent signed in as forgejo@, and a reply to it becomes a comment by the user it
-# went to; the app password signs in from flex-1's public and overlay addresses; the submission
-# listener refuses mail before sign-in, the app password from another address, and a sender other
-# than the account's own addresses; mail to them is refused but at a subaddress of the alias; and an
-# address another account already holds makes applying the plan fail.
+# went to, while an automatic reply or one without a valid token is deleted and logged; the app
+# password signs in from flex-1's public and overlay addresses; the submission listener refuses
+# mail before sign-in, the app password from another address, and a sender other than the
+# account's own addresses; mail to them is refused but at a subaddress of the alias; and an address
+# another account already holds makes applying the plan fail.
 { pkgs }:
 let
   inherit (pkgs) lib;
@@ -218,7 +219,7 @@ pkgs.testers.runNixOSTest {
               print(out)
               assert (status != 0 and "550 5.1.1 mailbox unavailable" in out) == refused, out
 
-      with subtest("a reply to the mention becomes a comment by the user it went to, and no other mail to code@ does"):
+      with subtest("a reply to the mention becomes a comment by the user it went to; other mail to code@ is deleted and logged"):
           created = call(admin, admin_id, "x:AppPassword/set", {
               "accountId": account_ids["agent"],
               "create": {"r": {
@@ -229,21 +230,37 @@ pkgs.testers.runNixOSTest {
           })
           secret = created["created"]["r"]["secret"]
 
-          def reply(to, body):
+          def reply(to, body, headers=""):
               return server.execute(
                   f"swaks -s {public} -p 587 --tls"
                   f" -a PLAIN -au ${address "agent"} -ap {shlex.quote(secret)} -f ${address "agent"}"
-                  f" -t {to} --h-Subject 'Re: deploy it' --body {shlex.quote(body)} 2>&1"
+                  f" -t {to} --h-Subject 'Re: deploy it' {headers} --body {shlex.quote(body)} 2>&1"
               )
+
+          def replies_gone(_):
+              found = call(admin, account_ids["forgejo"], "Email/query", {})["ids"]
+              kept = call(admin, account_ids["forgejo"], "Email/get", {"ids": found, "properties": ["subject"]})["list"]
+              return all(m["subject"] != "Re: deploy it" for m in kept)
+
+          def dropped(to, body, headers, reason):
+              status, out = reply(to, body, headers)
+              print(out)
+              assert status == 0, out
+              line = forgejo.wait_until_succeeds(
+                  "journalctl -u forgejo.service -o cat | grep 'Dropping incoming email'"
+                  f" | grep -F {shlex.quote(reason)}",
+                  timeout=120,
+              )
+              for part in ["${address "agent"}", 'subject "Re: deploy it"']:
+                  assert part in line, line
+              retry(replies_gone, timeout_seconds=60)
 
           for to in ["${login}", "${sender}"]:
               status, out = reply(to, "to a bare address")
               print(out)
               assert status != 0 and "550 5.1.1 mailbox unavailable" in out, out
-          status, out = reply("code+garbage@${domain}", "with no token")
-          print(out)
-          assert status == 0, out
-          forgejo.wait_until_succeeds("journalctl -u forgejo.service -o cat | grep -q 'Invalid incoming email token'", timeout=120)
+          dropped("code+garbage@${domain}", "with no token", "", "invalid email token: unsupported token version")
+          dropped(reply_to, "out of office", "--h-Auto-Submitted auto-replied", "automatic reply")
           status, out = reply(reply_to, "on it")
           print(out)
           assert status == 0, out
@@ -252,6 +269,7 @@ pkgs.testers.runNixOSTest {
               return [c["body"].strip() for c in api(token, "/repos/owen/r/issues/1/comments") if c["user"]["login"] == "agent"]
           retry(commented, timeout_seconds=120)
           assert commented(None) == ["on it"], commented(None)
+          retry(replies_gone, timeout_seconds=60)
 
       with subtest("an address another account already holds makes applying the plan fail"):
           freed = call(admin, admin_id, "x:Account/set", {"update": {account_ids["forgejo"]: {"aliases": {}}}})

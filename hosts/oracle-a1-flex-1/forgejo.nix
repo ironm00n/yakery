@@ -37,6 +37,7 @@ in
 
   services.forgejo = {
     enable = true;
+    package = pkgs.callPackage ../../packages/forgejo { };
 
     lfs.enable = true;
     settings = {
