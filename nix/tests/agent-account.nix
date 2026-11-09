@@ -16,6 +16,8 @@ let
     hog
     ;
   names = map (a: a.name);
+  # the privileged account in the table, which places xb
+  placer = builtins.head (names (builtins.filter (a: a.privileged) (builtins.attrValues accounts)));
   # the accounts it may run as
   below = if account.privileged then names (builtins.filter (a: !a.privileged) others) else [ ];
   keys = import "${pkgs.path}/nixos/tests/ssh-keys.nix" pkgs;
@@ -151,12 +153,13 @@ pkgs.testers.runNixOSTest {
         expected = [desktop.succeed(f"id -u {name}").strip() for name in everyAccount]
         assert sorted(listed) == sorted(expected), (listed, expected)
 
-    with subtest("its sessions run whatever xb's deploy last put in place, and only he places it"):
-        desktop.succeed("[ \"$(stat -c '%U %a' /var/lib/xb)\" = 'ironmoon 755' ]")
-        refused(asAgent("mkdir /var/lib/xb/v0"), "Permission denied")
+    with subtest("its sessions run whatever the privileged account last put in place, and only it places it"):
+        desktop.succeed("[ \"$(stat -c '%U %a' /var/lib/xb)\" = '${placer} 755' ]")
+        for user in ["ironmoon"] + [name for name in everyAccount if name != "${placer}"]:
+            refused(f"su {user} -c 'mkdir /var/lib/xb/v0'", "Permission denied")
         session = lambda cmd: desktop.succeed(asAgent(f"systemd-run --user --wait --pipe --quiet sh -c {shlex.quote(cmd)}")).strip()
         for version in ("v1", "v2"):
-            desktop.succeed(asHim(f"install -D -m 755 /dev/stdin /var/lib/xb/{version}/bin/xb <<< 'echo {version}' && ln -sfn {version} /var/lib/xb/current"))
+            desktop.succeed("su ${placer} -c " + shlex.quote(f"install -D -m 755 /dev/stdin /var/lib/xb/{version}/bin/xb <<< 'echo {version}' && ln -sfn {version} /var/lib/xb/current"))
             assert (got := session("xb")) == version, got
         assert (got := session("~/.local/state/xb/current/bin/xb")) == "v2", got
 
