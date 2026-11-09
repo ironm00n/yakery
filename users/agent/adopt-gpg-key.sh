@@ -1,9 +1,9 @@
-# claude-agent-adopt-gpg-key HOMEDIR FINGERPRINT, run by him: copies the agent's secret key FINGERPRINT from his HOMEDIR
+# agent-adopt-gpg-key HOMEDIR FINGERPRINT, run by him: copies the agent's secret key FINGERPRINT from his HOMEDIR
 # into the agent account by a pipe, in place of every key the account holds. Every check but the last runs before
-# either keyring changes; restart claude-agent-gpg-key once it succeeds.
+# either keyring changes; restart agent-gpg-key once it succeeds.
 homedir=$1
 fpr=$2
-agent=(sudo -n -u claude-agent "$(command -v gpg)" --batch)
+agent=(sudo -n -u "$account" "$(command -v gpg)" --batch)
 die() {
   echo "$*" >&2
   exit 1

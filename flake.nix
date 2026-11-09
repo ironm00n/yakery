@@ -371,10 +371,11 @@
       deployLib.deployChecks self.deploy
       // lib.optionalAttrs (system == "x86_64-linux") {
         oom = import ./nix/tests/oom.nix { pkgs = test-pkgs; };
-        claude-agent = import ./nix/tests/claude-agent.nix {
+        agent-account = import ./nix/tests/agent-account.nix {
           pkgs = test-pkgs;
           inherit inputs my-lib;
         };
+        agent-claude = import ./nix/tests/agent-claude.nix { pkgs = test-pkgs; };
         claude-identity = import ./nix/tests/claude-identity.nix {
           pkgs = pkgs-map.${system};
           home = self.nixosConfigurations.desktop.config.home-manager.users.ironmoon;

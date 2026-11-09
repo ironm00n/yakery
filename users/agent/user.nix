@@ -1,5 +1,5 @@
-# The account Claude Code's background sessions run as when Owen starts them there (agents/work #66): no root, its own
-# ssh key and user manager, and memory caps none of its sessions can lift.
+# The account itself (agents/work #66): no root, its own ssh key and user manager, and a memory cap nothing it runs can
+# lift.
 {
   config,
   lib,
@@ -7,8 +7,7 @@
   ...
 }:
 let
-  name = "claude-agent";
-  uid = 1500;
+  inherit (import ./account.nix) name uid;
   home = config.users.users.${name}.home;
 in
 {
@@ -18,7 +17,7 @@ in
         assertion =
           !(lib.elem group config.users.users.${name}.extraGroups)
           && !(lib.elem name (config.users.groups.${group}.members or [ ]));
-        message = "users/claude-agent: ${name} is in ${group}, which is root by another name";
+        message = "users/agent: ${name} is in ${group}, which is root by another name";
       })
       [
         "wheel"
@@ -32,7 +31,7 @@ in
             "@${name}"
             "*"
           ]);
-        message = "users/claude-agent: ${name} is a nix trusted user, which is root by another name";
+        message = "users/agent: ${name} is a nix trusted user, which is root by another name";
       }
     ];
 
@@ -63,12 +62,6 @@ in
     overrideStrategy = "asDropin";
     sliceConfig.MemoryMax = "16G";
   };
-  # each session's own scope, which the sessions' spawn reads
-  systemd.services."user@${toString uid}" = {
-    overrideStrategy = "asDropin";
-    environment.CLAUDE_SESSION_MEMORY_MAX = "2G";
-  };
-
   # made on the host it serves, so no other account's key is ever copied to it
   systemd.services."${name}-ssh-key" = {
     wantedBy = [ "multi-user.target" ];
