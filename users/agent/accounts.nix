@@ -18,8 +18,7 @@ builtins.mapAttrs
       uid = 1500;
       tapPort = 8891;
     };
-    # TODO: the name is Owen's pick
-    agent-privileged = {
+    agent-priv = {
       uid = 1501;
       tapPort = 8892;
       privileged = true;
