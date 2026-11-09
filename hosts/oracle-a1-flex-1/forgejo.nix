@@ -30,6 +30,8 @@ let
   get-forgejo-secret = forgejo-secrets.get-path;
 in
 {
+  imports = [ ../../modules/forgejo.nix ];
+
   # this host resolves names through public DNS, and cx33-1 serves IMAP only over NetBird
   networking.hosts = lib.genAttrs (my-lib.netbird.addresses "hetzner-cx33-1") (_: [ host ]);
 
