@@ -519,7 +519,7 @@ impl Mail {
         let opened =
             tokio::time::timeout(TIMEOUT, self.conn.web.fetch(Method::GET, &url, &token, accept));
         let opened = opened.await.context("the push stream sent no response headers in time")??;
-        Ok(Pushes(opened, Frames::default()))
+        Ok(Pushes(opened, Frames::of(self.account(MAIL)?)))
     }
 }
 
@@ -567,14 +567,24 @@ fn patches(marks: &[Mark]) -> Map<String, Value> {
     marks.iter().map(|(id, set)| (id.0.clone(), Value::Object(patch(set)))).collect()
 }
 
-/// Server-sent events as they arrive; only a state change wakes, since Stalwart's pings carry data too.
-#[derive(Default)]
-pub struct Frames(Events);
+/// Server-sent events as they arrive. A state change wakes only if it is `account`'s, since the stream carries every
+/// account the login reaches; data that is neither a ping nor a state change wakes, as one this can't read may be.
+pub struct Frames {
+    events: Events,
+    account: String,
+}
 
 impl Frames {
+    pub fn of(account: &str) -> Frames {
+        Frames { events: Events::default(), account: account.to_owned() }
+    }
+
     pub fn wake(&mut self, chunk: &[u8]) -> bool {
-        let wakes = |e: &String| !matches!(Event::read(e), None | Some(Event::Ping));
-        self.0.push(chunk).iter().any(wakes)
+        self.events.push(chunk).iter().any(|e| match Event::read(e) {
+            None | Some(Event::Ping) => false,
+            Some(Event::Changed(change)) => change.changed.contains_key(&self.account),
+            Some(Event::Other) => true,
+        })
     }
 }
 

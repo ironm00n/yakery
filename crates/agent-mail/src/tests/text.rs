@@ -642,11 +642,13 @@ fn attachment_names_are_plain_ascii_that_cannot_leave_the_folder() {
 }
 
 #[test]
-fn only_state_events_wake_a_wait() {
+fn a_state_change_of_its_account_or_unread_data_wakes_a_wait() {
     rows!(|chunks: &[&str]| {
-        let mut frames = Frames::default();
+        let mut frames = Frames::of("a1");
         chunks.iter().map(|c| frames.wake(c.as_bytes())).collect::<Vec<_>>()
     };
+        &["event: state\ndata: {\"@type\":\"StateChange\",\"changed\":{\"a1\":{\"Email\":\"s2\"}}}\n\n"][..] => [true];
+        &["event: state\ndata: {\"@type\":\"StateChange\",\"changed\":{\"g7\":{\"Email\":\"s9\"}}}\n\n"][..] => [false];
         &["event: state\ndata: {\"@type\":\"StateChange\"}\n\n"][..] => [true];
         &["event: ping\ndata: {\"interval\": 30}\n\n"][..] => [false];
         &["event: state\r\ndata: {}\r\n", "\r\n"][..], &["data: {}\n", "\n"][..],
