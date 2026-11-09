@@ -93,25 +93,28 @@ in
       ];
       default = "owner";
       description = ''
-        Whose sessions these are: Owen's, with agent@'s mail login, the agent identity in his listed repos and
-        Syncthing's ignore list for ~/.claude; or the agent account's, the agent in every repo and none of those.
+        Whose sessions these are: Owen's, with the agent identity in his listed repos and Syncthing's ignore list for
+        ~/.claude; or the agent account's, the agent in every repo and no Syncthing.
       '';
     };
   };
 
   config = mkIf cfg.enable (mkMerge [
     (mkIf owner {
-      xdg.configFile."agent-mail/config.json".text = builtins.toJSON {
-        login = agentEmail;
-        password-file = "~/.claude/secrets/agent-ironmoon-dev-password";
-      };
       # a real file, not a link: Syncthing's docs don't say it follows a linked .stignore
       home.activation.stignore = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         run install -m 644 ${stignore} ${config.home.homeDirectory}/.claude/.stignore
       '';
     })
     {
-      home.packages = [ claude-code ] ++ lib.optional owner agent-mail;
+      home.packages = [
+        claude-code
+        agent-mail
+      ];
+      xdg.configFile."agent-mail/config.json".text = builtins.toJSON {
+        login = agentEmail;
+        password-file = "~/.claude/secrets/agent-ironmoon-dev-password";
+      };
 
       xdg.configFile."jj/conf.d/claude.toml".source = if owner then symlink ./jj.toml else jjEverywhere;
       # included only from Claude sessions, by settings.json's GIT_CONFIG_* env
