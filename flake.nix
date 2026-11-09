@@ -333,6 +333,8 @@
               scheduler-feeds = [ "calendar-feeds.service" ];
               # oomd kills it, and the test reads its Result
               oom-bundle = [ "swaphog.service" ];
+              # its last plan meets an address another account holds, and the test reads why it failed
+              forgejo-mail = [ "stalwart-apply-plan.service" ];
             };
           in
           pkgs

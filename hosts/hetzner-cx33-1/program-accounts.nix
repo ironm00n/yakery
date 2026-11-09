@@ -19,17 +19,20 @@ let
     "authenticate"
     "emailSend"
   ];
+  inherit (my-lib.ironmoon.mail) senders;
 in
 {
   bundles.stalwart.programAccounts = {
     forgejo = {
       permissions = sending;
       allowedIps = from "oracle-a1-flex-1";
+      aliases = [ senders.forgejo ];
       description = "Forgejo on oracle-a1-flex-1";
     };
     zitadel = {
       permissions = sending;
       allowedIps = from "hetzner-cx23-2";
+      aliases = [ senders.zitadel ];
       description = "ZITADEL on hetzner-cx23-2";
     };
   };

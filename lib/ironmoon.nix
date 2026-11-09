@@ -13,6 +13,11 @@ rec {
     };
     # the submission signer's public key, which agent-mail checks each Submission-Signature with
     submissionKey = "l9I3tCq1ru6k2Yb2/RfrnaxqdUmglcIeMW8vurYRRWQ";
+    # by program account, the alias of its own it mails from
+    senders = {
+      forgejo = "code";
+      zitadel = "auth";
+    };
     agents = {
       domain = "agent.${domain}";
       sharedLocalPart = "agent";

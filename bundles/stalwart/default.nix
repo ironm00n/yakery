@@ -137,7 +137,11 @@ let
   unreceivable =
     let
       unreceiving =
-        lib.attrNames (lib.filterAttrs (_: account: !account.receivesMail) cfg.programAccounts)
+        lib.concatLists (
+          lib.mapAttrsToList localPartsOf (
+            lib.filterAttrs (_: account: !account.receivesMail) cfg.programAccounts
+          )
+        )
         ++ cfg.groups;
     in
     ''
@@ -314,7 +318,17 @@ let
 
   # signed in to by a program
   programAccount =
-    name: permissions: roleless "User" permissions name // { encryptionAtRest."@type" = "Disabled"; };
+    name: account:
+    roleless "User" account.permissions name
+    // {
+      encryptionAtRest."@type" = "Disabled";
+      aliases = map (alias: {
+        enabled = true;
+        name = alias;
+        domainId = ref "ironmoon";
+      }) account.aliases;
+    };
+  localPartsOf = name: account: [ name ] ++ account.aliases;
 
   localOnly = {
     match = [ ];
@@ -502,6 +516,11 @@ in
               ];
               description = "Networks its app password may be used from.";
             };
+            aliases = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              description = "Other local parts at ${domain} the account sends from, and receives at as it does at its own.";
+            };
             receivesMail = lib.mkEnableOption "mail to the account, which is otherwise refused at RCPT";
             description = lib.mkOption {
               type = lib.types.str;
@@ -533,7 +552,7 @@ in
       {
         assertion =
           let
-            declared = lib.attrNames cfg.programAccounts ++ cfg.groups;
+            declared = lib.concatLists (lib.mapAttrsToList localPartsOf cfg.programAccounts) ++ cfg.groups;
           in
           lib.allUnique declared
           && lib.all (
@@ -550,7 +569,7 @@ in
               ++ cfg.sharedMailboxes
             )
           ) declared;
-        message = "bundles.stalwart.programAccounts and bundles.stalwart.groups must be local parts no other account at ${domain} has";
+        message = "bundles.stalwart.programAccounts, their aliases and bundles.stalwart.groups must be local parts no other account at ${domain} has";
       }
       {
         # the addresses agent-mail sends from
@@ -757,9 +776,7 @@ in
             lib.genAttrs ([ "postmaster" ] ++ cfg.sharedMailboxes) (roleless "Group" [ "emailReceive" ])
             // lib.genAttrs cfg.groups (roleless "Group" [ ])
           ))
-          (upsertOn "Account" [ "name" "domainId" ] (
-            lib.mapAttrs (name: account: programAccount name account.permissions) cfg.programAccounts
-          ))
+          (upsertOn "Account" [ "name" "domainId" ] (lib.mapAttrs programAccount cfg.programAccounts))
 
           (update "MtaOutboundStrategy" {
             route = if cfg.sending.enable then localThenMx else localOnly;

@@ -1,7 +1,8 @@
 # oracle-a1-flex-1's Forgejo mailing through cx33-1's Stalwart and its program accounts: a mention
-# arrives signed as forgejo@, the app password signs in from flex-1's public and overlay addresses,
-# and the submission listener refuses mail before sign-in, the app password from another address,
-# and a From other than the account's own.
+# arrives From code@, sent signed in as forgejo@; the app password signs in from flex-1's public and
+# overlay addresses; the submission listener refuses mail before sign-in, the app password from
+# another address, and a sender other than the account's own addresses; port 25 refuses mail to
+# them; and an address another account already holds makes applying the plan fail.
 { pkgs }:
 let
   inherit (pkgs) lib;
@@ -9,7 +10,8 @@ let
   inherit (stalwart) domain address;
   signer = pkgs.callPackage ../../crates/rust.nix { crate = "submission-signer"; };
   seed = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
-  sender = address "forgejo";
+  login = address "forgejo";
+  sender = address "code";
   passwordFile = "/run/forgejo-smtp-password";
   outsideIp = "192.168.1.250";
   inherit (stalwart.my-lib.netbird.peers) hetzner-cx33-1 oracle-a1-flex-1;
@@ -33,8 +35,12 @@ pkgs.testers.runNixOSTest {
         submission.enable = true;
         signSubmissions = true;
       };
+      bundles.stalwart.receiving.enable = true;
       sops.secrets.stalwart-submission_seed.text = seed;
-      environment.systemPackages = [ signer ];
+      environment.systemPackages = [
+        signer
+        pkgs.swaks
+      ];
     };
 
   nodes.forgejo =
@@ -66,7 +72,7 @@ pkgs.testers.runNixOSTest {
     { nodes, ... }:
     let
       inherit (nodes.forgejo.services.forgejo) package stateDir customDir;
-      appPassword = nodes.server.services.stalwart.appPasswords.${sender}.file;
+      appPassword = nodes.server.services.stalwart.appPasswords.${login}.file;
     in
     stalwart.python
     + ''
@@ -84,7 +90,7 @@ pkgs.testers.runNixOSTest {
               f" --data {shlex.quote(json.dumps(body))} http://127.0.0.1:3000/api/v1{path}"
           )
 
-      signed_in = "-a PLAIN -au ${sender} -ap \"$(cat ${passwordFile})\""
+      signed_in = "-a PLAIN -au ${login} -ap \"$(cat ${passwordFile})\""
 
       def swaks(args, tls=True, server="${stalwart.my-lib.ironmoon.mail.host}"):
           starttls = "--tls" if tls else ""
@@ -104,7 +110,7 @@ pkgs.testers.runNixOSTest {
           cli(f"admin user create --username {name} --email {name}@${domain} --random-password --must-change-password=false")
       token = cli("admin user generate-access-token --username owen --scopes all --raw").strip()
 
-      with subtest("a mention reaches the mentioned user's mailbox, signed as sent by forgejo@"):
+      with subtest("a mention reaches the mentioned user's mailbox, From code@ and signed as sent from it"):
           api(token, "/user/repos", {"name": "r"})
           api(token, "/repos/owen/r/issues", {"title": "deploy it", "body": "@agent can you look"})
           agent = sign_in(["agent"])["agent"]
@@ -172,12 +178,48 @@ pkgs.testers.runNixOSTest {
               timeout=30,
           )
 
-      with subtest("the account sends only as itself"):
-          status, out = swaks(f"{signed_in} -f ${address "owen"}")
-          print(out)
-          assert status != 0 and "501 5.5.4 You are not allowed to send from this address" in out, out
+      with subtest("the account sends only from its own addresses, not a user's or another account's alias"):
+          for other in ["${address "owen"}", "${address "auth"}"]:
+              status, out = swaks(f"{signed_in} -f {other}")
+              print(out)
+              assert status != 0 and "501 5.5.4 You are not allowed to send from this address" in out, out
           status, out = swaks(f"{signed_in} -f ${sender} --h-From ${address "owen"}")
           print(out)
           assert status != 0 and "550 5.7.1 From is not ${sender}, the address this account sends from" in out, out
+
+      with subtest("port 25 refuses mail to the account, at its name and at its alias"):
+          for to in ["${login}", "${sender}"]:
+              status, out = server.execute(
+                  f"swaks -s ${nodes.server.networking.primaryIPAddress} -p 25 --ehlo example.org -f someone@example.org -t {to} 2>&1"
+              )
+              print(out)
+              assert status != 0 and "550 5.1.1 mailbox unavailable" in out, out
+
+      with subtest("an address another account already holds makes applying the plan fail"):
+          freed = call(admin, admin_id, "x:Account/set", {"update": {account_ids["forgejo"]: {"aliases": {}}}})
+          assert account_ids["forgejo"] in freed.get("updated", {}), freed
+          domains = call(admin, admin_id, "x:Domain/get", {
+              "ids": call(admin, admin_id, "x:Domain/query", {})["ids"],
+              "properties": ["name"],
+          })["list"]
+          [domain_id] = [d["id"] for d in domains if d["name"] == "${domain}"]
+          taken = call(admin, admin_id, "x:Account/set", {"create": {"g": {
+              "@type": "Group",
+              "name": "code",
+              "domainId": domain_id,
+              "permissions": {"@type": "Merge", "enabledPermissions": {}},
+              "roles": {"@type": "Custom", "roleIds": {}},
+          }}})
+          assert "g" in taken.get("created", {}), taken
+          server.succeed("rm /var/lib/stalwart/.plan.ndjson", "systemctl restart stalwart.service")
+          server.wait_until_succeeds(
+              "state=$(systemctl show -P ActiveState stalwart-apply-plan.service);"
+              " [ $state = failed ] || { [ $state = inactive ] && test -L /var/lib/stalwart/.plan.ndjson; }",
+              timeout=600,
+          )
+          result = server.succeed("systemctl show -P Result stalwart-apply-plan.service").strip()
+          applied = server.succeed("journalctl -u stalwart-apply-plan.service -o cat | tail -n 20")
+          print(applied)
+          assert result == "exit-code" and "primaryKeyViolation" in applied and "Properties: email" in applied, result
     '';
 }

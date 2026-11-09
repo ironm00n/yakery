@@ -64,6 +64,7 @@ in
         SMTP_ADDR = my-lib.ironmoon.mail.host;
         SMTP_PORT = 587;
         USER = "forgejo@${my-lib.ironmoon.domain}";
+        FROM = "${my-lib.ironmoon.mail.senders.forgejo}@${my-lib.ironmoon.domain}";
       };
 
       admin = {

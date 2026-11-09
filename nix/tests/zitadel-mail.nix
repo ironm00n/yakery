@@ -1,5 +1,6 @@
-# hetzner-cx23-2's ZITADEL mailing through cx33-1's Stalwart as zitadel@, over IPv6 as a host off NetBird reaches
-# it: zitadel-mail keeps one active SMTP provider however often it runs, and the mail ZITADEL sends arrives signed.
+# hetzner-cx23-2's ZITADEL mailing through cx33-1's Stalwart, signed in as zitadel@ and sending from auth@, over
+# IPv6 as a host off NetBird reaches it: zitadel-mail keeps one active SMTP provider however often it runs, and the
+# mail ZITADEL sends arrives signed.
 { pkgs }:
 let
   inherit (pkgs) lib;
@@ -11,7 +12,8 @@ let
   inherit (stalwart) address;
   signer = pkgs.callPackage ../../crates/rust.nix { crate = "submission-signer"; };
   seed = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
-  sender = address "zitadel";
+  login = address "zitadel";
+  sender = address "auth";
   # each node holds the one IPv6 address its bundle binds, in the /64 both harnesses give their host
   ipv6 = address: {
     networking.interfaces.enp1s0.ipv6.addresses = lib.mkForce [
@@ -73,7 +75,7 @@ pkgs.testers.runNixOSTest {
   testScript =
     { nodes, ... }:
     let
-      appPassword = nodes.server.services.stalwart.appPasswords.${sender}.file;
+      appPassword = nodes.server.services.stalwart.appPasswords.${login}.file;
       port = toString nodes.zitadel.services.zitadel.settings.Port;
     in
     stalwart.python
@@ -103,10 +105,10 @@ pkgs.testers.runNixOSTest {
           [provider] = ours()
           assert provider["state"] == "EMAIL_PROVIDER_ACTIVE", provider
           smtp = provider["smtp"]
-          want = {"senderAddress": "${sender}", "user": "${sender}", "host": "${stalwart.my-lib.ironmoon.mail.host}:587", "tls": True}
+          want = {"senderAddress": "${sender}", "user": "${login}", "host": "${stalwart.my-lib.ironmoon.mail.host}:587", "tls": True}
           assert {k: smtp.get(k) for k in want} == want, smtp
 
-      with subtest("the verification code ZITADEL mails a new user arrives over IPv6, signed as sent by zitadel@"):
+      with subtest("the verification code ZITADEL mails a new user arrives over IPv6, From auth@ and signed as sent from it"):
           api("POST", "/v2/users/human", pat, {
               "username": "mail-probe",
               "profile": {"givenName": "Mail", "familyName": "Probe"},
@@ -118,7 +120,8 @@ pkgs.testers.runNixOSTest {
               ids[:] = call(agent, account_ids["agent"], "Email/query", {"filter": {"from": "${sender}"}})["ids"]
               return bool(ids)
           retry(arrived, timeout_seconds=300)
-          mail = call(agent, account_ids["agent"], "Email/get", {"ids": ids, "properties": ["blobId"]})["list"]
+          mail = call(agent, account_ids["agent"], "Email/get", {"ids": ids, "properties": ["from", "blobId"]})["list"]
+          assert [[a["email"] for a in m["from"]] for m in mail] == [["${sender}"]], mail
           server.succeed(
               f"curl -sf -o /tmp/test.eml -H {shlex.quote('Authorization: ' + agent)}"
               f" {origin(server)}/jmap/download/{account_ids['agent']}/{mail[0]['blobId']}/m.eml"

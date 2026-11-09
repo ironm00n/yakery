@@ -36,7 +36,7 @@ let
 
   # the provider this host keeps, found again by its description
   mailProvider = {
-    senderAddress = "zitadel@${my-lib.ironmoon.domain}";
+    senderAddress = "${my-lib.ironmoon.mail.senders.zitadel}@${my-lib.ironmoon.domain}";
     senderName = "ZITADEL";
     user = "zitadel@${my-lib.ironmoon.domain}";
     # ZITADEL tries implicit TLS and falls back to STARTTLS; false would sign in in the clear
