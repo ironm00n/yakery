@@ -10,6 +10,9 @@ let
   dbPort = 5432;
   clientId = "371976088601034753";
   conf = config.services.forgejo;
+  inherit (my-lib.ironmoon) domain;
+  inherit (my-lib.ironmoon.mail) host senders;
+  login = "forgejo@${domain}";
 
   forgejo-secrets =
     my-lib.sops.mkSecrets
@@ -61,10 +64,18 @@ in
       mailer = {
         ENABLED = true;
         PROTOCOL = "smtp+starttls";
-        SMTP_ADDR = my-lib.ironmoon.mail.host;
+        SMTP_ADDR = host;
         SMTP_PORT = 587;
-        USER = "forgejo@${my-lib.ironmoon.domain}";
-        FROM = "${my-lib.ironmoon.mail.senders.forgejo}@${my-lib.ironmoon.domain}";
+        USER = login;
+        FROM = "${senders.forgejo}@${domain}";
+      };
+
+      "email.incoming" = {
+        ENABLED = true;
+        REPLY_TO_ADDRESS = "${senders.forgejo}+%{token}@${domain}";
+        HOST = host;
+        USE_TLS = true;
+        USERNAME = login;
       };
 
       admin = {
@@ -96,7 +107,10 @@ in
       };
     };
 
-    secrets.mailer.PASSWD = get-forgejo-secret "smtp_password";
+    secrets = {
+      mailer.PASSWD = get-forgejo-secret "smtp_password";
+      "email.incoming".PASSWORD = get-forgejo-secret "smtp_password";
+    };
 
     database = {
       createDatabase = false;

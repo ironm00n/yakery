@@ -1,8 +1,9 @@
 # oracle-a1-flex-1's Forgejo mailing through cx33-1's Stalwart and its program accounts: a mention
-# arrives From code@, sent signed in as forgejo@; the app password signs in from flex-1's public and
-# overlay addresses; the submission listener refuses mail before sign-in, the app password from
-# another address, and a sender other than the account's own addresses; port 25 refuses mail to
-# them; and an address another account already holds makes applying the plan fail.
+# arrives From code@, sent signed in as forgejo@, and a reply to it becomes a comment by the user it
+# went to; the app password signs in from flex-1's public and overlay addresses; the submission
+# listener refuses mail before sign-in, the app password from another address, and a sender other
+# than the account's own addresses; mail to them is refused but at a subaddress of the alias; and an
+# address another account already holds makes applying the plan fail.
 { pkgs }:
 let
   inherit (pkgs) lib;
@@ -15,6 +16,21 @@ let
   passwordFile = "/run/forgejo-smtp-password";
   outsideIp = "192.168.1.250";
   inherit (stalwart.my-lib.netbird.peers) hetzner-cx33-1 oracle-a1-flex-1;
+  # both hosts are NetBird peers, on the test network as on nb-netbird, from boot
+  overlay = peer: {
+    ipv4.addresses = lib.mkAfter [
+      {
+        address = peer.v4;
+        prefixLength = 16;
+      }
+    ];
+    ipv6.addresses = lib.mkAfter [
+      {
+        address = peer.v6;
+        prefixLength = 64;
+      }
+    ];
+  };
 in
 pkgs.testers.runNixOSTest {
   name = "forgejo-mail";
@@ -32,22 +48,23 @@ pkgs.testers.runNixOSTest {
         ../../hosts/hetzner-cx33-1/program-accounts.nix
       ];
       bundles.stalwart = {
+        receiving.enable = true;
         submission.enable = true;
+        imap.enable = true;
         signSubmissions = true;
       };
-      bundles.stalwart.receiving.enable = true;
       sops.secrets.stalwart-submission_seed.text = seed;
       environment.systemPackages = [
         signer
         pkgs.swaks
       ];
+      networking.interfaces.enp1s0 = overlay hetzner-cx33-1;
     };
 
   nodes.forgejo =
-    { lib, ... }:
+    { lib, nodes, ... }:
     {
       imports = [
-        stalwart.client
         stalwart.secretFiles
         ../../hosts/oracle-a1-flex-1/forgejo.nix
         ../../hosts/oracle-a1-flex-1/postgres.nix
@@ -58,6 +75,10 @@ pkgs.testers.runNixOSTest {
         inputs.secrets.lib.forgejo = null;
       };
       virtualisation.memorySize = 2048;
+      security.pki.certificateFiles = nodes.server.security.pki.certificateFiles;
+      networking.interfaces.eth1 = overlay oracle-a1-flex-1;
+      # as NetBird's DNS answers peers
+      networking.hosts.${hetzner-cx33-1.v4} = [ stalwart.my-lib.ironmoon.mail.host ];
 
       # the app password exists only once the server has applied its plan
       sops.secrets.forgejo-smtp_password.path = passwordFile;
@@ -84,13 +105,14 @@ pkgs.testers.runNixOSTest {
               f" --config ${customDir}/conf/app.ini {args}"
           )
 
-      def api(token, path, body):
-          forgejo.succeed(
-              f"curl -sf -H {shlex.quote('Authorization: token ' + token)} -H 'Content-Type: application/json'"
-              f" --data {shlex.quote(json.dumps(body))} http://127.0.0.1:3000/api/v1{path}"
-          )
+      def api(token, path, body=None):
+          data = f" -H 'Content-Type: application/json' --data {shlex.quote(json.dumps(body))}" if body else ""
+          return json.loads(forgejo.succeed(
+              f"curl -sf -H {shlex.quote('Authorization: token ' + token)}{data} http://127.0.0.1:3000/api/v1{path}"
+          ))
 
       signed_in = "-a PLAIN -au ${login} -ap \"$(cat ${passwordFile})\""
+      public, flex1 = "${nodes.server.networking.primaryIPAddress}", "${nodes.forgejo.networking.primaryIPAddress}"
 
       def swaks(args, tls=True, server="${stalwart.my-lib.ironmoon.mail.host}"):
           starttls = "--tls" if tls else ""
@@ -121,8 +143,10 @@ pkgs.testers.runNixOSTest {
               return bool(ids)
           retry(arrived, timeout_seconds=600)
           mail = call(agent, account_ids["agent"], "Email/get",
-                      {"ids": ids, "properties": ["from", "blobId"]})["list"]
+                      {"ids": ids, "properties": ["from", "replyTo", "blobId"]})["list"]
           assert [[a["email"] for a in m["from"]] for m in mail] == [["${sender}"]], mail
+          [[reply_to]] = [[a["email"] for a in m["replyTo"]] for m in mail]
+          assert reply_to.startswith("code+") and reply_to.endswith("@${domain}"), reply_to
           server.succeed(
               f"curl -sf -o /tmp/mention.eml -H {shlex.quote('Authorization: ' + agent)}"
               f" {origin(server)}/jmap/download/{account_ids['agent']}/{mail[0]['blobId']}/m.eml"
@@ -148,19 +172,11 @@ pkgs.testers.runNixOSTest {
               assert status != 0 and "503 5.5.1 You must authenticate first" in out, out
 
       with subtest("the app password signs in from flex-1's public address"):
-          status, out = swaks(f"{signed_in} -f ${sender}")
+          status, out = swaks(f"{signed_in} -li {flex1} -f ${sender}", server=public)
           print(out)
           assert status == 0, out
 
       with subtest("the app password signs in over NetBird, from each of flex-1's overlay addresses"):
-          server.succeed(
-              "ip addr add ${hetzner-cx33-1.v4}/16 dev enp1s0",
-              "ip -6 addr add ${hetzner-cx33-1.v6}/64 dev enp1s0 nodad",
-          )
-          forgejo.succeed(
-              "ip addr add ${oracle-a1-flex-1.v4}/16 dev eth1",
-              "ip -6 addr add ${oracle-a1-flex-1.v6}/64 dev eth1 nodad",
-          )
           for there, here in [("${hetzner-cx33-1.v4}", "${oracle-a1-flex-1.v4}"),
                               ("${hetzner-cx33-1.v6}", "${oracle-a1-flex-1.v6}")]:
               status, out = swaks(f"{signed_in} -li {here} -f ${sender}", server=there)
@@ -169,7 +185,7 @@ pkgs.testers.runNixOSTest {
 
       with subtest("the app password is refused from any other address"):
           forgejo.succeed("ip addr add ${outsideIp}/24 dev eth1")
-          status, out = swaks(f"{signed_in} -li ${outsideIp} -f ${sender}")
+          status, out = swaks(f"{signed_in} -li ${outsideIp} -f ${sender}", server=public)
           print(out)
           assert status != 0 and "235 " not in out, out
           server.wait_until_succeeds(
@@ -187,13 +203,49 @@ pkgs.testers.runNixOSTest {
           print(out)
           assert status != 0 and "550 5.7.1 From is not ${sender}, the address this account sends from" in out, out
 
-      with subtest("port 25 refuses mail to the account, at its name and at its alias"):
-          for to in ["${login}", "${sender}"]:
+      with subtest("port 25 refuses mail to the account at its name and its alias, and takes it at a subaddress of the alias"):
+          for to, refused in [("${login}", True), ("${sender}", True), ("code+x@${domain}", False)]:
               status, out = server.execute(
-                  f"swaks -s ${nodes.server.networking.primaryIPAddress} -p 25 --ehlo example.org -f someone@example.org -t {to} 2>&1"
+                  f"swaks -s {public} -p 25 --ehlo example.org -f someone@example.org"
+                  f" -t {to} --quit-after RCPT 2>&1"
               )
               print(out)
+              assert (status != 0 and "550 5.1.1 mailbox unavailable" in out) == refused, out
+
+      with subtest("a reply to the mention becomes a comment by the user it went to, and no other mail to code@ does"):
+          created = call(admin, admin_id, "x:AppPassword/set", {
+              "accountId": account_ids["agent"],
+              "create": {"r": {
+                  "description": "replies",
+                  "allowedIps": {f"{public}/32": True},
+                  "permissions": {"@type": "Inherit"},
+              }},
+          })
+          secret = created["created"]["r"]["secret"]
+
+          def reply(to, body):
+              return server.execute(
+                  f"swaks -s {public} -p 587 --tls"
+                  f" -a PLAIN -au ${address "agent"} -ap {shlex.quote(secret)} -f ${address "agent"}"
+                  f" -t {to} --h-Subject 'Re: deploy it' --body {shlex.quote(body)} 2>&1"
+              )
+
+          for to in ["${login}", "${sender}"]:
+              status, out = reply(to, "to a bare address")
+              print(out)
               assert status != 0 and "550 5.1.1 mailbox unavailable" in out, out
+          status, out = reply("code+garbage@${domain}", "with no token")
+          print(out)
+          assert status == 0, out
+          forgejo.wait_until_succeeds("journalctl -u forgejo.service -o cat | grep -q 'Invalid incoming email token'", timeout=120)
+          status, out = reply(reply_to, "on it")
+          print(out)
+          assert status == 0, out
+
+          def commented(_):
+              return [c["body"].strip() for c in api(token, "/repos/owen/r/issues/1/comments") if c["user"]["login"] == "agent"]
+          retry(commented, timeout_seconds=120)
+          assert commented(None) == ["on it"], commented(None)
 
       with subtest("an address another account already holds makes applying the plan fail"):
           freed = call(admin, admin_id, "x:Account/set", {"update": {account_ids["forgejo"]: {"aliases": {}}}})
