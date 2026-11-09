@@ -45,6 +45,9 @@ in
     "@wheel"
   ];
 
+  nix.daemonCPUSchedPolicy = "idle";
+  nix.daemonIOSchedClass = "idle";
+
   # use latest kernel
   boot.kernelPackages = mkDefault pkgs.linuxPackages_latest;
 
