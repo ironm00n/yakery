@@ -562,7 +562,7 @@ let
         time.sleep(quiet_for)
         quiet = server.succeed(f"tail -n +{before + 1} /var/log/nginx/access.log | grep -c '^{address} .*POST /jmap/' || true")
         assert quiet.strip() == "0", quiet
-        host2.wait_until_succeeds(f"grep -q 'the access token expired; signing in again in {periods['backoff']}s' /tmp/expiring.err", timeout=60)
+        host2.wait_until_succeeds("grep -qE 'the access token expired; signing in again in [0-9.]+s' /tmp/expiring.err", timeout=60)
         host2.wait_until_succeeds("grep -q 'signed in again; waiting' /tmp/expiring.err", timeout=60)
         host1.succeed(f"echo after the refresh | {owner} send --to agent+expiring@${domain} --subject expiring")
         host2.wait_until_succeeds("grep -q 'after the refresh' /tmp/expiring.out", timeout=120)
@@ -575,6 +575,61 @@ let
             f" -p StandardError=file:/tmp/{unit}.err sh -c 'agent-mail wait --topic {unit} --timeout {timeout}; echo $? > /tmp/{unit}.status'"
         )
         host1.wait_until_succeeds(f"grep -q 'waiting for' /tmp/{unit}.err", timeout=30)
+
+    # waits as agent on host2, each on a topic of its own and the threads of six mails, as a session watching what it
+    # sent waits; their mail comes from host1, so host2's requests in nginx's log are the waits' alone
+    host2_address = host2.succeed("ip -4 -o addr show eth1 | awk '{print $4}' | cut -d/ -f1").strip()
+
+    def requests_since(line):
+        posts = f"tail -n +{line + 1} /var/log/nginx/access.log | grep -c '^{host2_address} .*POST /jmap/' || true"
+        return int(server.succeed(posts))
+
+    with subtest("for the next two: six waits on host2, each watching six threads"):
+        for n in range(6):
+            host1.succeed(f"echo {n} | {owner} send --to agent+starts@${domain} --subject start-{n}")
+        starts = []
+
+        def collected(_):
+            out = host2.succeed(f"{agent} wait --topic starts --timeout 20s; true")
+            starts.extend(re.findall(r"^=== (\S+) ", out, re.M))
+            return len(starts) >= 6
+
+        retry(collected, timeout_seconds=120)
+        threads = " ".join(f"--thread {start}" for start in starts)
+        for k in range(6):
+            host2.succeed(
+                f"systemd-run --uid=agent -E PATH=/run/current-system/sw/bin --unit=load-{k}"
+                f" -p StandardError=file:/tmp/load-{k}.err agent-mail wait --topic load-{k} {threads} --timeout 15m"
+            )
+        for k in range(6):
+            host2.wait_until_succeeds(f"grep -q 'waiting for' /tmp/load-{k}.err", timeout=60)
+
+    with subtest("mail none of them watches costs each two requests a change, whatever threads it watches"):
+        time.sleep(5)
+        before = int(server.succeed("wc -l < /var/log/nginx/access.log"))
+        for n in range(3):
+            host1.succeed(f"echo {n} | {owner} send --to agent+nobody@${domain} --subject unwatched-{n}")
+            # past the waits' spread of up to 3 s after a push
+            time.sleep(8)
+        used = observe("requests for 3 unwatched mails across 6 waits", requests_since(before))
+        # two a wait, for each of at most two changes a delivery makes
+        expect("an unwatched change costs each wait at most two requests", used <= 6 * 3 * 2 * 2, used)
+
+    with subtest("after Stalwart restarts, the waits come back at times drawn apart"):
+        logged = {k: len(host2.succeed(f"cat /tmp/load-{k}.err")) for k in range(6)}
+        server.succeed("systemctl restart stalwart")
+        wait_for_stalwart()
+
+        def first_pause(k):
+            after = host2.succeed(f"cat /tmp/load-{k}.err")[logged[k]:]
+            found = re.search(r"(?:reopening the push stream|signing in again) in ([0-9.]+)s", after)
+            return found and found.group(1)
+
+        retry(lambda _: all(first_pause(k) for k in range(6)), timeout_seconds=120)
+        pauses = observe("each wait's first pause after the restart", [first_pause(k) for k in range(6)])
+        expect("the waits' first pauses differ", len(set(pauses)) > 1, pauses)
+        host2.succeed(*(f"systemctl stop load-{k}" for k in range(6)))
+        finish()
 
     with subtest("a wait rides out Stalwart restarting for a few seconds"):
         waiting("restarted", "10m")
