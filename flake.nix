@@ -376,6 +376,7 @@
           inherit inputs my-lib;
         };
         agent-claude = import ./nix/tests/agent-claude.nix { pkgs = test-pkgs; };
+        agent-shares = import ./nix/tests/agent-shares.nix { pkgs = test-pkgs; };
         claude-identity = import ./nix/tests/claude-identity.nix {
           pkgs = pkgs-map.${system};
           home = self.nixosConfigurations.desktop.config.home-manager.users.ironmoon;
