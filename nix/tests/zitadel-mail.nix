@@ -1,6 +1,6 @@
 # hetzner-cx23-2's ZITADEL mailing through cx33-1's Stalwart, signed in as zitadel@ and sending from auth@, over
-# IPv6 as a host off NetBird reaches it: zitadel-mail keeps one active SMTP provider however often it runs, and the
-# mail ZITADEL sends arrives signed.
+# IPv6 as a host off NetBird reaches it: zitadel-mail refuses an empty secret and keeps one active SMTP provider however
+# often it runs, and the mail ZITADEL sends arrives signed.
 { pkgs }:
 let
   inherit (pkgs) lib;
@@ -89,15 +89,33 @@ pkgs.testers.runNixOSTest {
       wait_for_stalwart()
       zitadel.wait_until_succeeds("curl -fsS http://127.0.0.1:${port}/debug/ready", timeout=600)
       pat = admin_pat()
-      password = server.succeed("cat ${appPassword}").strip()
-      zitadel.succeed(
-          f"(umask 077 && echo {shlex.quote(password)} > ${zitadel.secretsDir}/zitadel-smtp_password"
-          f" && echo {shlex.quote(pat)} > ${zitadel.secretsDir}/zitadel-api_token)"
-      )
+      secrets = {"api_token": pat, "smtp_password": server.succeed("cat ${appPassword}").strip()}
+
+      def store(name, value):
+          zitadel.succeed(f"(umask 077 && printf %s {shlex.quote(value)} > ${zitadel.secretsDir}/zitadel-{name})")
 
       def ours():
           found = api("POST", "/admin/v1/email/_search", pat, {}).get("result", [])
           return [p for p in found if p.get("description") == "Stalwart, as kept by bundles.zitadel.mail"]
+
+      def email_calls():
+          return zitadel.succeed("journalctl -u zitadel.service -o cat | grep -o 'path=/email/[^ ]* status=[0-9]*' || true").splitlines()
+
+      for name, value in secrets.items():
+          store(name, value)
+
+      with subtest("zitadel-mail refuses an empty secret before calling ZITADEL, naming its file"):
+          for name, value in secrets.items():
+              store(name, "")
+              before = len(email_calls())
+              zitadel.fail("systemctl start zitadel-mail.service")
+              # ZITADEL logs this call after any the unit made
+              ours()
+              retry(lambda _: len(email_calls()) > before, timeout_seconds=60)
+              assert email_calls()[before:] == ["path=/email/_search status=200"], email_calls()[before:]
+              zitadel.succeed(f"journalctl -u zitadel-mail.service -o cat | grep -Fx '${zitadel.secretsDir}/zitadel-{name} is empty'")
+              assert zitadel.succeed("systemctl show -P ActiveState zitadel-mail.service").strip() == "failed"
+              store(name, value)
 
       with subtest("zitadel-mail sets one active provider, and setting it again keeps one"):
           zitadel.succeed("systemctl start zitadel-mail.service")

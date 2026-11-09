@@ -44,6 +44,12 @@ let
     host = "${my-lib.ironmoon.mail.host}:587";
     description = "Stalwart, as kept by bundles.zitadel.mail";
   };
+  credentials = {
+    password = get-zitadel-secret "smtp_password";
+    token = get-zitadel-secret "api_token";
+  };
+  # EX_CONFIG, which no retry fixes: the deploy that fills the secret starts the unit again
+  emptySecret = 78;
   setMailProvider = pkgs.writeShellApplication {
     name = "zitadel-mail";
     runtimeInputs = [
@@ -51,6 +57,9 @@ let
       pkgs.jq
     ];
     text = ''
+      ${lib.concatMapAttrsStringSep "" (name: path: ''
+        [ -n "$(<"$CREDENTIALS_DIRECTORY/${name}")" ] || { echo ${lib.escapeShellArg "${path} is empty"} >&2; exit ${toString emptySecret}; }
+      '') credentials}
       # the token and the password reach neither argv nor the environment
       api() {
         curl --silent --show-error --fail-with-body --max-time 30 \
@@ -185,10 +194,8 @@ in
         DynamicUser = true;
         Restart = "on-failure";
         RestartSec = "10s";
-        LoadCredential = [
-          "password:${get-zitadel-secret "smtp_password"}"
-          "token:${get-zitadel-secret "api_token"}"
-        ];
+        RestartPreventExitStatus = emptySecret;
+        LoadCredential = lib.mapAttrsToList (name: path: "${name}:${path}") credentials;
         ExecStart = lib.getExe setMailProvider;
       };
     };
