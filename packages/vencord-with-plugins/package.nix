@@ -3,7 +3,12 @@
   userPlugins ? [ ],
 }:
 let
-  inherit (pkgs.lib) toList escapeShellArg;
+  inherit (pkgs.lib)
+    toList
+    escapeShellArg
+    versionOlder
+    warnIfNot
+    ;
   resolvedPlugins =
     (toList userPlugins)
     |> map (
@@ -16,8 +21,26 @@ let
         inherit path name;
       }
     );
+  vencord = pkgs.vencord.overrideAttrs (
+    old:
+    let
+      version = "1.15.16";
+    in
+    warnIfNot (versionOlder old.version version)
+      "vencord-with-plugins: nixpkgs has vencord ${old.version}, drop the ${version} bump"
+      {
+        inherit version;
+        src = old.src.override { hash = "sha256-aUJubLJpyLAZWiOezqFxPY6oVPgWVPQpajFqrJvrO9U="; };
+        # nixpkgs' fix-deps.patch and postPatch pin @types/react, which 1.15.16 moved into a pnpm catalog
+        patches = [ ];
+        postPatch = "";
+        pnpmDeps = old.pnpmDeps.overrideAttrs {
+          outputHash = "sha256-HS8uZNepvDefjrsG3buVLFCVv7sHvazcwdpcT3EQ/78=";
+        };
+      }
+  );
 in
-pkgs.vencord.overrideAttrs (old: {
+vencord.overrideAttrs (old: {
 
   preBuild = (old.preBuild or "") + ''
     mkdir -p src/userplugins
