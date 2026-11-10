@@ -295,6 +295,8 @@ let
           executable = true;
           text = ''
             #!/bin/sh
+            # the host's loader paths name NixOS libraries the box's glibc can't load
+            unset LD_LIBRARY_PATH LD_PRELOAD GIO_EXTRA_MODULES
             . ${appbox}/env.sh
             [ $# -gt 0 ] || set -- "''${SHELL:-sh}" -l
             exec "$@"
