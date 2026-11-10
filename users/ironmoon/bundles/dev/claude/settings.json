@@ -280,6 +280,10 @@
   "tui": "fullscreen",
   "showThinkingSummaries": true,
   "skipWorkflowUsageWarning": true,
+  "skillOverrides": {
+    "design": "off",
+    "design-sync": "off"
+  },
   "switchModelsOnFlag": false,
   "agentPushNotifEnabled": true,
   "autoMode": {
