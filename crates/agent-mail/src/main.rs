@@ -150,6 +150,9 @@ commands! {
     /// Print the thread of an email, oldest first, with read receipts as a line under the mail they answer;
     /// read-only.
     Thread(read::One) => read::thread,
+    /// Print every mail in the inbox and Sent, oldest first, one JSON object a line (id, thread, received, from, to,
+    /// cc, subject, text), receipts left out; for indexing (recall), read-only, and no word on who signed it.
+    Export(read::Export) => read::export,
     #[command(about = read::ATTACHMENTS_HELP)]
     Attachments(read::One) => read::attachments,
     #[command(about = wait::WAIT_HELP)]

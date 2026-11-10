@@ -125,6 +125,13 @@ pub struct Inbox {
 const NEWEST: NonZeroUsize = NonZeroUsize::new(10).unwrap();
 
 #[derive(clap::Args)]
+pub struct Export {
+    /// Only mail received at or after this time (RFC 3339).
+    #[arg(long, value_name = "TIME")]
+    pub after: Option<Timestamp>,
+}
+
+#[derive(clap::Args)]
 pub struct One {
     #[arg(value_name = "EMAIL_ID")]
     id: String,
@@ -179,6 +186,46 @@ pub async fn lines(mail: &Mail, args: &Inbox) -> Result<Vec<String>> {
     let files: Vec<Attached> = mail.get(&listed.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
     let parts = |m: &Email| files.iter().find(|f| f.id == m.id).map_or(&[][..], |f| &f.attachments);
     Ok(listed.iter().map(|m| inbox_line(m, parts(m))).collect())
+}
+
+/// Every mail in the inbox and Sent, oldest first, read receipts left out, each one JSON object on a line: `id`,
+/// `thread`, `received`, `from`, `to`, `cc`, `subject` and `text` (its text parts joined), read from headers as they
+/// stand, so it says nothing of who signed it.
+pub async fn export(args: Export) -> Result<ExitCode> {
+    for line in exported(&Mail::open().await?, args.after).await? {
+        out(&line)?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// What `export` prints, a line per mail.
+pub async fn exported(mail: &Mail, after: Option<Timestamp>) -> Result<Vec<String>> {
+    let boxes =
+        ["inbox", "sent"].map(|role| mail.mailbox(role).map(|id| json!({ "inMailbox": id })));
+    let mut filter =
+        json!({ "operator": "OR", "conditions": boxes.into_iter().collect::<Result<Vec<_>>>()? });
+    if let Some(at) = after {
+        // Stalwart's `after` is strictly later, in whole seconds, so the given second needs one earlier
+        let before = at - jiff::SignedDuration::from_secs(1);
+        filter =
+            json!({ "operator": "AND", "conditions": [filter, { "after": before.to_string() }] });
+    }
+    let mut mails: Vec<Email> = mail.get(&mail.query(filter).await?).await?;
+    mails.retain(|m| !is_receipt(m));
+    mails.sort_by(|a, b| a.received.cmp(&b.received));
+    let bodies: Vec<Body> = mail.get(&mails.iter().map(|m| &m.id).collect::<Vec<_>>()).await?;
+    let addresses = |list: &[Addr]| list.iter().map(|a| a.email.clone()).collect::<Vec<_>>();
+    let line = |m: &Email| {
+        let body = bodies.iter().find(|b| b.id == m.id);
+        let parts = body.iter().flat_map(|b| b.text.iter().filter_map(|p| b.values.get(&p.part)));
+        let text = parts.map(|v| v.value.as_str()).collect::<Vec<_>>().join("\n");
+        json!({
+            "id": m.id, "thread": m.thread, "received": m.received, "from": addresses(&m.from),
+            "to": addresses(&m.to), "cc": addresses(&m.cc), "subject": m.subject, "text": text,
+        })
+        .to_string()
+    };
+    Ok(mails.iter().map(line).collect())
 }
 
 /// What the listing learned of a mail's signature.

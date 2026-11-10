@@ -1423,3 +1423,40 @@ async fn queries_page_on_past_a_server_that_caps_its_pages() {
     let newest = read::newest(&mail, &[], NonZeroUsize::new(10).unwrap()).await.unwrap();
     assert_eq!(newest.into_iter().map(|m| m.id).collect::<Vec<_>>(), all);
 }
+
+#[tokio::test]
+async fn export_gives_every_mail_oldest_first_with_its_text_and_leaves_receipts_out() {
+    let dir = Scratch::new("export");
+    let said = |id: &str, at: &str, text: &str| {
+        let part = json!({ "partId": "1", "blobId": "", "size": 0, "name": "", "type": "text/plain", "subParts": [] });
+        let body = json!({ "1": { "value": text, "isTruncated": false } });
+        email(id, json!({ "receivedAt": at, "textBody": [part], "bodyValues": body }))
+    };
+    let receipt = email(
+        "r",
+        json!({ "receivedAt": "2026-11-06T11:00:00Z", "header:Content-Type": "multipart/report; report-type=disposition-notification" }),
+    );
+    let emails = vec![
+        said("b", "2026-11-06T12:00:00Z", "second"),
+        receipt,
+        said("a", "2026-11-06T10:00:00Z", "first"),
+    ];
+    let (_wire, server, mail) = mail(&dir, Stalwart::new(emails)).await;
+    let lines = read::exported(&mail.unwrap(), Some("2026-11-06T09:00:00Z".parse().unwrap()))
+        .await
+        .unwrap();
+    let got: Vec<Value> = lines.iter().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let said: Vec<(&str, &str)> =
+        got.iter().map(|m| (m["id"].as_str().unwrap(), m["text"].as_str().unwrap())).collect();
+    assert_eq!(said, [("a", "first"), ("b", "second")]);
+    assert_eq!(
+        (&got[0]["from"], &got[0]["to"], &got[0]["thread"]),
+        (&json!([HIM]), &json!([POOL]), &json!("T"))
+    );
+    let queries: Vec<Value> = (server.borrow().requests.iter())
+        .flat_map(|r| r["methodCalls"].as_array().cloned().unwrap_or_default())
+        .filter(|c| c[0] == "Email/query")
+        .map(|c| c[1]["filter"].clone())
+        .collect();
+    assert_eq!(queries[0]["conditions"][1], json!({ "after": "2026-11-06T08:59:59Z" }));
+}
