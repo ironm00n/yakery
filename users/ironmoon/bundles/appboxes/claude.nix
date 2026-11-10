@@ -21,7 +21,8 @@
     };
     apps.claude = {
       name = "Claude";
-      exec = "claude-desktop --password-store=gnome-libsecret %U";
+      # middle click pans the design canvas; Electron never passes the GTK primary-paste setting to Blink
+      exec = "claude-desktop --password-store=gnome-libsecret --blink-settings=middleClickPasteAllowed=false %U";
       icon = "/usr/share/icons/hicolor/256x256/apps/claude-desktop.png";
       urlSchemes = [ "claude" ];
       categories = [ "Development" ];
