@@ -3,6 +3,7 @@
   rustPlatform,
   fetchFromGitHub,
   pkg-config,
+  aws-lc,
   sqlite,
   cacert,
 }:
@@ -26,7 +27,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
   buildNoDefaultFeatures = true;
 
   nativeBuildInputs = [ pkg-config ];
-  buildInputs = [ sqlite ];
+  buildInputs = [
+    aws-lc
+    sqlite
+  ];
 
   # The TLS connector tests load the system trust store.
   nativeCheckInputs = [ cacert ];

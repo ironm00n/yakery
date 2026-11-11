@@ -2,6 +2,8 @@
   lib,
   rustPlatform,
   fetchFromGitHub,
+  aws-lc,
+  pkg-config,
   stalwart,
 }:
 rustPlatform.buildRustPackage (finalAttrs: {
@@ -16,6 +18,9 @@ rustPlatform.buildRustPackage (finalAttrs: {
   };
 
   cargoHash = "sha256-Lj7wBLMqN4xP2GXicFGgIxkPrGi7F8i9KBSfFSn+KNk=";
+
+  nativeBuildInputs = [ pkg-config ];
+  buildInputs = [ aws-lc ];
 
   doCheck = false;
 

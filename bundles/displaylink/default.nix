@@ -8,7 +8,7 @@ let
   inherit (lib) mkEnableOption mkIf;
   cfg = config.bundles.displaylink;
   inherit (config.boot.kernelPackages) evdi;
-  displaylink = pkgs.displaylink.override { inherit evdi; };
+  displaylink = pkgs.displaylink.override { linuxPackages = config.boot.kernelPackages; };
 in
 {
   options.bundles.displaylink = {

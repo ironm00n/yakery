@@ -25,31 +25,35 @@ let
 in
 {
   disabledModules = [ file ];
+  # imported as a function, so the module system takes it as declared here: the manual names a module's chapter after
+  # its file, and the copy's store name isn't a valid id
   imports = [
-    (builtins.toFile "forgejo.nix" (
-      lib.foldl edit (builtins.readFile "${modulesPath}/${file}") [
-        (around (lines [ "        INTERNAL_TOKEN = \"\${cfg.customDir}/conf/internal_token\";" ]) {
-          before = lines [
-            "      }"
-            "      // optionalAttrs (lib.versionOlder cfg.package.version \"18\") {"
-          ];
-        })
-        (around
-          (lines [
-            "        if [ ! -s ${token} ]; then"
-            "            \${exe} generate secret INTERNAL_TOKEN > ${token}"
-            "        fi"
-          ])
+    (import (
+      builtins.toFile "forgejo.nix" (
+        lib.foldl edit (builtins.readFile "${modulesPath}/${file}") [
+          (around (lines [ "        INTERNAL_TOKEN = \"\${cfg.customDir}/conf/internal_token\";" ]) {
+            before = lines [
+              "      }"
+              "      // optionalAttrs (lib.versionOlder cfg.package.version \"18\") {"
+            ];
+          })
+          (around
+            (lines [
+              "        if [ ! -s ${token} ]; then"
+              "            \${exe} generate secret INTERNAL_TOKEN > ${token}"
+              "        fi"
+            ])
+            {
+              before = lines [ "        \${optionalString (cfg.secrets.security ? INTERNAL_TOKEN) ''" ];
+              after = lines [ "        ''}" ];
+            }
+          )
           {
-            before = lines [ "        \${optionalString (cfg.secrets.security ? INTERNAL_TOKEN) ''" ];
-            after = lines [ "        ''}" ];
+            from = "meta.doc = ./forgejo.md;";
+            to = "meta.doc = ${modulesPath}/${dirOf file}/forgejo.md;";
           }
-        )
-        {
-          from = "meta.doc = ./forgejo.md;";
-          to = "meta.doc = ${modulesPath}/${dirOf file}/forgejo.md;";
-        }
-      ]
+        ]
+      )
     ))
   ];
 }

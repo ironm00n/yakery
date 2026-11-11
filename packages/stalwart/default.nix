@@ -2,6 +2,7 @@
   lib,
   rustPlatform,
   fetchFromGitHub,
+  aws-lc,
   pkg-config,
   protobuf,
   bzip2,
@@ -47,11 +48,13 @@ rustPlatform.buildRustPackage (finalAttrs: {
   ];
 
   nativeBuildInputs = [
+    pkg-config
     protobuf
     rustPlatform.bindgenHook
   ];
 
   buildInputs = [
+    aws-lc
     bzip2
     openssl
     sqlite
@@ -92,6 +95,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
       {
         JEMALLOC_SYS_WITH_LG_PAGE = 16;
       };
+
+  # cargo's setup hook points JEMALLOC_OVERRIDE at a library that isn't there, which fails tikv-jemalloc-sys; nixpkgs'
+  # jemalloc lacks the prefixed symbols it links, so it builds its own, as it did before the hook did that
+  preBuild = "unset JEMALLOC_OVERRIDE";
 
   postInstall = ''
     mkdir -p $out/lib/systemd/system
