@@ -35,7 +35,9 @@ pkgs.testers.runNixOSTest {
         "accountId": account_ids["agent"],
         "create": {"p": {
             "description": "burst",
-            "allowedIps": {cidr: True for cidr in ${builtins.toJSON (my-lib.netbird.overlayCidrs ++ [ "${stranger}/32" ])}},
+            "allowedIps": {cidr: True for cidr in ${
+              builtins.toJSON (my-lib.netbird.overlayCidrs ++ [ "${stranger}/32" ])
+            }},
             "permissions": {"@type": "Inherit"},
         }},
     })
