@@ -17,7 +17,7 @@ const TRIES = 20
  * listed in front for a named session so it never has to ask for them. */
 const UPFRONT = new Set(['SendMessage', 'TaskStop', 'CronList', 'Monitor', 'WebSearch', 'CronCreate', 'CronDelete', 'WebFetch'])
 
-type Lane = { name: string; home: string; link: string }
+type Lane = { name: string; home: string; link: string; pid: number }
 type Session = { id: string; transcript: string }
 type Classic = { session_id: string; transcript_path: string; agent_id?: string }
 
@@ -54,7 +54,7 @@ function note(e: Classic) {
   if (e.agent_id === undefined && session?.id !== e.session_id) session = { id: e.session_id, transcript: e.transcript_path }
 }
 
-/** Named sessions only: ~/.claude/sessions/<pid>.json holds each one's name beside its id. */
+/** Named sessions only: ~/.claude/sessions/<pid>.json holds each one's name beside its id, and the engine's process. */
 async function laneOf($: EngineInterface): Promise<Lane | undefined> {
   if (lane !== undefined) return lane
   const [id, now] = [session?.id ?? (await $.session.id()), await $.clock.now()]
@@ -66,8 +66,8 @@ async function laneOf($: EngineInterface): Promise<Lane | undefined> {
       .filter(({ name }) => name.endsWith('.json'))
       .map(({ name }) => $.fs.read(`${dir}/${name}`).then(JSON.parse).catch(() => undefined)),
   )
-  const name = records.find((record) => record?.sessionId === id)?.name
-  if (typeof name === 'string' && name !== '') lane = { name, home, link: `${home}/.local/state/claude-lanes/${name}` }
+  const { name, pid } = records.find((record) => record?.sessionId === id) ?? {}
+  if (typeof name === 'string' && name !== '') lane = { name, home, link: `${home}/.local/state/claude-lanes/${name}`, pid }
   else unnamed = { id, at: now }
   return lane
 }
@@ -110,7 +110,7 @@ async function stateBlocks($: EngineInterface, me: Lane): Promise<string[]> {
 
 async function itemsBlock($: EngineInterface, { name }: Lane): Promise<string> {
   try {
-    const run = await $.process.run(['bash', `${$.plugin.root}/hooks/items.sh`, name], { timeoutMs: KIT_MS })
+    const run = await $.process.run(['bash', `${$.plugin.root}/hooks/items.sh`, name, kit.TRACKER], { timeoutMs: KIT_MS })
     if (run.exitCode !== 0) return kit.unreadItemsBlock(name, lastLine(run.stderr) || `items.sh exited ${run.exitCode}`)
     return kit.itemsBlock(name, JSON.parse(run.stdout))
   } catch (failure) {
@@ -218,6 +218,42 @@ async function clear($: EngineInterface): Promise<string | undefined> {
   }
 }
 
+/** The binary the engine runs, which only its process names: the profile's `claude` can be another version. */
+const binaryOf = async ($: EngineInterface, { pid }: Lane) => {
+  const exe = await $.process.run(['readlink', '-f', `/proc/${pid}/exe`])
+  return exe.exitCode === 0 ? exe.stdout.trim() : undefined
+}
+
+/** Each rotation's recall check, hooks/check.sh, runs apart from the session, so it holds up nothing and outlives this
+ * process: it asks what the cleared context's last stretch says a successor needs of the kit just handed over, with the
+ * engine's own binary, and adds a row to checks/<name>.jsonl. What it reads is left in checks/<name>/<the fresh
+ * context's id>/, where it keeps the rest. */
+async function check($: EngineInterface, me: Lane, { arm, blocks }: { arm: kit.Arm; blocks: string[] }, before: Session) {
+  const checks = `${me.home}/.local/state/claude-lanes/checks`
+  const [to, at] = [await $.session.id(), await $.clock.now()]
+  const dir = `${checks}/${me.name}/${to}`
+  try {
+    await $.fs.write(`${dir}/kit.txt`, blocks.join('\n\n'))
+    const rotation = {
+      lane: me.name,
+      arm,
+      from: before.id,
+      to,
+      transcript: await transcriptOf($, me, before),
+      notes: [me.link, await stateFile($, me)].filter((path) => path !== undefined),
+      tracker: kit.TRACKER,
+      at: new Date(at).toISOString(),
+      claude: await binaryOf($, me),
+      results: `${checks}/${me.name}.jsonl`,
+    }
+    await $.fs.write(`${dir}/rotation.json`, JSON.stringify(rotation))
+    const started = await $.process.run(['setsid', '-f', 'bash', `${$.plugin.root}/hooks/check.sh`, dir])
+    if (started.exitCode !== 0) throw new Error(lastLine(started.stderr) || `setsid exited ${started.exitCode}`)
+  } catch (failure) {
+    $.ui.log(`lane: the recall check of this rotation did not start: ${why(failure)}`)
+  }
+}
+
 /** The engine may run the clear's SessionStart hooks only before the next prompt, so the kit is built here from the
  * session that was cleared; a plugin's own prompt takes no context, so the kit goes in as rows before it. */
 async function rotate($: EngineInterface, me: Lane, before: Session) {
@@ -230,9 +266,10 @@ async function rotate($: EngineInterface, me: Lane, before: Session) {
   }
   await carryMail($, me, before.id, now)
   try {
-    const { arm, blocks } = await kitBlocks($, me, before)
-    await $.session.append({ message: { type: 'user', content: blocks.map((text) => ({ type: 'text', text })) } })
-    await $.prompt.submit({ text: kit.carryOn(arm) })
+    const handed = await kitBlocks($, me, before)
+    await $.session.append({ message: { type: 'user', content: handed.blocks.map((text) => ({ type: 'text', text })) } })
+    await $.prompt.submit({ text: kit.carryOn(handed.arm) })
+    await check($, me, handed, before)
   } catch (failure) {
     await $.prompt.submit({ text: kit.carryOnWithout(await armNow($, me), me.name, me.link, why(failure)) })
   }

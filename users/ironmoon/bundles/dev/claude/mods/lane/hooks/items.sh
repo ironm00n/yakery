@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# usage: items.sh NAME
-# The open agents/work issues given to the lane NAME by an owner/NAME or owner:NAME label, most recently updated first,
+# usage: items.sh NAME REPO
+# The open issues of the forge's repository REPO given to the lane NAME by an owner/NAME or owner:NAME label, most
+# recently updated first,
 # each with its newest comment, as one JSON array. The tracker answers a label filter naming a label it lacks with every
 # issue, so only labels it has are asked for, and each issue's labels are checked again here.
 set -euo pipefail
 shopt -s inherit_errexit
-name=${1:?usage: items.sh NAME}
-api=${LANE_TRACKER:-https://code.ironmoon.dev/api/v1/repos/agents/work}
+name=${1:?usage: items.sh NAME REPO} repo=${2:?usage: items.sh NAME REPO}
+api=${LANE_TRACKER:-https://code.ironmoon.dev/api/v1/repos/$repo}
 # the token reaches curl as config on stdin, so no command line holds it
 get() { curl -fsS --noproxy '*' --max-time 20 -K - "$api/$1" <<<"header = \"Authorization: token $(<~/.claude/secrets/forgejo-agent-pat)\""; }
 # every page of a listing, as one array; 20 pages of 50 is past anything the tracker holds

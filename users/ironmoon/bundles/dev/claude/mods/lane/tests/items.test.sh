@@ -37,7 +37,7 @@ jq -s . <(issue 7 2026-10-03 0 owner/lane owner:lane) <(issue 8 2026-10-01 1 own
 	api issues_state_open_type_issues_labels_owner%3Alane_limit_50_page_1
 api issues_5_comments <<<'[{"user":{"login":"a"},"created_at":"2026-10-01","body":"older"},{"user":{"login":"dispatch"},"created_at":"2026-10-02","body":"newest"}]'
 api issues_8_comments <<<'[{"user":{"login":"b"},"created_at":"2026-10-01","body":"only"}]'
-run() { HOME=$dir/home PATH=$dir/bin:$PATH FAKE_API=$dir/api LANE_TRACKER=https://t bash "$items" "$@"; }
+run() { HOME=$dir/home PATH=$dir/bin:$PATH FAKE_API=$dir/api LANE_TRACKER=https://t bash "$items" "$1" agents/work; }
 fails=0
 check() {
 	if [[ $2 == "$3" ]]; then echo "ok: $1"; else printf 'FAIL: %s\n  want %s\n  got  %s\n' "$1" "$3" "$2"; fails=1; fi
@@ -57,4 +57,9 @@ check '… and fails the run' "$(if run lane >/dev/null 2>&1; then echo ran; els
 rm "$dir/api/fail"
 echo wrong >"$token"
 check 'a tracker refusing the token fails the run' "$(if run lane >/dev/null 2>&1; then echo ran; else echo failed; fi)" failed
+echo test-token >"$token"
+: >"$dir/args"
+HOME=$dir/home PATH=$dir/bin:$PATH FAKE_API=$dir/api bash "$items" lane some/repo >/dev/null
+check 'with no LANE_TRACKER the issues are read from the repository named on the forge' "$(head -1 "$dir/args" | grep -o 'https://[^ ]*')" \
+	'https://code.ironmoon.dev/api/v1/repos/some/repo/labels?&limit=50&page=1'
 exit $fails

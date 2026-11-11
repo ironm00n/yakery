@@ -12,6 +12,8 @@ const TOOL = 'mcp__lane__rotate'
 const CARRY_ON = 'This context started over at a rotation. Carry on from your state file and the blocks just before this message: they are all that came across.'
 const CARRY_ON_B = 'This context started over at a rotation. Carry on from the blocks just before this message: they are all that came across.'
 const AB = `${HOME}/.local/state/claude-lanes/ab.json`
+const CHECKS = `${HOME}/.local/state/claude-lanes/checks`
+const CLAUDE_BIN = '/nix/store/x-claude-code-2.1.322/bin/.claude-wrapped'
 const DAY = 86_400_000
 /** With seed s3, lane-a's coin puts it in arm B first and lane-b's in arm A: SHA-256 of "s3\nlane-a" begins b9, of
  * "s3\nlane-b" d0 (by sha256sum). Every session switches a day in. */
@@ -79,6 +81,8 @@ type World = {
   clears?: boolean
   ab?: string
   refusedRegisters?: number
+  check?: ProcessRunResult
+  exe?: ProcessRunResult
 }
 
 /** The engine and file system beneath the mod: the session s1 named lane-a (`named`), its state file linked (`linked`), a
@@ -88,7 +92,7 @@ type World = {
 function world(
   $: Engine,
   on: On,
-  { named = true, linked = true, tokens = 250_000, items = ran(JSON.stringify([ITEM])), jq, commits = ran(JSON.stringify([JJ])), clears = true, ab, refusedRegisters = 0 }: World = {},
+  { named = true, linked = true, tokens = 250_000, items = ran(JSON.stringify([ITEM])), jq, commits = ran(JSON.stringify([JJ])), clears = true, ab, refusedRegisters = 0, check = ran(''), exe = ran(`${CLAUDE_BIN}\n`) }: World = {},
 ) {
   const files: Record<string, string> = {
     [`${HOME}/.claude/sessions/41.json`]: JSON.stringify({ pid: 41, sessionId: 's1', ...(named && { name: 'lane-a' }) }),
@@ -132,7 +136,11 @@ function world(
     seen.runs.push(e.argv)
     return {
       value:
-        e.argv[0] !== 'jq'
+        e.argv[0] === 'setsid'
+          ? check
+          : e.argv[0] === 'readlink'
+          ? e.argv.join(' ') === 'readlink -f /proc/41/exe' ? exe : ran('', 1, `readlink: ${e.argv.at(-1)}: No such file or directory`)
+          : e.argv[0] !== 'jq'
           ? e.argv[1]?.endsWith('/hooks/commits.sh')
             ? commits
             : items
@@ -452,6 +460,73 @@ test('a compaction whose messages cannot be read still carries the rest, and say
   const texts = (await $.session.compact({ trigger: 'auto', messages: [OLD] })).messages?.map(({ text }) => text) ?? []
   expect(texts[0]).toContain(`Your state file is ${STATE}`)
   expect(texts.at(-4)).toBe(`The messages this session was sent could not be read (messages.jq exited 134: jq: error: cannot allocate memory); they are in ${transcript('s1')}.`)
+})
+
+/** The recall checks started, the mod's own directory left out of the script's path. */
+const checksRun = (runs: (readonly string[])[]) =>
+  runs.filter(([command]) => command === 'setsid').map(([setsid, detach, shell, script, ...rest]) => [setsid, detach, shell, script.split('/').slice(-2).join('/'), ...rest])
+const rotation = (files: Record<string, string>, dir: string) => JSON.parse(files[`${dir}/rotation.json`])
+
+test('a rotation has its recall check started apart from the session, with the kit it handed over and where its notes are', async ($, on) => {
+  const { seen, files, clock, mtimes, appended } = world($, on)
+  await start($)
+  await clock.advance(1_000)
+  await bash($, 'git push')
+  mtimes[STATE] = 2_000
+  await rotateCall($)
+  await end($)
+  await clock.advance(500)
+  const dir = `${CHECKS}/lane-a/s2`
+  expect(checksRun(seen.runs)).toEqual([['setsid', '-f', 'bash', 'hooks/check.sh', dir]])
+  expect(files[`${dir}/kit.txt`]).toBe(appended()[0].join('\n\n'))
+  expect(rotation(files, dir)).toEqual({
+    lane: 'lane-a',
+    arm: 'A',
+    from: 's1',
+    to: 's2',
+    transcript: transcript('s1'),
+    notes: [LINK, STATE],
+    tracker: 'agents/work',
+    at: '1970-01-01T00:00:01.500Z',
+    claude: CLAUDE_BIN,
+    results: `${CHECKS}/lane-a.jsonl`,
+  })
+  expect(seen.prompts.at(-1)).toEqual({ text: CARRY_ON })
+  expect(seen.runs.filter((argv) => argv[1]?.endsWith('/hooks/items.sh')).map((argv) => argv.slice(2))).toContainEqual(['lane-a', 'agents/work'])
+})
+
+test("in arm B the check is told the arm, a lane with no state file only where its link would be, and an engine whose binary isn't found none", async ($, on) => {
+  const { files, clock } = world($, on, { ab: B_FIRST, linked: false, exe: ran('', 1, 'readlink: /proc/41/exe: No such file or directory') })
+  await start($)
+  await prompt($, 'hello')
+  await rotateCall($)
+  await end($)
+  await clock.advance(500)
+  const { arm, notes, claude } = rotation(files, `${CHECKS}/lane-a/s2`)
+  expect([arm, notes, claude]).toEqual(['B', [LINK], undefined])
+})
+
+test('a /clear he runs himself and a compaction start no check: they are no rotation', async ($, on) => {
+  const { seen } = world($, on)
+  compactions(on)
+  await start($)
+  await prompt($, 'hello')
+  await $.session.compact({ trigger: 'auto', messages: [OLD] })
+  seen.id = 's2'
+  await sessionStart($, 'clear', 's2')
+  await prompt($, 'after the clear')
+  expect(checksRun(seen.runs)).toEqual([])
+})
+
+test('a check that does not start is logged, and the fresh context carries on all the same', async ($, on) => {
+  const { seen, clock } = world($, on, { check: ran('', 1, 'setsid: failed to execute bash: No such file or directory') })
+  await start($)
+  await prompt($, 'hello')
+  await rotateCall($)
+  await end($)
+  await clock.advance(500)
+  expect(seen.logs).toContain('lane: the recall check of this rotation did not start: setsid: failed to execute bash: No such file or directory')
+  expect(seen.prompts.at(-1)).toEqual({ text: CARRY_ON })
 })
 
 test('front matter names the files a state file carries', () => {

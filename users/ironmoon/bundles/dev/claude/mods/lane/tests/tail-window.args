@@ -1,0 +1,8 @@
+{
+  "caps": {
+    "prompts": 2,
+    "result": 2000,
+    "budget": 1000000000.0
+  },
+  "hide": []
+}

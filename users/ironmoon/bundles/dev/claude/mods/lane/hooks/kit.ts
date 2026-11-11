@@ -100,18 +100,21 @@ function itemText({ number, title, url, updated, labels, body, newest }: Item): 
   return `### #${number} ${title}\n${url} · updated ${updated} · ${labels.join(', ')}\n\n${clip(body, CAPS.itemText)}\n\n${comment}`
 }
 
+/** The tracker's repository: the lanes' issues are read from it, and arm B keeps its notes on them. */
+export const TRACKER = 'agents/work'
+
 export function itemsBlock(name: string, items: Item[]): string {
   const [slash, colon] = ownerLabels(name)
-  if (items.length === 0) return `No open agents/work issue carries ${slash} or ${colon}.`
+  if (items.length === 0) return `No open ${TRACKER} issue carries ${slash} or ${colon}.`
   const full = within(items.map(itemText), CAPS.items)
   const titles = within(items.slice(full.kept.length).map(({ number, title, url }) => `- #${number} ${title} ${url}`), full.left)
   const listed = titles.kept.length === 0 ? '' : `\n\nAlso open, less recently updated, without their text:\n${titles.kept.join('\n')}`
   const unlisted = titles.dropped === 0 ? '' : `\n\n[${titles.dropped} more are open, the least recently updated; list them on the tracker.]`
-  return `The open agents/work issues given to ${name} (${slash} or ${colon}), most recently updated first, each with its newest comment:\n\n${full.kept.join('\n\n')}${listed}${unlisted}`
+  return `The open ${TRACKER} issues given to ${name} (${slash} or ${colon}), most recently updated first, each with its newest comment:\n\n${full.kept.join('\n\n')}${listed}${unlisted}`
 }
 
 export const unreadItemsBlock = (name: string, why: string) =>
-  `The open agents/work issues given to ${name} could not be read (${why}). List them yourself before you pick up work.`
+  `The open ${TRACKER} issues given to ${name} could not be read (${why}). List them yourself before you pick up work.`
 
 const minute = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)}Z`
 
@@ -243,7 +246,7 @@ export const carryOn = (arm: Arm) =>
 
 export const carryOnWithout = (arm: Arm, name: string, link: string, why: string) =>
   `This context started over at a rotation, but the kit could not be handed over (${why}). ${
-    arm === 'A' ? `Read your state file (${link} names it) and carry on from it.` : `List your open agents/work issues (owner/${name}) with their comments, and carry on from them.`
+    arm === 'A' ? `Read your state file (${link} names it) and carry on from it.` : `List your open ${TRACKER} issues (owner/${name}) with their comments, and carry on from them.`
   }`
 
 export const notRotated = (why: string) => `The rotation did not happen (${why}). This context carries on as it was.`

@@ -1,0 +1,11 @@
+{
+  "hide": [
+    "agents/work",
+    "/w/lanes/lt.md"
+  ],
+  "caps": {
+    "prompts": 60,
+    "result": 2000,
+    "budget": 700000
+  }
+}
