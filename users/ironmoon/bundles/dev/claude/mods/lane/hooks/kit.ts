@@ -18,8 +18,38 @@ export type Heard = { kept: Said[]; older: number }
 export type Task = { type: string; description: string; command?: string }
 export type Cron = { schedule: string; recurring: boolean; prompt: string }
 
-/** Characters, as the engine caps a prompt's context: 100,000 an entry, 200,000 together. */
-export const CAPS = { state: 32_000, carried: 48_000, items: 32_000, itemText: 1_500, owen: 16_000, peers: 12_000, message: 6_000 } as const
+/** One commit as hooks/workspace.sh prints it; `change` is jj's alone, and `empty` only ever true of jj's working copy. */
+export type Commit = { change?: string; commit: string; at: string; subject: string; bookmarks: string[]; pushed: boolean; empty: boolean }
+/** One workspace as hooks/commits.sh prints it: its working copy, the newest commits below it that trunk lacks with
+ * `more` left out, and the other commits the session's output named; `changed` is git's alone. */
+export type Workspace =
+  | { root: string; vcs: 'jj' | 'git'; head: Commit; changed?: number; line: Commit[]; more: number; named: Commit[] }
+  | { root: string; vcs: 'jj' | 'git'; error: string }
+
+/** Characters, as the engine caps a prompt's context: 100,000 an entry, 200,000 together. Arm B has no state or carried
+ * files and has commits instead. */
+export const CAPS = { state: 32_000, carried: 48_000, items: 32_000, itemText: 1_500, owen: 16_000, peers: 12_000, message: 6_000, commits: 12_000, mail: 4_000 } as const
+
+/** The kit a session gets in the A/B trial: A, its state file; B, dispatch's, with what can be derived and its notes on
+ * its issues. */
+export type Arm = 'A' | 'B'
+/** The trial `just lane-ab` started: the seed of each session's coin, and when every session switches arm. */
+export type Assignment = { seed: string; switchAt: number }
+
+export function assignment(text: string): Assignment {
+  const { seed, switchAt } = JSON.parse(text) ?? {}
+  const at = typeof switchAt === 'string' ? Date.parse(switchAt) : Number.NaN
+  if (typeof seed !== 'string' || seed === '' || !Number.isFinite(at)) throw new Error('it needs a seed and a switchAt time')
+  return { seed, switchAt: at }
+}
+
+/** The arm session `name` runs at `now`: the low bit of SHA-256 of the seed and its name picks the first, and from
+ * `switchAt` on it runs the other. */
+export async function armOf({ seed, switchAt }: Assignment, name: string, now: number): Promise<Arm> {
+  const [byte] = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${seed}\n${name}`)))
+  const [isBFirst, isSwitched] = [(byte & 1) === 1, now >= switchAt]
+  return isBFirst !== isSwitched ? 'B' : 'A'
+}
 
 export const ownerLabels = (name: string) => [`owner/${name}`, `owner:${name}`]
 
@@ -125,27 +155,96 @@ export function liveBlock(tasks: Task[], crons: Cron[]): string {
 export const pointerBlock = (transcript: string) =>
   `This session's whole transcript, from before every compaction, is ${transcript}; recall searches it.`
 
+function commitText({ change, commit, at, subject, bookmarks, pushed, empty }: Commit): string {
+  const marks = `${empty ? ' (empty)' : ''}${bookmarks.length === 0 ? '' : ` [${bookmarks.join(', ')}]`}`
+  return `${change === undefined ? '' : `${change} `}${commit} ${minute(at)} ${subject || '(no description)'}${marks}, ${pushed ? 'pushed' : 'not pushed'}`
+}
+
+function workspaceText(workspace: Workspace): string {
+  const title = `### ${workspace.root} (${workspace.vcs})`
+  if ('error' in workspace) return `${title}\nCould not be listed: ${workspace.error}`
+  const { head, changed, line, more, named } = workspace
+  const copy = changed === undefined ? `Working copy: ${commitText(head)}` : `HEAD: ${commitText(head)}; ${changed} files changed in the working tree`
+  const list = (commits: Commit[]) => commits.map((c) => `- ${commitText(c)}`).join('\n')
+  const below = line.length === 0 && more === 0 ? 'Below it and not on trunk: none.' : `Below it and not on trunk, newest first:\n${list(line)}${more === 0 ? '' : `\n- [${more} more]`}`
+  return [title, copy, below, ...(named.length === 0 ? [] : [`Named in its output:\n${list(named)}`])].join('\n')
+}
+
+export function commitsBlock(workspaces: Workspace[]): string {
+  if (workspaces.length === 0) return "No jj or git workspace was found in this session's cwd or transcript."
+  const { kept, dropped } = within(workspaces.map(workspaceText), CAPS.commits)
+  const head =
+    'The workspaces this session used: those its transcript names, most recently first (the -R of its jj commands, the -C of its git ones, ' +
+    "where it cd'd and where it edited files), then its cwd. Each with its working copy as the last command run in it left it, the commits below " +
+    'that trunk lacks, and other commits its commit, push and land output named.'
+  return `${head}\n\n${kept.join('\n\n')}${dropped === 0 ? '' : `\n\n[${dropped} more workspaces are left out.]`}`
+}
+
+/** The agent-mail topics and threads a session's watch record names; a clear's new session id is given a copy. */
+export type Watch = { topics: string[]; threads: string[] }
+
+export function watch(text: string): Watch {
+  const { topics = [], threads = [] } = JSON.parse(text) ?? {}
+  const isNames = (list: unknown) => Array.isArray(list) && list.every((name) => typeof name === 'string')
+  if (!isNames(topics) || !isNames(threads)) throw new Error('its topics and threads must be lists of names')
+  return { topics, threads }
+}
+
+const startWatching = (name: string) => `Run agent-mail wait --topic ${name} once, so its mail reaches it.`
+
+export function mailBlock(path: string, name: string, watched: Watch | undefined): string {
+  if (watched === undefined) return `This session watches no agent-mail topic or thread: its watch record, ${path}, does not exist. ${startWatching(name)}`
+  const { kept, dropped } = within([...watched.threads].reverse().map((thread) => `${thread}, `), CAPS.mail)
+  const threads = kept.length === 0 ? ': none' : `, newest first: ${kept.join('').slice(0, -2)}${dropped === 0 ? '' : ` [${dropped} older]`}`
+  const topics = watched.topics.length === 0 ? 'none' : watched.topics.join(', ')
+  return `This session watches these agent-mail topics and threads (its watch record, ${path}):\n- topics: ${topics}\n- threads${threads}`
+}
+
+export const unreadMailBlock = (path: string, name: string, why: string) =>
+  `This session's watch record, ${path}, could not be read (${why}). ${startWatching(name)}`
+
+export const unreadCommitsBlock = (why: string) =>
+  `The commits in the workspaces this session used could not be listed (${why}). Look at them yourself (jj log, git log) before you pick up work.`
+
+/** What a lane is asked to write down before its context starts over, by the arm it runs. */
+export type Ask = { arm: 'A'; hasState: boolean } | { arm: 'B'; name: string }
+
+function toWrite(ask: Ask): { what: string; where: string; carrier: string } {
+  if (ask.arm === 'A') {
+    const state = ask.hasState ? 'Bring your state file up to date (Status, Plan, Promised, open questions)' : 'Make your state file (see above) and fill it in'
+    return { what: `${state}, so a fresh context can carry on from it with nothing else.`, where: 'the state file', carrier: 'the file' }
+  }
+  const what =
+    'The next context is handed your open issues, each with its newest comment, the messages you were sent, what still runs and the commits in your workspaces, and nothing else. ' +
+    'Write what it needs beyond those as a comment on the issue it concerns: where the work stands, what was decided and why, the next step, what you promised. ' +
+    `A concern no open issue covers gets a new issue labelled owner/${ask.name}, and priority/backlog if nothing acts on it now, with the note as its first comment. ` +
+    'Leave out what the next context is handed anyway.'
+  return { what, where: 'a comment on its issue', carrier: 'a comment' }
+}
+
 /** `busy` is what still runs, or undefined where that isn't known yet. */
-export function askBlock(tokens: number, why: 'unit' | 'mark', busy: Task[] | undefined, hasState: boolean): string {
+export function askBlock(tokens: number, why: 'unit' | 'mark', busy: Task[] | undefined, ask: Ask): string {
   const reason =
     why === 'unit'
       ? `You landed work this turn and the context holds ${Math.round(tokens / 1000)}k tokens`
       : `The context holds ${Math.round(tokens / 1000)}k tokens`
+  const { what, where, carrier } = toWrite(ask)
   const running =
     busy === undefined
-      ? ' If anything you started still runs, say in the state file what each is for and what to do with its result; it goes on running across the clear, and the next context is told of it.'
+      ? ` If anything you started still runs, say in ${where} what each is for and what to do with its result; it goes on running across the clear, and the next context is told of it.`
       : busy.length === 0
         ? ''
-        : ` Still running: ${busy.map(({ description }) => description).join('; ')}; say in the state file what each is for and what to do with its result.`
-  const state = hasState ? 'Bring your state file up to date (Status, Plan, Promised, open questions)' : 'Make your state file (see above) and fill it in'
-  return `${reason}, so this context is due to start over. ${state}, so a fresh context can carry on from it with nothing else.${running} Then call the rotate tool and end your turn. If you are partway through a step that the file cannot carry, finish the step first.`
+        : ` Still running: ${busy.map(({ description }) => description).join('; ')}; say in ${where} what each is for and what to do with its result.`
+  return `${reason}, so this context is due to start over. ${what}${running} Then call the rotate tool and end your turn. If you are partway through a step that ${carrier} cannot carry, finish the step first.`
 }
 
-export const CARRY_ON =
-  'This context started over at a rotation. Carry on from your state file and the blocks just before this message: they are all that came across.'
+export const carryOn = (arm: Arm) =>
+  `This context started over at a rotation. Carry on from ${arm === 'A' ? 'your state file and ' : ''}the blocks just before this message: they are all that came across.`
 
-export const carryOnWithout = (link: string, why: string) =>
-  `This context started over at a rotation, but the kit could not be handed over (${why}). Read your state file (${link} names it) and carry on from it.`
+export const carryOnWithout = (arm: Arm, name: string, link: string, why: string) =>
+  `This context started over at a rotation, but the kit could not be handed over (${why}). ${
+    arm === 'A' ? `Read your state file (${link} names it) and carry on from it.` : `List your open agents/work issues (owner/${name}) with their comments, and carry on from them.`
+  }`
 
 export const notRotated = (why: string) => `The rotation did not happen (${why}). This context carries on as it was.`
 

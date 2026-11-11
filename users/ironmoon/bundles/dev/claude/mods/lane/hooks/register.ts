@@ -2,6 +2,7 @@ import type { EngineInterface, HookFailure, Register, SessionMessage } from 'cla
 import * as kit from './kit'
 
 const TOOL = 'rotate'
+const STARTS_OVER = 'the context starts over when this turn ends; end the turn now'
 /** Context tokens past which landed work starts the context over, and past which any turn's end does. */
 const UNIT = 200_000
 const MARK = 600_000
@@ -33,7 +34,9 @@ let session: Session | undefined
 let pending: { after?: Session } | undefined
 /** A `/clear` this mod ran, which hands over the kit itself rather than leaving it to the next prompt. */
 let isOwnClear = false
-let isRegistered = false
+/** The rotate tool's registration, once asked for; one the engine refused (it does, before a session is bound to the
+ * process) is asked for again at the next start hook or prompt. */
+let offered: Promise<unknown> | undefined
 let tasks: kit.Task[] = []
 let crons: kit.Cron[] = []
 let landed = false
@@ -70,6 +73,23 @@ async function laneOf($: EngineInterface): Promise<Lane | undefined> {
 }
 
 const stateFile = async ($: EngineInterface, { link }: Lane) => (await $.fs.stat(link, { resolve: true }).catch(() => undefined))?.realPath
+
+/** The arm the session runs now: A, unless `just lane-ab` has started the trial. A trial file that can't be read is
+ * reported, and the session runs A. */
+async function armNow($: EngineInterface, { name, home }: Lane): Promise<kit.Arm> {
+  const path = `${home}/.local/state/claude-lanes/ab.json`
+  if (!(await $.fs.exists(path))) return 'A'
+  try {
+    return await kit.armOf(kit.assignment(await $.fs.read(path)), name, await $.clock.now())
+  } catch (failure) {
+    $.ui.log(`lane: ${path} was not read, so this session runs arm A: ${why(failure)}`)
+    return 'A'
+  }
+}
+
+async function askOf($: EngineInterface, me: Lane): Promise<kit.Ask> {
+  return (await armNow($, me)) === 'B' ? { arm: 'B', name: me.name } : { arm: 'A', hasState: (await stateFile($, me)) !== undefined }
+}
 
 async function stateBlocks($: EngineInterface, me: Lane): Promise<string[]> {
   const path = await stateFile($, me)
@@ -122,12 +142,45 @@ async function saidBlock($: EngineInterface, me: Lane, before: Session): Promise
   }
 }
 
-/** What a context starting over is handed: the state file and what it carries, the lane's open issues, and, when it
- * follows `before`, a context of this process (a rotation, a clear, a compaction), the messages sent to that one and
- * what it left running (a clear keeps it) and the crons it set. Each part that fails says so in its place. */
-async function kitBlocks($: EngineInterface, me: Lane, before?: Session): Promise<string[]> {
-  const [state, items, said] = await Promise.all([stateBlocks($, me), itemsBlock($, me), before && saidBlock($, me, before)])
-  return [...state, items, ...(said === undefined ? [] : [said, kit.liveBlock(tasks, crons)])]
+const watchRecord = ({ home }: Lane, id: string) => `${home}/.local/state/agent-mail/sessions/${id}.json`
+
+/** The mail the session watches now: after a clear, the copy of the cleared one's record that carryMail made. */
+async function mailBlock($: EngineInterface, me: Lane): Promise<string> {
+  const path = watchRecord(me, await $.session.id())
+  try {
+    return kit.mailBlock(path, me.name, (await $.fs.exists(path)) ? kit.watch(await $.fs.read(path)) : undefined)
+  } catch (failure) {
+    return kit.unreadMailBlock(path, me.name, why(failure))
+  }
+}
+
+/** The workspaces the session used, from its cwd and the transcript of `from`, the context that came before or this one. */
+async function commitsBlocks($: EngineInterface, me: Lane, from: Session | undefined): Promise<string[]> {
+  try {
+    const transcript = from === undefined ? [] : [await transcriptOf($, me, from)]
+    const run = await $.process.run(['bash', `${$.plugin.root}/hooks/commits.sh`, await $.session.cwd(), ...transcript], { timeoutMs: KIT_MS })
+    if (run.exitCode !== 0) return [kit.unreadCommitsBlock(lastLine(run.stderr) || `commits.sh exited ${run.exitCode}`)]
+    return [kit.commitsBlock(JSON.parse(run.stdout))]
+  } catch (failure) {
+    return [kit.unreadCommitsBlock(why(failure))]
+  }
+}
+
+/** What a context starting over is handed, by the arm the session runs, what it starts from first: in A the state file
+ * and what it carries, then the lane's open issues; in B the open issues, where its notes are, then the commits in its
+ * workspaces. Then the mail it watches, and, when it follows `before`, a context of this process (a rotation, a clear, a
+ * compaction), the messages sent to that one and what it left running (a clear keeps it) and the crons it set. Each part
+ * that fails says so in its place. */
+async function kitBlocks($: EngineInterface, me: Lane, before?: Session): Promise<{ arm: kit.Arm; blocks: string[] }> {
+  const arm = await armNow($, me)
+  const [own, items, mail, said] = await Promise.all([
+    arm === 'A' ? stateBlocks($, me) : commitsBlocks($, me, before ?? session),
+    itemsBlock($, me),
+    mailBlock($, me),
+    before && saidBlock($, me, before),
+  ])
+  const after = [mail, ...(said === undefined ? [] : [said, kit.liveBlock(tasks, crons)])]
+  return { arm, blocks: arm === 'A' ? [...own, items, ...after] : [items, ...own, ...after] }
 }
 
 /** Asked with the result of the command that landed work, so a turn that goes on to its next unit starts that in a fresh
@@ -139,15 +192,15 @@ async function askAtLanding($: EngineInterface): Promise<string | undefined> {
   if (tokens === undefined || tokens < Math.min(UNIT, 0.2 * window) || (asked.landing !== undefined && tokens < asked.landing + AGAIN)) return undefined
   asked.landing = tokens
   asked.at = await $.clock.now()
-  return kit.askBlock(tokens, 'unit', undefined, (await stateFile($, me)) !== undefined)
+  return kit.askBlock(tokens, 'unit', undefined, await askOf($, me))
 }
 
 /** A clear gives the session a new id, which agent-mail keys the topics and threads it watches by. */
 async function carryMail($: EngineInterface, me: Lane, from: string, to: string) {
-  const dir = `${me.home}/.local/state/agent-mail/sessions`
+  const [old, now] = [watchRecord(me, from), watchRecord(me, to)]
   try {
-    const [had, has] = await Promise.all([$.fs.exists(`${dir}/${from}.json`), $.fs.exists(`${dir}/${to}.json`)])
-    if (had && !has) await $.fs.write(`${dir}/${to}.json`, await $.fs.read(`${dir}/${from}.json`))
+    const [had, has] = await Promise.all([$.fs.exists(old), $.fs.exists(now)])
+    if (had && !has) await $.fs.write(now, await $.fs.read(old))
   } catch (failure) {
     $.ui.log(`lane: mail subscriptions not carried from ${from} to ${to}: ${why(failure)}`)
   }
@@ -177,26 +230,28 @@ async function rotate($: EngineInterface, me: Lane, before: Session) {
   }
   await carryMail($, me, before.id, now)
   try {
-    const blocks = await kitBlocks($, me, before)
+    const { arm, blocks } = await kitBlocks($, me, before)
     await $.session.append({ message: { type: 'user', content: blocks.map((text) => ({ type: 'text', text })) } })
-    await $.prompt.submit({ text: kit.CARRY_ON })
+    await $.prompt.submit({ text: kit.carryOn(arm) })
   } catch (failure) {
-    await $.prompt.submit({ text: kit.carryOnWithout(me.link, why(failure)) })
+    await $.prompt.submit({ text: kit.carryOnWithout(await armNow($, me), me.name, me.link, why(failure)) })
   }
 }
 
 async function offerRotate($: EngineInterface) {
-  if (isRegistered || (await laneOf($)) === undefined) return
-  isRegistered = true
-  await $.tool.register({
+  if (offered !== undefined || (await laneOf($)) === undefined) return
+  offered = $.tool.register({
     name: TOOL,
     description:
-      "Start this session's context over when the current turn ends: it is cleared, and the next one begins from your " +
-      'state file, your open agents/work issues and the newest messages you were sent. Call it when asked to, once the ' +
-      'state file is current, and end the turn right after.',
+      "Start this session's context over when the current turn ends: it is cleared, and the next one begins from what the " +
+      'ask to start over names. Call it when asked to, once you have written down what that ask says to, and end the turn right after.',
     inputSchema: { type: 'object', properties: {} },
     isDeferred: false,
+  }).catch((failure) => {
+    offered = undefined
+    $.ui.log(`lane: the rotate tool is not offered yet: ${why(failure)}`, { to: 'debug' })
   })
+  await offered
 }
 
 export const register: Register = (on) => {
@@ -233,13 +288,14 @@ export const register: Register = (on) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    await offerRotate($)
     const carry = pending
     const me = carry && e.command === undefined ? await laneOf($) : undefined
     if (carry === undefined || me === undefined) {
       if (e.command === undefined) pending = undefined
       return next(e)
     }
-    const blocks = await kitBlocks($, me, carry.after)
+    const { blocks } = await kitBlocks($, me, carry.after)
     const entered = await next({ ...e, context: [...(e.context ?? []), ...blocks] })
     if (entered.drop === undefined && entered.context?.includes(blocks[0])) pending = undefined
     return entered
@@ -281,19 +337,23 @@ export const register: Register = (on) => {
     if (due === undefined || (asked.end !== undefined && tokens < asked.end + AGAIN)) return done
     asked.end = tokens
     asked.at = await $.clock.now()
-    return { ...done, block: kit.askBlock(tokens, due, busy, (await stateFile($, me)) !== undefined) }
+    return { ...done, block: kit.askBlock(tokens, due, busy, await askOf($, me)) }
   })
 
   on('tool.call', { tool: `mcp__lane__${TOOL}` }, async ($, e) => {
     if (e.agentId !== undefined) return { deny: 'only the main conversation starts its context over' }
     const me = await laneOf($)
-    if (me === undefined) return { deny: 'this session has no name, so no state file a new context could start from' }
+    if (me === undefined) return { deny: 'this session has no name, so no kit a new context could start from' }
+    if ((await armNow($, me)) === 'B') {
+      rotating = true
+      return { result: STARTS_OVER }
+    }
     const path = await stateFile($, me)
     if (path === undefined) return { deny: `${me.link} leads nowhere: make the state file first (\`just lane-state ${me.name}\`)` }
     if (asked.at !== undefined && ((await $.fs.stat(path).catch(() => undefined))?.mtimeMs ?? 0) < asked.at)
       return { deny: `${path} has not changed since you were asked to start over, and it is what the next context starts from: update it first. If writing it is refused, say so and end your turn without rotating.` }
     rotating = true
-    return { result: 'the context starts over when this turn ends; end the turn now' }
+    return { result: STARTS_OVER }
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -314,7 +374,7 @@ export const register: Register = (on) => {
     const compacted = await next(e)
     const me = await laneOf($)
     if (compacted.skip !== undefined || me === undefined || session === undefined) return compacted
-    const blocks = await kitBlocks($, me, session)
+    const { blocks } = await kitBlocks($, me, session)
     const { tokensAfter: _stale, ...counts } = compacted
     const pointer = kit.pointerBlock(await transcriptOf($, me, session))
     return { ...counts, messages: [...blocks.map(user), ...compacted.messages, user(pointer)] }
@@ -323,6 +383,7 @@ export const register: Register = (on) => {
     $.ui.log(`lane: nothing was carried across this compaction: ${failed(next.error)}`)
     if (stock.skip !== undefined) return stock
     const { tokensAfter: _stale, ...counts } = stock
-    return { ...counts, messages: [...stock.messages, user(kit.notCarried(failed(next.error), lane?.link))] }
+    const link = lane !== undefined && (await armNow($, lane)) === 'A' ? lane.link : undefined
+    return { ...counts, messages: [...stock.messages, user(kit.notCarried(failed(next.error), link))] }
   })
 }

@@ -1,6 +1,6 @@
 import type { BackgroundTaskSummary, On, ProcessRunResult, SessionCompactResult, SessionCronSummary, SessionMessage } from 'claude-code'
 import { type Engine, expect, mock, test } from 'claude-code/testing'
-import { CAPS, carried, carriedBlocks, type Heard, type Item, itemsBlock, lands, saidBlock, stateBlock } from '../hooks/kit'
+import { armOf, assignment, CAPS, carried, carriedBlocks, commitsBlock, type Heard, type Item, itemsBlock, lands, mailBlock, saidBlock, stateBlock, type Workspace } from '../hooks/kit'
 
 const HOME = '/home/u'
 const LINK = `${HOME}/.local/state/claude-lanes/lane-a`
@@ -10,6 +10,39 @@ const STATE_TEXT = `---\ncarry:\n  - ${NOTES}\n  - /w/gone.md\n---\n# lane-a: st
 const MAIL = `${HOME}/.local/state/agent-mail/sessions`
 const TOOL = 'mcp__lane__rotate'
 const CARRY_ON = 'This context started over at a rotation. Carry on from your state file and the blocks just before this message: they are all that came across.'
+const CARRY_ON_B = 'This context started over at a rotation. Carry on from the blocks just before this message: they are all that came across.'
+const AB = `${HOME}/.local/state/claude-lanes/ab.json`
+const DAY = 86_400_000
+/** With seed s3, lane-a's coin puts it in arm B first and lane-b's in arm A: SHA-256 of "s3\nlane-a" begins b9, of
+ * "s3\nlane-b" d0 (by sha256sum). Every session switches a day in. */
+const B_FIRST = JSON.stringify({ seed: 's3', switchAt: '1970-01-02T00:00:00Z' })
+
+const commit = (change: string | undefined, id: string, at: string, subject: string, bookmarks: string[], pushed: boolean, empty = false) => ({
+  ...(change !== undefined && { change }),
+  commit: id,
+  at,
+  subject,
+  bookmarks,
+  pushed,
+  empty,
+})
+const JJ: Workspace = {
+  root: '/w',
+  vcs: 'jj',
+  head: commit('zzzzzzzz', 'aaaa1111', '2026-11-09T12:00:00Z', '', [], false, true),
+  line: [commit('yyyyyyyy', 'bbbb2222', '2026-11-09T11:00:00Z', 'mods/lane: arm B', ['harness/v12-lane-mod'], true)],
+  more: 3,
+  named: [commit('xxxxxxxx', 'cccc3333', '2026-11-09T10:00:00Z', 'lanes: landed', ['master'], true)],
+}
+const GIT: Workspace = {
+  root: '/g',
+  vcs: 'git',
+  head: commit(undefined, '1234567', '2026-11-09T09:00:00Z', 'g2', ['main'], false),
+  changed: 2,
+  line: [],
+  more: 0,
+  named: [],
+}
 
 const ITEM: Item = {
   number: 7,
@@ -36,11 +69,27 @@ const passesCaps = (argv: readonly string[]) => argv.some((arg, i) => arg === '-
 
 const ran = (stdout: string, exitCode = 0, stderr = ''): ProcessRunResult => ({ exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false })
 
-type World = { named?: boolean; linked?: boolean; tokens?: number; items?: ProcessRunResult; jq?: ProcessRunResult; clears?: boolean }
+type World = {
+  named?: boolean
+  linked?: boolean
+  tokens?: number
+  items?: ProcessRunResult
+  jq?: ProcessRunResult
+  commits?: ProcessRunResult
+  clears?: boolean
+  ab?: string
+  refusedRegisters?: number
+}
 
-/** The engine and file system beneath the mod: the session s1 named lane-a (`named`), its state file linked (`linked`), and a
- * `/clear` that moves it to s2 (`clears`), running the clear's SessionStart hooks before it resolves. */
-function world($: Engine, on: On, { named = true, linked = true, tokens = 250_000, items = ran(JSON.stringify([ITEM])), jq, clears = true }: World = {}) {
+/** The engine and file system beneath the mod: the session s1 named lane-a (`named`), its state file linked (`linked`), a
+ * `/clear` that moves it to s2 (`clears`), running the clear's SessionStart hooks before it resolves, an A/B trial
+ * started (`ab`, the file's text), and an engine that refuses the first `refusedRegisters` tool registrations, as 2.1.322
+ * does before a session is bound to the process. */
+function world(
+  $: Engine,
+  on: On,
+  { named = true, linked = true, tokens = 250_000, items = ran(JSON.stringify([ITEM])), jq, commits = ran(JSON.stringify([JJ])), clears = true, ab, refusedRegisters = 0 }: World = {},
+) {
   const files: Record<string, string> = {
     [`${HOME}/.claude/sessions/41.json`]: JSON.stringify({ pid: 41, sessionId: 's1', ...(named && { name: 'lane-a' }) }),
     [`${HOME}/.claude/sessions/42.json`]: JSON.stringify({ pid: 42, sessionId: 'other', name: 'lane-b' }),
@@ -49,6 +98,7 @@ function world($: Engine, on: On, { named = true, linked = true, tokens = 250_00
     [transcript('s1')]: '',
     [transcript('s2')]: '',
     [`${MAIL}/s1.json`]: '{"topics":["harness"]}',
+    ...(ab !== undefined && { [AB]: ab }),
   }
   const seen = {
     id: 's1',
@@ -57,6 +107,7 @@ function world($: Engine, on: On, { named = true, linked = true, tokens = 250_00
     prompts: [] as { text: string; context?: readonly string[] }[],
     tools: [] as string[],
     logs: [] as string[],
+    runs: [] as (readonly string[])[],
   }
   mock.env(on, { HOME })
   const rows = mock.session(on)
@@ -77,19 +128,30 @@ function world($: Engine, on: On, { named = true, linked = true, tokens = 250_00
         ? { value: { kind: 'file', size: files[e.path].length, mtimeMs: mtimes[e.path] ?? 0, isLink: false } }
         : { deny: `ENOENT: ${e.path}` },
   )
-  on('process.run', (_$, e) => ({
-    value:
-      e.argv[0] !== 'jq'
-        ? items
-        : !passesCaps(e.argv)
-          ? ran('', 3, 'jq: error: $caps is not defined')
-          : (jq ?? ran(JSON.stringify(SAID[e.argv.at(-1) as string] ?? { owen: heard(), peers: heard() }))),
-  }))
+  on('process.run', (_$, e) => {
+    seen.runs.push(e.argv)
+    return {
+      value:
+        e.argv[0] !== 'jq'
+          ? e.argv[1]?.endsWith('/hooks/commits.sh')
+            ? commits
+            : items
+          : !passesCaps(e.argv)
+            ? ran('', 3, 'jq: error: $caps is not defined')
+            : (jq ?? ran(JSON.stringify(SAID[e.argv.at(-1) as string] ?? { owen: heard(), peers: heard() }))),
+    }
+  })
   on('session.id', () => ({ value: seen.id }))
+  on('session.cwd', () => ({ value: '/w' }))
   on('tool.describe', (_$, e) => ({ description: e.description, ...(e.isDeferred && { isDeferred: true }) }))
   on('session.usage', () => ({ value: { startedAt: 0, context: seen.usage, rateLimits: [] } }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
-  on('tool.register', (_$, e) => (seen.tools.push(e.name), { value: { tool: `mcp__lane__${e.name}` } }))
+  let refusals = refusedRegisters
+  on('tool.register', (_$, e) =>
+    refusals-- > 0
+      ? { deny: '$.tool.register is not available in this mode: no session is bound in this process' }
+      : (seen.tools.push(e.name), { value: { tool: `mcp__lane__${e.name}` } }),
+  )
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('ui.toast', (_$, e) => (seen.logs.push(e.text), { value: undefined }))
   on('ui.log', (_$, e) => (seen.logs.push(e.text), { value: undefined }))
@@ -126,18 +188,19 @@ const end = ($: Engine, extra = {}) => $.turn.complete({ reason: 'answer', answe
 const rotateCall = ($: Engine, extra = {}) => $.tool.call({ tool: TOOL, tool_use_id: 'r1', ...extra } as never)
 const describe = ($: Engine, tool: string) => $.tool.describe({ tool, description: 'd', isDeferred: true, provider: { plugin: 'engine', tier: 'core' } } as never)
 
-test("the first prompt after a start carries the state file, what it carries and the lane's open issues", async ($, on) => {
+test("the first prompt after a start carries the state file, what it carries, the lane's open issues and the mail it watches", async ($, on) => {
   const { seen } = world($, on)
   await start($)
   await prompt($, 'hello')
-  const [state, notes, gone, items] = seen.prompts[0].context ?? []
+  const [state, notes, gone, items, mail] = seen.prompts[0].context ?? []
   expect(state).toContain(`Your state file is ${STATE} (${LINK} names it)`)
   expect(state).toContain('## Goal\n- ship it')
   expect(notes).toContain(`${NOTES}, which the state file carries, as it read when this context began:\n\ncarried notes`)
   expect(gone).toContain('/w/gone.md, which the state file carries, could not be read')
   expect(items).toContain('### #7 make the thing\nhttps://w/7')
   expect(items).toContain('Newest comment, by dispatch at 2026-11-09T11:00:00Z:\nhalf done')
-  expect(seen.prompts[0].context).toHaveLength(4)
+  expect(mail).toBe(`This session watches these agent-mail topics and threads (its watch record, ${MAIL}/s1.json):\n- topics: harness\n- threads: none`)
+  expect(seen.prompts[0].context).toHaveLength(5)
 })
 
 test("a named session's most used deferred tools are listed in front, and the others stay deferred", async ($, on) => {
@@ -273,6 +336,7 @@ test('rotate clears the context once the turn ends, hands the fresh one the kit 
   expect(seen.commands).toEqual(['clear'])
   const [kit] = appended()
   expect(kit[0]).toContain(`Your state file is ${STATE}`)
+  expect(kit.at(-3)).toContain(`(its watch record, ${MAIL}/s2.json):\n- topics: harness`)
   expect(kit.at(-2)).toContain('From other sessions:\n\n[2026-11-09 12:34Z, dispatch]\ndispatch → lane-a: go')
   expect(kit.at(-2)).not.toContain('said after the clear')
   expect(kit.at(-1)).toBe('Running in the background when the last turn ended (anything started since is not listed):\n- nothing')
@@ -454,4 +518,184 @@ test('the commands that land or push work', () => {
   for (const command of ['just land-preview', 'git status', 'echo just', 'rg "git push" notes.md', 'git push --dry-run origin x', 'jj git push -n -b x']) {
     expect([command, lands(command)]).toEqual([command, false])
   }
+})
+
+/** The arguments the mod last ran hooks/commits.sh with. */
+const commitsRun = (runs: (readonly string[])[]) => runs.filter((argv) => argv[1]?.endsWith('/hooks/commits.sh')).at(-1)?.slice(2)
+
+test("a session's coin picks the arm it runs first, and it runs the other from the switch on", async () => {
+  const trial = assignment(B_FIRST)
+  expect([await armOf(trial, 'lane-a', 0), await armOf(trial, 'lane-b', 0)]).toEqual(['B', 'A'])
+  expect([await armOf(trial, 'lane-a', DAY - 1), await armOf(trial, 'lane-b', DAY - 1)]).toEqual(['B', 'A'])
+  expect([await armOf(trial, 'lane-a', DAY), await armOf(trial, 'lane-b', DAY)]).toEqual(['A', 'B'])
+})
+
+test('an A/B file without a seed or a time to switch at is refused', () => {
+  for (const text of ['{"seed": "s3"}', '{"seed": "", "switchAt": "1970-01-02T00:00:00Z"}', '{"seed": "s3", "switchAt": "tomorrow"}', 'null']) {
+    expect(() => assignment(text)).toThrow('it needs a seed and a switchAt time')
+  }
+})
+
+test('in arm B the first prompt carries no state file, but the open issues and the commits in the workspaces its cwd and transcript name', async ($, on) => {
+  const { seen } = world($, on, { ab: B_FIRST })
+  await start($)
+  await prompt($, 'hello')
+  const [items, commits, mail, ...rest] = seen.prompts[0].context ?? []
+  expect(items).toContain('### #7 make the thing\nhttps://w/7')
+  expect(commits).toContain('### /w (jj)\nWorking copy: zzzzzzzz aaaa1111')
+  expect(mail).toContain('- topics: harness')
+  expect(rest).toEqual([])
+  expect(commitsRun(seen.runs)).toEqual(['/w', transcript('s1')])
+})
+
+test("arm B's ask has the lane leave its notes on its issues, filing one for a concern none covers", async ($, on) => {
+  world($, on, { ab: B_FIRST })
+  await start($)
+  const [asked] = (await bash($, 'jj git push --bookmark x')).additionalContext ?? []
+  expect(asked).toContain('You landed work this turn and the context holds 250k tokens, so this context is due to start over.')
+  expect(asked).toContain('Write what it needs beyond those as a comment on the issue it concerns')
+  expect(asked).toContain('A concern no open issue covers gets a new issue labelled owner/lane-a, and priority/backlog if nothing acts on it now, with the note as its first comment.')
+  expect(asked).toContain('say in a comment on its issue what each is for and what to do with its result')
+  expect(asked).toContain('If you are partway through a step that a comment cannot carry, finish the step first.')
+  expect(asked).not.toContain('state file')
+})
+
+test('in arm B rotate needs no state file, changed or not', async ($, on) => {
+  const { clock } = world($, on, { ab: B_FIRST, linked: false })
+  await start($)
+  await clock.advance(1_000)
+  await bash($, 'git push')
+  expect(await rotateCall($)).toEqual({ result: 'the context starts over when this turn ends; end the turn now' })
+})
+
+test('a rotation in arm B hands the fresh context the issues, the commits, what the cleared one was sent and what ran, then has it carry on', async ($, on) => {
+  const { seen, clock, appended } = world($, on, { ab: B_FIRST, linked: false })
+  await start($)
+  await prompt($, 'hello')
+  await rotateCall($)
+  await end($)
+  await clock.advance(500)
+  const [kit] = appended()
+  expect(kit).toHaveLength(5)
+  expect(kit[0]).toContain('### #7 make the thing')
+  expect(kit[1]).toContain('### /w (jj)')
+  expect(kit[2]).toContain(`(its watch record, ${MAIL}/s2.json):\n- topics: harness`)
+  expect(kit[3]).toContain('dispatch → lane-a: go')
+  expect(kit[4]).toBe('Running in the background when the last turn ended (anything started since is not listed):\n- nothing')
+  expect(commitsRun(seen.runs)).toEqual(['/w', transcript('s1')])
+  expect(seen.prompts.at(-1)).toEqual({ text: CARRY_ON_B })
+})
+
+test('in arm B a compaction keeps the issues, the commits, what was sent and what ran around the summary', async ($, on) => {
+  world($, on, { ab: B_FIRST })
+  compactions(on)
+  await start($)
+  await stop($, [shell('cargo test')])
+  const texts = (await $.session.compact({ trigger: 'auto', messages: [OLD] })).messages?.map(({ text }) => text) ?? []
+  expect(texts).toHaveLength(7)
+  expect(texts[0]).toContain('### #7 make the thing')
+  expect(texts[1]).toContain('### /w (jj)')
+  expect(texts[2]).toContain('- topics: harness')
+  expect(texts[3]).toContain('dispatch → lane-a: go')
+  expect(texts[4]).toBe('Running in the background when the last turn ended (anything started since is not listed):\n- shell: cargo test')
+  expect(texts[5]).toBe('the summary')
+})
+
+test('from the switch on a session runs its other arm', async ($, on) => {
+  const { seen, clock } = world($, on, { ab: B_FIRST })
+  await clock.advance(DAY)
+  await start($)
+  await prompt($, 'hello')
+  expect(seen.prompts[0].context?.[0]).toContain(`Your state file is ${STATE}`)
+  expect(commitsRun(seen.runs)).toBeUndefined()
+})
+
+test('an A/B file that cannot be read is reported, and the session runs arm A', async ($, on) => {
+  const { seen } = world($, on, { ab: '{"seed": "s3"}' })
+  await start($)
+  await prompt($, 'hello')
+  expect(seen.prompts[0].context?.[0]).toContain(`Your state file is ${STATE}`)
+  expect(seen.logs).toContain(`lane: ${AB} was not read, so this session runs arm A: it needs a seed and a switchAt time`)
+})
+
+test('commits that cannot be listed are named in their place, and the rest still loads', async ($, on) => {
+  const { seen } = world($, on, { ab: B_FIRST, commits: ran('', 1, 'jj: Error: There is no jj repo in "."') })
+  await start($)
+  await prompt($, 'hello')
+  expect(seen.prompts[0].context).toEqual([
+    expect.stringContaining('### #7 make the thing'),
+    'The commits in the workspaces this session used could not be listed (jj: Error: There is no jj repo in "."). Look at them yourself (jj log, git log) before you pick up work.',
+    expect.stringContaining('- topics: harness'),
+  ])
+})
+
+test('each workspace shows its working copy, the commits below it that trunk lacks, and the others its output named', () => {
+  expect(commitsBlock([JJ, GIT])).toBe(
+    'The workspaces this session used: those its transcript names, most recently first (the -R of its jj commands, the -C of its git ones, ' +
+      "where it cd'd and where it edited files), then its cwd. Each with its working copy as the last command run in it left it, the commits below " +
+      'that trunk lacks, and other commits its commit, push and land output named.\n\n' +
+      '### /w (jj)\n' +
+      'Working copy: zzzzzzzz aaaa1111 2026-11-09 12:00Z (no description) (empty), not pushed\n' +
+      'Below it and not on trunk, newest first:\n' +
+      '- yyyyyyyy bbbb2222 2026-11-09 11:00Z mods/lane: arm B [harness/v12-lane-mod], pushed\n' +
+      '- [3 more]\n' +
+      'Named in its output:\n' +
+      '- xxxxxxxx cccc3333 2026-11-09 10:00Z lanes: landed [master], pushed\n\n' +
+      '### /g (git)\n' +
+      'HEAD: 1234567 2026-11-09 09:00Z g2 [main], not pushed; 2 files changed in the working tree\n' +
+      'Below it and not on trunk: none.',
+  )
+})
+
+test('workspaces past the cap are counted, and none found is said', () => {
+  const big = (i: number): Workspace => ({ ...JJ, root: `/w${i}`, line: Array.from({ length: 10 }, () => ({ ...JJ.line[0], subject: 'x'.repeat(300) })) })
+  const block = commitsBlock(Array.from({ length: 6 }, (_, i) => big(i)))
+  expect(block.length).toBeLessThan(CAPS.commits + 600)
+  expect(block).toMatch(/\n\n\[\d more workspaces are left out\.\]$/)
+  expect(commitsBlock([])).toBe("No jj or git workspace was found in this session's cwd or transcript.")
+})
+
+test('a session with no watch record, or one that cannot be read, is told so in its place', async ($, on) => {
+  const { seen, files } = world($, on)
+  delete files[`${MAIL}/s1.json`]
+  await start($)
+  await prompt($, 'hello')
+  expect(seen.prompts[0].context?.[4]).toBe(
+    `This session watches no agent-mail topic or thread: its watch record, ${MAIL}/s1.json, does not exist. Run agent-mail wait --topic lane-a once, so its mail reaches it.`,
+  )
+  files[`${MAIL}/s1.json`] = '{"topics": "harness"}'
+  await sessionStart($, 'resume')
+  await prompt($, 'again')
+  expect(seen.prompts[1].context?.[4]).toBe(
+    `This session's watch record, ${MAIL}/s1.json, could not be read (its topics and threads must be lists of names). Run agent-mail wait --topic lane-a once, so its mail reaches it.`,
+  )
+})
+
+test('the threads watched are listed newest first, and those past the cap are counted', () => {
+  expect(mailBlock('/m.json', 'lane-a', { topics: ['harness', 'dispatch'], threads: ['h1', 'h2', 'h3'] })).toBe(
+    'This session watches these agent-mail topics and threads (its watch record, /m.json):\n- topics: harness, dispatch\n- threads, newest first: h3, h2, h1',
+  )
+  const many = Array.from({ length: 2_000 }, (_, i) => `h32aa${String(i).padStart(4, '0')}`)
+  const block = mailBlock('/m.json', 'lane-a', { topics: [], threads: many })
+  expect(block).toContain('- topics: none\n- threads, newest first: h32aa1999, h32aa1998')
+  expect(block.length).toBeLessThan(CAPS.mail + 300)
+  expect(block).toMatch(/ \[\d+ older\]$/)
+})
+
+test('a rotate tool the engine refused before a session was bound is offered at the next start hook, and once', async ($, on) => {
+  const { seen } = world($, on, { refusedRegisters: 1 })
+  await sessionStart($, 'startup')
+  expect(seen.tools).toEqual([])
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await prompt($, 'hello')
+  expect(seen.tools).toEqual(['rotate'])
+})
+
+test('a rotate tool refused at every start hook is offered at the first prompt, before any turn could call it', async ($, on) => {
+  const { seen } = world($, on, { refusedRegisters: 2 })
+  await sessionStart($, 'startup')
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  expect(seen.tools).toEqual([])
+  await prompt($, 'hello')
+  expect(seen.tools).toEqual(['rotate'])
 })

@@ -1,1 +1,23 @@
-{"owen":{"kept":[{"at":"2026-11-06T09:00:00Z","from":"Owen","text":"before a compaction whose link names nothing","more":0},{"at":"2026-11-06T09:01:00Z","from":"Owen","text":"after","more":0}],"older":0},"peers":{"kept":[],"older":0}}
+{
+  "owen": {
+    "kept": [
+      {
+        "at": "2026-11-06T09:00:00Z",
+        "from": "Owen",
+        "text": "before a compaction whose link names nothing",
+        "more": 0
+      },
+      {
+        "at": "2026-11-06T09:01:00Z",
+        "from": "Owen",
+        "text": "after",
+        "more": 0
+      }
+    ],
+    "older": 0
+  },
+  "peers": {
+    "kept": [],
+    "older": 0
+  }
+}
