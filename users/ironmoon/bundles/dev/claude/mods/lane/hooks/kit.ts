@@ -7,8 +7,12 @@ export type Item = {
   updated: string
   labels: string[]
   body: string
-  newest: { by: string; at: string; body: string } | null
+  /** The newest comment, or with `mine` the newest of anyone else's. */
+  newest: Comment | null
+  /** In arm B, the newest of the lane's own comments, which hooks/mine.sh finds from its contexts' transcripts. */
+  mine?: Comment | null
 }
+type Comment = { by: string; at: string; body: string }
 
 /** One message to the session, as hooks/messages.jq prints it: its text cut to CAPS.message, `more` the characters cut. */
 export type Said = { at: string; from: string; text: string; more: number }
@@ -95,22 +99,40 @@ export function carriedBlocks(files: { path: string; text: string | null; why?: 
   })
 }
 
-function itemText({ number, title, url, updated, labels, body, newest }: Item): string {
-  const comment = newest === null ? 'No comments.' : `Newest comment, by ${newest.by} at ${newest.at}:\n${clip(newest.body, CAPS.itemText)}`
-  return `### #${number} ${title}\n${url} · updated ${updated} · ${labels.join(', ')}\n\n${clip(body, CAPS.itemText)}\n\n${comment}`
+const shown = (heading: string, { by, at, body }: Comment) => `${heading}, by ${by} at ${at}:\n${clip(body, CAPS.itemText)}`
+
+const close = 'You filed this issue: once its "Closes with" holds, close it, with a comment saying what met it.'
+
+function itemText({ number, title, url, updated, labels, body, newest, mine }: Item, filed: boolean): string {
+  const comments =
+    mine == null
+      ? [newest === null ? 'No comments.' : shown('Newest comment', newest)]
+      : [newest === null ? 'No comment by anyone else.' : shown('Newest comment by anyone else', newest), shown('Newest comment by this lane', mine)]
+  return [`### #${number} ${title}\n${url} · updated ${updated} · ${labels.join(', ')}`, clip(body, CAPS.itemText), ...comments, ...(filed ? [close] : [])].join('\n\n')
 }
 
 /** The tracker's repository: the lanes' issues are read from it, and arm B keeps its notes on them. */
 export const TRACKER = 'agents/work'
 
-export function itemsBlock(name: string, items: Item[]): string {
+/** An issue the lane filed that is still open, as hooks/open.sh prints it: its "Closes with" line, null when it has none. */
+export type Open = { number: number; title: string; comments: number; closes: string | null }
+
+/** The open issues a lane filed, put before it again at a turn's end, when what closes each may have come to hold. */
+export const closeBlock = (open: Open[]) =>
+  `These issues you filed are still open:\n${open
+    .map(({ number, title, closes }) => `- #${number} ${title}. ${closes === null ? 'It has no "Closes with" line: write one.' : `Closes with: ${closes}`}`)
+    .join('\n')}\nFor each: if its "Closes with" holds now, close it with a comment saying what met it; if not, carry on.`
+
+/** The lane's open issues, those it filed (`filed`, by number) marked to close once their "Closes with" holds. */
+export function itemsBlock(name: string, items: Item[], filed: number[] = []): string {
   const [slash, colon] = ownerLabels(name)
   if (items.length === 0) return `No open ${TRACKER} issue carries ${slash} or ${colon}.`
-  const full = within(items.map(itemText), CAPS.items)
+  const full = within(items.map((item) => itemText(item, filed.includes(item.number))), CAPS.items)
   const titles = within(items.slice(full.kept.length).map(({ number, title, url }) => `- #${number} ${title} ${url}`), full.left)
   const listed = titles.kept.length === 0 ? '' : `\n\nAlso open, less recently updated, without their text:\n${titles.kept.join('\n')}`
   const unlisted = titles.dropped === 0 ? '' : `\n\n[${titles.dropped} more are open, the least recently updated; list them on the tracker.]`
-  return `The open ${TRACKER} issues given to ${name} (${slash} or ${colon}), most recently updated first, each with its newest comment:\n\n${full.kept.join('\n\n')}${listed}${unlisted}`
+  const each = items.some(({ mine }) => mine != null) ? 'its newest comment by anyone else and, where this lane commented, its own newest' : 'its newest comment'
+  return `The open ${TRACKER} issues given to ${name} (${slash} or ${colon}), most recently updated first, each with ${each}:\n\n${full.kept.join('\n\n')}${listed}${unlisted}`
 }
 
 export const unreadItemsBlock = (name: string, why: string) =>
@@ -218,9 +240,10 @@ function toWrite(ask: Ask): { what: string; where: string; carrier: string } {
     return { what: `${state}, so a fresh context can carry on from it with nothing else.`, where: 'the state file', carrier: 'the file' }
   }
   const what =
-    'The next context is handed your open issues, each with its newest comment, the messages you were sent, what still runs and the commits in your workspaces, and nothing else. ' +
+    'The next context is handed your open issues, each with the newest comment by anyone else and your own newest, the messages you were sent, what still runs and the commits in your workspaces, and nothing else. ' +
     'Write what it needs beyond those as a comment on the issue it concerns: where the work stands, what was decided and why, the next step, what you promised. ' +
-    `A concern no open issue covers gets a new issue labelled owner/${ask.name}, and priority/backlog if nothing acts on it now, with the note as its first comment. ` +
+    `A concern no open issue covers gets a new issue labelled owner/${ask.name}, and priority/backlog if nothing acts on it now, with a "Closes with:" line in its body saying what ends it, and the note as its first comment. ` +
+    'Close it only once that holds: the next context is handed open issues alone. ' +
     'Leave out what the next context is handed anyway.'
   return { what, where: 'a comment on its issue', carrier: 'a comment' }
 }

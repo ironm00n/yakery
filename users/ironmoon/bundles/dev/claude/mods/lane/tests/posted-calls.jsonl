@@ -1,0 +1,27 @@
+{"type": "assistant", "uuid": "a1", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "curl -sX POST \"$api/issues/41/comments\" -d @note.json | jq -r .html_url"}}]}}
+{"type": "user", "uuid": "u1", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "https://code.ironmoon.dev/agents/work/issues/41#issuecomment-1945"}]}}
+{"type": "assistant", "uuid": "a2", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "curl -s -X POST https://code.ironmoon.dev/api/v1/repos/agents/work/issues/7/comments --data-binary @c.json"}}]}}
+{"type": "user", "uuid": "u2", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "{\"id\":1946,\"html_url\":\"https://code.ironmoon.dev/agents/work/issues/7#issuecomment-1946\",\"user\":{\"id\":3,\"login\":\"agent\"}}"}]}}
+{"type": "assistant", "uuid": "a3", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t3", "name": "Bash", "input": {"command": "curl -s -X POST $api/issues/9/comments -d '{\"body\":\"x\"}' | jq .id"}}]}}
+{"type": "user", "uuid": "u3", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t3", "content": "1947"}]}}
+{"type": "assistant", "uuid": "a4", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t4", "name": "Bash", "input": {"command": "curl -s -o /dev/null -w '%{http_code}' -X POST $api/issues/9/comments -d @c"}}]}}
+{"type": "user", "uuid": "u4", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t4", "content": "201"}]}}
+{"type": "assistant", "uuid": "a5", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t5", "name": "Bash", "input": {"command": "curl -s $api/issues/41/comments | jq '.[-1]'"}}]}}
+{"type": "user", "uuid": "u5", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t5", "content": "{\"id\": 1999, \"body\": \"read, not posted\"}"}]}}
+{"type": "assistant", "uuid": "a6", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t6", "name": "Bash", "input": {"command": "for n in 3 4; do curl -s -X POST $api/issues/$n/comments -d @c | jq -r .html_url; done"}}]}}
+{"type": "user", "uuid": "u6", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t6", "content": [{"type": "text", "text": "https://code.ironmoon.dev/agents/work/issues/3#issuecomment-1950\nhttps://code.ironmoon.dev/agents/work/issues/4#issuecomment-1951"}]}]}}
+{"type": "assistant", "uuid": "a7", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t7", "name": "Bash", "input": {"command": "curl -s -X POST $api/issues -d @issue.json"}}]}}
+{"type": "user", "uuid": "u7", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t7", "content": "{\"id\": 400, \"number\": 77, \"html_url\": \"https://code.ironmoon.dev/agents/work/issues/77\"}"}]}}
+{"type": "assistant", "uuid": "a8", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t8", "name": "Bash", "input": {"command": "curl -s -X POST $api/issues/5/comments -d @c"}}]}, "isSidechain": true}
+{"type": "user", "uuid": "u8", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t8", "content": "{\"id\": 1960}"}]}, "isSidechain": true}
+{"type": "assistant", "uuid": "a9", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t9", "name": "Bash", "input": {"command": "curl -s --request POST $api/issues/41/comments -H \"Content-Type: application/json\" -d @n | jq ."}}]}}
+{"type": "user", "uuid": "u9", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t9", "content": "{\n  \"id\": 1952,\n  \"user\": {\n    \"id\": 2,\n    \"login\": \"agent\"\n  }\n}"}]}}
+{"type": "assistant", "uuid": "ap", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tp", "name": "Bash", "input": {"command": "curl -s -X PATCH $api/issues/comments/1998 -d @fixed.json -o /dev/null -w %{http_code}"}}]}}
+{"type": "user", "uuid": "up", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tp", "content": "200"}]}}
+{"type": "assistant", "uuid": "ai2", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "ti2", "name": "Bash", "input": {"command": "curl -s -X POST $api/issues -d @i2.json | jq -r .html_url"}}]}}
+{"type": "user", "uuid": "ui2", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "ti2", "content": "https://code.ironmoon.dev/agents/work/issues/78"}]}}
+{"type": "assistant", "uuid": "ai3", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "ti3", "name": "Bash", "input": {"command": "curl -s -X POST $api/issues -d @i3.json | jq .number"}}]}}
+{"type": "user", "uuid": "ui3", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "ti3", "content": "79"}]}}
+{"type": "assistant", "uuid": "ai4", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "ti4", "name": "Bash", "input": {"command": "curl -s \"$api/issues?state=open\" | jq '.[] | {number, html_url}'"}}]}}
+{"type": "user", "uuid": "ui4", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "ti4", "content": "{\"number\": 80, \"html_url\": \"https://code.ironmoon.dev/agents/work/issues/80\"}"}]}}
+{"type": "user", "torn

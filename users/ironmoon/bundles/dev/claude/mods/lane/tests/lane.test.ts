@@ -13,6 +13,7 @@ const CARRY_ON = 'This context started over at a rotation. Carry on from your st
 const CARRY_ON_B = 'This context started over at a rotation. Carry on from the blocks just before this message: they are all that came across.'
 const AB = `${HOME}/.local/state/claude-lanes/ab.json`
 const CHECKS = `${HOME}/.local/state/claude-lanes/checks`
+const CONTEXTS = `${HOME}/.local/state/claude-lanes/contexts/lane-a.jsonl`
 const CLAUDE_BIN = '/nix/store/x-claude-code-2.1.322/bin/.claude-wrapped'
 const DAY = 86_400_000
 /** With seed s3, lane-a's coin puts it in arm B first and lane-b's in arm A: SHA-256 of "s3\nlane-a" begins b9, of
@@ -83,6 +84,11 @@ type World = {
   refusedRegisters?: number
   check?: ProcessRunResult
   exe?: ProcessRunResult
+  /** What hooks/mine.sh prints for each transcript: the ids of the comments its session posted, and the issues it filed. */
+  posted?: Record<string, number[]>
+  filed?: Record<string, number[]>
+  /** What hooks/open.sh prints: those of the issues it is asked about that are open; read at each call. */
+  open?: { now: { number: number; title: string; comments: number; closes: string | null }[] }
 }
 
 /** The engine and file system beneath the mod: the session s1 named lane-a (`named`), its state file linked (`linked`), a
@@ -92,7 +98,7 @@ type World = {
 function world(
   $: Engine,
   on: On,
-  { named = true, linked = true, tokens = 250_000, items = ran(JSON.stringify([ITEM])), jq, commits = ran(JSON.stringify([JJ])), clears = true, ab, refusedRegisters = 0, check = ran(''), exe = ran(`${CLAUDE_BIN}\n`) }: World = {},
+  { named = true, linked = true, tokens = 250_000, items = ran(JSON.stringify([ITEM])), jq, commits = ran(JSON.stringify([JJ])), clears = true, ab, refusedRegisters = 0, check = ran(''), exe = ran(`${CLAUDE_BIN}\n`), posted = {}, filed = {}, open = { now: [] } }: World = {},
 ) {
   const files: Record<string, string> = {
     [`${HOME}/.claude/sessions/41.json`]: JSON.stringify({ pid: 41, sessionId: 's1', ...(named && { name: 'lane-a' }) }),
@@ -140,6 +146,12 @@ function world(
           ? check
           : e.argv[0] === 'readlink'
           ? e.argv.join(' ') === 'readlink -f /proc/41/exe' ? exe : ran('', 1, `readlink: ${e.argv.at(-1)}: No such file or directory`)
+          : e.argv[1]?.endsWith('/hooks/open.sh')
+          ? ran(JSON.stringify(open.now.filter(({ number }) => e.argv.slice(3).includes(String(number)))))
+          : e.argv[1]?.endsWith('/hooks/mine.sh')
+          ? e.argv[3] === 'agents/work'
+            ? ran(JSON.stringify({ comments: posted[e.argv[2]] ?? [], issues: filed[e.argv[2]] ?? [] }))
+            : ran('', 2, 'mine.sh: no such repository')
           : e.argv[0] !== 'jq'
           ? e.argv[1]?.endsWith('/hooks/commits.sh')
             ? commits
@@ -529,6 +541,148 @@ test('a check that does not start is logged, and the fresh context carries on al
   expect(seen.prompts.at(-1)).toEqual({ text: CARRY_ON })
 })
 
+test("an issue the lane commented on shows the newest comment by anyone else and the lane's own newest, each with its author and time", () => {
+  const ordered = { by: 'agent', at: '2026-11-09T11:00:00Z', body: 'lane-a: start with the step in your first prompt.' }
+  const note = { by: 'agent', at: '2026-11-09T12:00:00Z', body: 'state as of df4ed5f: read 1-5000 logged and pushed' }
+  const block = itemsBlock('lane-a', [{ ...ITEM, newest: ordered, mine: note }, { ...ITEM, number: 8, newest: null, mine: note }, { ...ITEM, number: 9 }])
+  expect(block).toContain(`Newest comment by anyone else, by agent at 2026-11-09T11:00:00Z:\n${ordered.body}\n\nNewest comment by this lane, by agent at 2026-11-09T12:00:00Z:\n${note.body}`)
+  expect(block).toContain(`No comment by anyone else.\n\nNewest comment by this lane, by agent at 2026-11-09T12:00:00Z:\n${note.body}`)
+  expect(block).toContain('### #9 make the thing\nhttps://w/7 · updated 2026-11-09T10:00:00Z · owner/lane-a\n\nhis words\n\nNewest comment, by dispatch at 2026-11-09T11:00:00Z:\nhalf done')
+  expect(block).toContain('most recently updated first, each with its newest comment by anyone else and, where this lane commented, its own newest:')
+})
+
+const itemsRun = (runs: (readonly string[])[]) => runs.filter((argv) => argv[1]?.endsWith('/hooks/items.sh')).map((argv) => argv.slice(2))
+const postedRun = (runs: (readonly string[])[]) => runs.filter((argv) => argv[1]?.endsWith('/hooks/mine.sh')).map((argv) => argv[2])
+const contexts = (files: Record<string, string>) => files[CONTEXTS].trim().split('\n').map((line) => JSON.parse(line))
+
+test("in arm B the comments the lane posted in any of its contexts are told from everyone else's", async ($, on) => {
+  const ordered = { by: 'agent', at: '2026-11-09T11:00:00Z', body: 'lane-a: start with the step in your first prompt.' }
+  const note = { by: 'agent', at: '2026-11-09T12:00:00Z', body: 'state as of df4ed5f: read 1-5000 logged and pushed' }
+  const items = ran(JSON.stringify([{ ...ITEM, newest: ordered, mine: note }]))
+  const { seen, files, clock, appended } = world($, on, { ab: B_FIRST, linked: false, items, posted: { [transcript('s1')]: [52] } })
+  files[CONTEXTS] = `${JSON.stringify({ id: 's0', transcript: transcript('s0'), comments: [40] })}\n`
+  await start($)
+  await prompt($, 'hello')
+  expect(itemsRun(seen.runs).at(-1)).toEqual(['lane-a', 'agents/work', '[40]'])
+  await rotateCall($)
+  await end($)
+  await clock.advance(500)
+  expect(itemsRun(seen.runs).at(-1)).toEqual(['lane-a', 'agents/work', '[40,52]'])
+  expect(contexts(files)).toEqual([
+    { id: 's0', transcript: transcript('s0'), comments: [40] },
+    { id: 's1', transcript: transcript('s1'), comments: [52], issues: [] },
+    { id: 's2', transcript: transcript('s2') },
+  ])
+  const [kit] = appended()
+  expect(kit[0]).toContain(`Newest comment by anyone else, by agent at 2026-11-09T11:00:00Z:\n${ordered.body}`)
+  expect(kit[0]).toContain(`Newest comment by this lane, by agent at 2026-11-09T12:00:00Z:\n${note.body}`)
+})
+
+test('in arm B an issue the lane filed in any of its contexts is to be closed once its "Closes with" holds; one filed by others is not', async ($, on) => {
+  const items = ran(JSON.stringify([{ ...ITEM, number: 42 }, { ...ITEM, number: 9 }, ITEM]))
+  const { clock, files, appended } = world($, on, { ab: B_FIRST, linked: false, items, filed: { [transcript('s1')]: [42] } })
+  files[CONTEXTS] = `${JSON.stringify({ id: 's0', transcript: transcript('s0'), comments: [], issues: [7] })}\n`
+  await start($)
+  await prompt($, 'hello')
+  await rotateCall($)
+  await end($)
+  await clock.advance(500)
+  const [kit] = appended()
+  const close = 'You filed this issue: once its "Closes with" holds, close it, with a comment saying what met it.'
+  const issue = (n: number) => kit[0].split('### #').find((part) => part.startsWith(`${n} `)) ?? ''
+  expect(issue(42)).toContain(close)
+  expect(issue(7)).toContain(close)
+  expect(issue(9)).not.toContain(close)
+  expect(contexts(files)[1]).toEqual({ id: 's1', transcript: transcript('s1'), comments: [], issues: [42] })
+})
+
+test('a context that has ended is read for its comments once, and one a compaction keeps going is read again each time', async ($, on) => {
+  const { seen, clock } = world($, on, { ab: B_FIRST, linked: false, posted: { [transcript('s1')]: [52], [transcript('s2')]: [60] } })
+  compactions(on)
+  await start($)
+  await prompt($, 'hello')
+  await rotateCall($)
+  await end($)
+  await clock.advance(500)
+  await $.session.compact({ trigger: 'auto', messages: [OLD] })
+  await $.session.compact({ trigger: 'auto', messages: [OLD] })
+  expect(postedRun(seen.runs)).toEqual([transcript('s1'), transcript('s2'), transcript('s2')])
+  expect(itemsRun(seen.runs).at(-1)).toEqual(['lane-a', 'agents/work', '[52,60]'])
+})
+
+test('in arm A each context is still recorded, for a later switch, but no comment is read', async ($, on) => {
+  const { seen, files, clock } = world($, on)
+  await start($)
+  await prompt($, 'hello')
+  await rotateCall($)
+  await end($)
+  await clock.advance(500)
+  expect(contexts(files)).toEqual([{ id: 's1', transcript: transcript('s1') }, { id: 's2', transcript: transcript('s2') }])
+  expect(postedRun(seen.runs)).toEqual([])
+  expect(itemsRun(seen.runs).at(-1)).toEqual(['lane-a', 'agents/work'])
+})
+
+test("a log of contexts that can't be read is reported, and the issues still load, without the lane's own comments told apart", async ($, on) => {
+  const { seen, files } = world($, on, { ab: B_FIRST, linked: false })
+  files[CONTEXTS] = '{"id": "s0", torn\n'
+  await start($)
+  await prompt($, 'hello')
+  expect(seen.logs.some((line) => line.startsWith(`lane: ${CONTEXTS} was not read, so this kit tells no comment as the lane's own:`))).toBe(true)
+  expect(itemsRun(seen.runs).at(-1)).toEqual(['lane-a', 'agents/work'])
+  expect(seen.prompts[0].context?.[0]).toContain('### #7 make the thing')
+})
+
+const openRun = (runs: (readonly string[])[]) => runs.filter((argv) => argv[1]?.endsWith('/hooks/open.sh')).map((argv) => argv.slice(2))
+const FILED = `${JSON.stringify({ id: 's0', transcript: transcript('s0'), comments: [], issues: [42, 43, 44] })}\n`
+const closing = (...issues: string[]) =>
+  `These issues you filed are still open:\n${issues.join('\n')}\nFor each: if its "Closes with" holds now, close it with a comment saying what met it; if not, carry on.`
+
+test("at a turn's end in arm B the open issues the lane filed are put before it, each with what closes it, in one continuation", async ($, on) => {
+  const open = { now: [{ number: 42, title: 'hold the count', comments: 1, closes: 'the user has asked for the count and been given it.' }, { number: 43, title: 'fix the build', comments: 0, closes: null }] }
+  const { seen, files } = world($, on, { ab: B_FIRST, linked: false, open })
+  files[CONTEXTS] = FILED
+  await start($)
+  await prompt($, 'what was the count?')
+  expect((await stop($)).block).toBe(closing('- #42 hold the count. Closes with: the user has asked for the count and been given it.', '- #43 fix the build. It has no "Closes with" line: write one.'))
+  expect(openRun(seen.runs)).toEqual([['agents/work', '42', '43', '44']])
+  expect((await stop($, [], { active: true })).block).toBeUndefined()
+})
+
+test("an issue whose condition doesn't hold is put before the lane once a user turn, again in it only after a new comment, and not for a notification's turn", async ($, on) => {
+  const open = { now: [{ number: 42, title: 'hold the count', comments: 1, closes: 'the user has asked for the count.' }] }
+  const { files } = world($, on, { ab: B_FIRST, linked: false, open })
+  files[CONTEXTS] = FILED
+  await start($)
+  await prompt($, 'one')
+  const asked = closing('- #42 hold the count. Closes with: the user has asked for the count.')
+  expect((await stop($)).block).toBe(asked)
+  expect((await stop($)).block).toBeUndefined()
+  open.now[0].comments = 2
+  expect((await stop($)).block).toBe(asked)
+  expect((await stop($)).block).toBeUndefined()
+  await $.prompt.submit({ text: 'a background task finished', origin: { kind: 'task-notification' }, wait: false })
+  expect((await stop($)).block).toBeUndefined()
+  await prompt($, 'two')
+  expect((await stop($)).block).toBe(asked)
+})
+
+test('the ask to start over comes before the issues, and arm A is never asked to close any', async ($, on) => {
+  const open = { now: [{ number: 42, title: 'hold the count', comments: 1, closes: 'x' }] }
+  const b = world($, on, { ab: B_FIRST, linked: false, open, tokens: 650_000 })
+  b.files[CONTEXTS] = FILED
+  await start($)
+  expect((await stop($)).block).toContain('The context holds 650k tokens')
+  expect(openRun(b.seen.runs)).toEqual([])
+})
+
+test('in arm A no issue is put before the lane at a turn\'s end', async ($, on) => {
+  const { seen, files } = world($, on, { open: { now: [{ number: 42, title: 'hold the count', comments: 1, closes: 'x' }] } })
+  files[CONTEXTS] = FILED
+  await start($)
+  expect((await stop($)).block).toBeUndefined()
+  expect(openRun(seen.runs)).toEqual([])
+})
+
 test('front matter names the files a state file carries', () => {
   expect(carried(STATE_TEXT)).toEqual([NOTES, '/w/gone.md'])
   expect(carried('# no front matter\ncarry:\n  - /x\n')).toEqual([])
@@ -629,7 +783,11 @@ test("arm B's ask has the lane leave its notes on its issues, filing one for a c
   const [asked] = (await bash($, 'jj git push --bookmark x')).additionalContext ?? []
   expect(asked).toContain('You landed work this turn and the context holds 250k tokens, so this context is due to start over.')
   expect(asked).toContain('Write what it needs beyond those as a comment on the issue it concerns')
-  expect(asked).toContain('A concern no open issue covers gets a new issue labelled owner/lane-a, and priority/backlog if nothing acts on it now, with the note as its first comment.')
+  expect(asked).toContain('The next context is handed your open issues, each with the newest comment by anyone else and your own newest,')
+  expect(asked).toContain(
+    'A concern no open issue covers gets a new issue labelled owner/lane-a, and priority/backlog if nothing acts on it now, with a "Closes with:" line in its body saying what ends it, and the note as its first comment. ' +
+      'Close it only once that holds: the next context is handed open issues alone.',
+  )
   expect(asked).toContain('say in a comment on its issue what each is for and what to do with its result')
   expect(asked).toContain('If you are partway through a step that a comment cannot carry, finish the step first.')
   expect(asked).not.toContain('state file')

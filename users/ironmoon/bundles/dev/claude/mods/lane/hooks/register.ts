@@ -44,6 +44,14 @@ let landed = false
  * when the latest came. */
 let asked: { landing?: number; end?: number; at?: number } = {}
 let rotating = false
+/** Per issue the lane filed, how many comments it had when it was last put before the lane in this user turn: it is put
+ * again only once another comment is posted to it, and afresh at the next turn someone's words start. */
+let shown = new Map<number, number>()
+/** Turns no one's new words start: a notification, a schedule, an observer, a follow-up, one the engine can't place, and
+ * this mod's own prompt to carry on. */
+const MACHINE = new Set(['task-notification', 'scheduled-trigger', 'observer', 'observer-activity', 'auto-continuation', 'unclassified'])
+const startsUserTurn = (origin: { kind: string; name?: string } | undefined) =>
+  origin !== undefined && !MACHINE.has(origin.kind) && !(origin.kind === 'plugin' && origin.name === 'lane')
 
 const user = (text: string): SessionMessage => ({ role: 'user', text, toolUses: [] })
 const why = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure))
@@ -108,13 +116,78 @@ async function stateBlocks($: EngineInterface, me: Lane): Promise<string[]> {
   return [kit.stateBlock(me.link, path, text), ...kit.carriedBlocks(files)]
 }
 
-async function itemsBlock($: EngineInterface, { name }: Lane): Promise<string> {
+/** The lane's open issues; given what the lane posted (arm B), each with the newest of anyone else's comments and the
+ * lane's own newest, so a note it left never hides another session's latest word, and those it filed marked to close. */
+async function itemsBlock($: EngineInterface, { name }: Lane, own?: Posted): Promise<string> {
   try {
-    const run = await $.process.run(['bash', `${$.plugin.root}/hooks/items.sh`, name, kit.TRACKER], { timeoutMs: KIT_MS })
+    const mine = own === undefined ? [] : [JSON.stringify(own.comments)]
+    const run = await $.process.run(['bash', `${$.plugin.root}/hooks/items.sh`, name, kit.TRACKER, ...mine], { timeoutMs: KIT_MS })
     if (run.exitCode !== 0) return kit.unreadItemsBlock(name, lastLine(run.stderr) || `items.sh exited ${run.exitCode}`)
-    return kit.itemsBlock(name, JSON.parse(run.stdout))
+    return kit.itemsBlock(name, JSON.parse(run.stdout), own?.issues)
   } catch (failure) {
     return kit.unreadItemsBlock(name, why(failure))
+  }
+}
+
+/** What a context posted to the tracker: the ids of its comments and the numbers of the issues it filed. */
+type Posted = { comments: number[]; issues: number[] }
+/** One context the lane has had, and once it has ended and been read (arm B), what it posted. */
+type Context = Session & Partial<Posted>
+const contextsOf = ({ home, name }: Lane) => `${home}/.local/state/claude-lanes/contexts/${name}.jsonl`
+
+/** The lane's contexts, oldest first, from the log the mod keeps, one row each, with `sessions` added if missing: a kit
+ * is built at the start of every context, so the log holds each the lane has had since the mod first ran for it. */
+async function contextsWith($: EngineInterface, me: Lane, sessions: Session[]): Promise<Context[]> {
+  const path = contextsOf(me)
+  const rows: Context[] = (await $.fs.exists(path))
+    ? (await $.fs.read(path)).split('\n').flatMap((line) => (line === '' ? [] : [JSON.parse(line)]))
+    : []
+  const added = [...new Map(sessions.map(({ id, transcript }) => [id, { id, transcript }])).values()].filter(({ id }) => !rows.some((row) => row.id === id))
+  return [...rows, ...added]
+}
+
+const writeContexts = ($: EngineInterface, me: Lane, rows: Context[]) => $.fs.write(contextsOf(me), rows.map((row) => `${JSON.stringify(row)}\n`).join(''))
+
+/** What a context posted (hooks/mine.sh on its transcript); undefined when it can't be read, so it is tried again at the
+ * next kit. */
+async function postedBy($: EngineInterface, me: Lane, context: Session): Promise<Posted | undefined> {
+  try {
+    const run = await $.process.run(['bash', `${$.plugin.root}/hooks/mine.sh`, await transcriptOf($, me, context), kit.TRACKER], { timeoutMs: KIT_MS })
+    if (run.exitCode === 0) return JSON.parse(run.stdout)
+    $.ui.log(`lane: the comments of context ${context.id} were not read: mine.sh exited ${run.exitCode}: ${lastLine(run.stderr)}`)
+  } catch (failure) {
+    $.ui.log(`lane: the comments of context ${context.id} were not read: ${why(failure)}`)
+  }
+  return undefined
+}
+
+/** Records the current context, and the one this kit follows, in the lane's log; in arm B also reads what each ended
+ * context posted, once, and the current one's afresh when a compaction keeps it going, and returns it all. */
+async function ownPosts($: EngineInterface, me: Lane, arm: kit.Arm, current: Session, before: Session | undefined): Promise<Posted | undefined> {
+  const rows = await contextsWith($, me, [...(before === undefined ? [] : [before]), current])
+  const read = arm === 'A' ? rows : await Promise.all(rows.map(async (row) => (row.comments !== undefined || row.id === current.id ? row : { ...row, ...(await postedBy($, me, row)) })))
+  await writeContexts($, me, read)
+  if (arm === 'A') return undefined
+  const going = before?.id === current.id ? await postedBy($, me, current) : undefined
+  const all = [...read, ...(going === undefined ? [] : [going])]
+  return { comments: all.flatMap(({ comments }) => comments ?? []), issues: all.flatMap(({ issues }) => issues ?? []) }
+}
+
+/** The issues the lane filed (arm B, from its log of contexts) that are still open and not yet put before it in this
+ * user turn, or put since with no comment on them since; none when there are none, or they can't be read. */
+async function stillOpen($: EngineInterface, me: Lane): Promise<kit.Open[] | undefined> {
+  try {
+    if ((await armNow($, me)) !== 'B') return undefined
+    const filed = [...new Set((await contextsWith($, me, [])).flatMap(({ issues }) => issues ?? []))]
+    if (filed.length === 0) return undefined
+    const run = await $.process.run(['bash', `${$.plugin.root}/hooks/open.sh`, kit.TRACKER, ...filed.map(String)], { timeoutMs: KIT_MS })
+    if (run.exitCode !== 0) throw new Error(lastLine(run.stderr) || `open.sh exited ${run.exitCode}`)
+    const due = (JSON.parse(run.stdout) as kit.Open[]).filter(({ number, comments }) => (shown.get(number) ?? -1) < comments)
+    for (const { number, comments } of due) shown.set(number, comments)
+    return due.length === 0 ? undefined : due
+  } catch (failure) {
+    $.ui.log(`lane: the open issues this lane filed were not checked at the turn's end: ${why(failure)}`)
+    return undefined
   }
 }
 
@@ -173,9 +246,12 @@ async function commitsBlocks($: EngineInterface, me: Lane, from: Session | undef
  * that fails says so in its place. */
 async function kitBlocks($: EngineInterface, me: Lane, before?: Session): Promise<{ arm: kit.Arm; blocks: string[] }> {
   const arm = await armNow($, me)
+  const current = session ?? { id: await $.session.id(), transcript: '' }
   const [own, items, mail, said] = await Promise.all([
     arm === 'A' ? stateBlocks($, me) : commitsBlocks($, me, before ?? session),
-    itemsBlock($, me),
+    ownPosts($, me, arm, current, before)
+      .catch((failure) => void $.ui.log(`lane: ${contextsOf(me)} was not read, so this kit tells no comment as the lane's own: ${why(failure)}`))
+      .then((comments) => itemsBlock($, me, comments)),
     mailBlock($, me),
     before && saidBlock($, me, before),
   ])
@@ -325,6 +401,7 @@ export const register: Register = (on) => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    if (startsUserTurn(e.origin)) shown = new Map()
     await offerRotate($)
     const carry = pending
     const me = carry && e.command === undefined ? await laneOf($) : undefined
@@ -371,10 +448,13 @@ export const register: Register = (on) => {
     const busy = kit.inFlight(tasks)
     const due =
       tokens >= Math.min(MARK, 0.6 * window) ? 'mark' : wasLanded && busy.length === 0 && tokens >= Math.min(UNIT, 0.2 * window) ? 'unit' : undefined
-    if (due === undefined || (asked.end !== undefined && tokens < asked.end + AGAIN)) return done
-    asked.end = tokens
-    asked.at = await $.clock.now()
-    return { ...done, block: kit.askBlock(tokens, due, busy, await askOf($, me)) }
+    if (due !== undefined && (asked.end === undefined || tokens >= asked.end + AGAIN)) {
+      asked.end = tokens
+      asked.at = await $.clock.now()
+      return { ...done, block: kit.askBlock(tokens, due, busy, await askOf($, me)) }
+    }
+    const open = await stillOpen($, me)
+    return open === undefined ? done : { ...done, block: kit.closeBlock(open) }
   })
 
   on('tool.call', { tool: `mcp__lane__${TOOL}` }, async ($, e) => {
