@@ -79,7 +79,7 @@ git config hook.commit-rules.command "$hooks/git-pre-push.sh"
 env -u CLAUDECODE git push -q origin main 2>"$dir/err"
 same "outside a session a wide push goes through" "$? $(git rev-parse origin/main)" "0 $tip"
 git reset -q --hard "$old"
-git push -q -f origin main
+env -u CLAUDECODE git push -q -f origin main
 git commit -q --allow-empty -m "$over"
 CLAUDECODE=1 git push -q origin main 2>"$dir/err"
 same "in a session it's refused" "$? $(git rev-parse origin/main)" "1 $old"
@@ -132,5 +132,22 @@ GIT_AUTHOR_EMAIL=agent@t git commit -q --allow-empty -m $'x: generated\n\nGenera
 CLAUDECODE=1 git push -q origin main 2>"$dir/err"
 same "an agent commit with Generated-by goes through" "$? $(git rev-parse origin/main)" "0 $(git rev-parse HEAD)"
 
+# a feature branch of ours is rewritten and force-pushed with a lease in a session; main, rewritten, is refused
+git reset -q --hard origin/main
+git push -q origin main:refs/heads/feat 2>"$dir/err"
+git checkout -q -b feat origin/main
+git commit -q --allow-empty -m 'x: feat'
+git push -q origin feat 2>"$dir/err"
+old_feat=$(git rev-parse HEAD)
+git commit -q --amend --allow-empty -m 'x: feat, reworded'
+CLAUDECODE=1 git push -q --force-with-lease=refs/heads/feat:"$old_feat" origin feat 2>"$dir/err"
+same "a rewritten feature branch is force-pushed with a lease" "$? $(git rev-parse origin/feat)" "0 $(git rev-parse HEAD)"
+git checkout -q main
+before=$(git rev-parse origin/main)
+git commit -q --amend --reset-author --allow-empty -m 'x: main, reworded'
+CLAUDECODE=1 git push -q -f origin main 2>"$dir/err"
+same "a rewritten main is refused" "$? $(git rev-parse origin/main) $(grep -c 'rewrites or deletes refs/heads/main' "$dir/err")" "1 $before 1"
+CLAUDECODE=1 git push -q origin :main 2>"$dir/err"
+same "so is deleting it" "$? $(git rev-parse origin/main)" "1 $before"
 echo "widths: ok $ok FAIL $failed"
 ((failed == 0))

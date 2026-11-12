@@ -263,6 +263,24 @@ home=$dir/noid push plain 1 git push -b main
 same "a push whose agent identity can't be read is refused" \
   "$(at plain main) $(grep -c "couldn't read the agent identity" "$dir/out")" "$before 1"
 q jj -R "$dir/plain" git push -b main
+# a feature bookmark of ours, rewritten, is force-pushed (jj moves it sideways, with jj's own lease); main, rewritten,
+# is refused and stays where it was
+q jj -R "$dir/plain" bookmark create feat -r main
+q jj -R "$dir/plain" git push -b feat
+q jj -R "$dir/plain" new main && echo f >"$dir/plain/f" && q jj -R "$dir/plain" commit -m 'x: feat'
+q jj -R "$dir/plain" bookmark move feat --to @-
+q jj -R "$dir/plain" git push -b feat
+q jj -R "$dir/plain" describe -r feat -m $'x: feat, reworded\n\nGenerated-by: m h'
+push plain 0 git push -b feat
+same "a rewritten feature bookmark is force-pushed" "$(at plain feat)" "$(id plain feat)"
+before=$(at plain main)
+q jj -R "$dir/plain" describe -r main -m 'x: main, reworded' --ignore-immutable
+push plain 1 git push -b main
+same "a rewritten main is refused, and stays where it was" \
+  "$(at plain main) $(grep -c 'rewrites or deletes refs/heads/main' "$dir/out")" "$before 1"
+q jj -R "$dir/plain" git fetch
+q jj -R "$dir/plain" bookmark set main -r main@origin --allow-backwards
+q jj -R "$dir/plain" new main
 git -C "$dir/plain" tag v1 "$(id plain main)"
 q jj -R "$dir/plain" git import
 push plain 0 git push -t v1
