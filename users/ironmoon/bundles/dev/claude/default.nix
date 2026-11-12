@@ -140,6 +140,23 @@ in
         # the generation's own copy, so a checkout of /etc/nixos without the script can't break every push
         command = "${./hooks}/git-pre-push.sh";
       };
+      # a lane on an agent account lands notes master by push, and its land can't reach his checkout, so his account
+      # runs what land runs after a push, every five minutes
+      systemd.user = lib.mkIf owner {
+        services.sync-checkout = {
+          Unit.Description = "Rebase his notes checkout onto notes master, as tools/land does after a push";
+          Service = {
+            Type = "oneshot";
+            Environment = "PATH=%h/.nix-profile/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin";
+            ExecStart = "%h/workspace/claude/tools/sync-checkout %h/workspace/claude";
+          };
+        };
+        timers.sync-checkout = {
+          Unit.Description = "Sync his notes checkout every five minutes";
+          Timer.OnCalendar = "*:0/5";
+          Install.WantedBy = [ "timers.target" ];
+        };
+      };
 
       home.file = {
         # no XDG: https://github.com/anthropics/claude-code/issues/1455
