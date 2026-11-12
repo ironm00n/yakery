@@ -90,6 +90,9 @@ unmarked=$(printf '%s\n' "${refs[@]}" | (((${#genv[@]})) && export "${genv[@]}";
   fail "couldn't read the agent identity or the commits this push sends, so nothing was pushed"
 [[ -z $unmarked ]] ||
   fail "$(unmarked_reason "$unmarked" change "Nothing was pushed. Add the trailer with \`jj describe -r <change>\`, then push again.")"
+rewritten=$(printf '%s\n' "${refs[@]}" | (((${#genv[@]})) && export "${genv[@]}"; cd "$root" && rewritten_main))
+[[ -z $rewritten ]] ||
+  fail "this push rewrites or deletes $(cut -d' ' -f1 <<<"$rewritten" | paste -sd' '), which only moves forward; nothing was pushed. A feature branch of ours is rewritten and force-pushed; main and master never"
 [[ -n $hook ]] || exec jj "$@" "${own[@]}"
 ((${#sending[@]} == 1)) ||
   fail "this push sends to ${!sending[*]}, and git runs the hook once per remote with that remote's lines; push to one at a time"
