@@ -23,6 +23,12 @@ in
   bundles.nvidia.enable = config.host.nvidia;
   bundles.appboxes.enable = config.host.appboxes;
   bundles.oom.enable = mkDefault true;
+  assertions = [
+    {
+      assertion = config.swapDevices != [ ];
+      message = "an interactive host needs swap: a swap partition, or bundles.swap";
+    }
+  ];
   # CR: disabled until this is less sketch
   bundles.stack.enable = mkDefault false;
   bundles.ksycoca.enable = mkDefault true;

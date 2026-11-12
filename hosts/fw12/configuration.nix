@@ -16,6 +16,10 @@
   ];
 
   bundles.vpn.mullvad.enable = true;
+  bundles.swap = {
+    enable = true;
+    size = 16 * 1024;
+  };
   bundles.virtualisation = {
     enable = false;
     libvirt = true;

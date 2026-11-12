@@ -15,6 +15,7 @@
     ./local-tls.nix
     ./distributed-builds.nix
     ./oom.nix
+    ./swap.nix
     ./stack
     ./appboxes.nix
     ./ksycoca
