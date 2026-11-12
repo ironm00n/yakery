@@ -31,9 +31,12 @@ squashes, or rewords existing commits.
 
 ### When contributing
 
-Use `Assisted-by` by default. Use `Generated-by` for work to be landed without
-human review. Agents may add either provenance trailer; neither claims human
-review.
+A commit authored as the agent identity (`agent@ironmoon.dev`, ironmoon-agent)
+carries `Generated-by`, always, and a push from a Claude Code
+session refuses one without it (the claude bundle's `hooks/lib/provenance.sh`).
+Under a human's identity, use `Assisted-by` by default and `Generated-by` for
+work to be landed without human review. Agents may add either provenance
+trailer; neither claims human review.
 
 Add your session's trailer when you start contributing:
 

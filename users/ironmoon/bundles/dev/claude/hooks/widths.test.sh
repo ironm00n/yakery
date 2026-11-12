@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# lib/widths.sh's rule on messages, the commits it reads from a push, and git-pre-push-widths.sh in a real git push.
+# lib/widths.sh's rule on messages, the commits it reads from a push, lib/provenance.sh's rule, and git-pre-push.sh in a
+# real git push.
 hooks=${1:-$HOME/.claude/hooks}
 dir=$(realpath "$(mktemp -d)")
 trap 'rm -rf "${dir:?}"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# the agent identity the provenance rule reads, as the claude bundle writes it
+export XDG_CONFIG_HOME=$dir/config
+mkdir -p "$XDG_CONFIG_HOME/git" && printf '[user]\n\temail = agent@t\n' >"$XDG_CONFIG_HOME/git/claude-identity.user"
 ok=0 failed=0
 same() {
   if [[ $2 == "$3" ]]; then ((ok++)); printf 'ok   %s\n' "$1"; else ((failed++)); printf 'FAIL %s\n     got  %s\n     want %s\n' "$1" "$2" "$3"; fi
@@ -70,8 +74,8 @@ same "the reason names each commit and what's over" "$(sed -n 2,3p <<<"$reason")
   "  $tip: body line 3 runs over"$'\n'"  $wide: its first line is 73 characters"
 
 # git runs the hook from config beside the repo's own, and it acts only in a Claude Code session
-git config hook.commit-width.event pre-push
-git config hook.commit-width.command "$hooks/git-pre-push-widths.sh"
+git config hook.commit-rules.event pre-push
+git config hook.commit-rules.command "$hooks/git-pre-push.sh"
 env -u CLAUDECODE git push -q origin main 2>"$dir/err"
 same "outside a session a wide push goes through" "$? $(git rev-parse origin/main)" "0 $tip"
 git reset -q --hard "$old"
@@ -99,6 +103,34 @@ git commit -q -S --allow-empty -m "$over"
 CLAUDECODE=1 git push -q origin main 2>"$dir/err"
 same "a signed wide one is refused under its own sha, not the signature's line" \
   "$? $(grep -c "$(git rev-parse --short HEAD): its first line is 73 characters" "$dir/err")" "1 1"
+
+# the provenance rule: lib/provenance.sh names each commit not on the remote that is authored as the agent identity
+# (agent@t, the identity file's) with no Generated-by trailer, Assisted-by alone included; the hook refuses it in a
+# session and passes it outside one
+. "$hooks/lib/provenance.sh"
+git reset -q --hard origin/main
+git commit -q --allow-empty -m 'x: theirs'
+base=$(git rev-parse HEAD)
+git push -q origin main
+GIT_AUTHOR_EMAIL=agent@t git commit -q --allow-empty -m $'x: assisted\n\nAssisted-by: m h'
+assisted=$(git rev-parse HEAD)
+GIT_AUTHOR_EMAIL=Agent@T git commit -q --allow-empty -m 'x: bare'
+bare=$(git rev-parse HEAD)
+GIT_AUTHOR_EMAIL=agent@t git commit -q --allow-empty -m $'x: generated\n\nGenerated-by: m h'
+git commit -q --allow-empty -m 'x: someone else, no trailer'
+tip=$(git rev-parse HEAD)
+same "agent commits with no Generated-by are named, case aside, others not" \
+  "$(echo "refs/heads/main $tip refs/heads/main $base" | unmarked | sort)" "$(printf '%s\n' "$assisted" "$bare" | sort)"
+same "with no identity to read, it fails" "$(echo "refs/heads/main $tip refs/heads/main $base" | XDG_CONFIG_HOME=$dir/none unmarked; echo $?)" 1
+env -u CLAUDECODE git push -q --dry-run origin main 2>"$dir/err"
+same "outside a session the push goes through" "$?" 0
+CLAUDECODE=1 git push -q origin main 2>"$dir/err"
+same "in a session it's refused, naming each" \
+  "$? $(git rev-parse origin/main) $(grep -c -e "^  $(git rev-parse --short "$assisted")$" -e "^  $(git rev-parse --short "$bare")$" "$dir/err")" "1 $base 2"
+git reset -q --hard "$base"
+GIT_AUTHOR_EMAIL=agent@t git commit -q --allow-empty -m $'x: generated\n\nGenerated-by: m h'
+CLAUDECODE=1 git push -q origin main 2>"$dir/err"
+same "an agent commit with Generated-by goes through" "$? $(git rev-parse origin/main)" "0 $(git rev-parse HEAD)"
 
 echo "widths: ok $ok FAIL $failed"
 ((failed == 0))

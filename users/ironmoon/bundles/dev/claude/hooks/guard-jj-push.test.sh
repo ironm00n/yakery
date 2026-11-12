@@ -3,7 +3,13 @@ p="${2:-${h%/*}/jj-push.sh}"
 dir=$(realpath "$(mktemp -d)")
 trap 'rm -rf "${dir:?}"' EXIT
 export JJ_CONFIG="$dir/jj.toml" GIT_CONFIG_GLOBAL=/dev/null
+unset XDG_CONFIG_HOME
 printf '[user]\nname = "t"\nemail = "t@t"\n' >"$JJ_CONFIG"
+# the agent identity the provenance rule reads, as the claude bundle writes it under a home: this one's, and that of a
+# home with no xb, which a case about xb reaches past the identity
+for home_dir in "$dir" "$dir/noxb"; do
+  mkdir -p "$home_dir/.config/git" && printf '[user]\n\temail = agent@t\n' >"$home_dir/.config/git/claude-identity.user"
+done
 q() { "$@" >/dev/null 2>&1; }
 echo 0 >"$dir/verdict"
 # xb as jj-push.sh sees it: the command runs in a copy of the worktree's tracked and unignored
@@ -238,6 +244,25 @@ same "one quiet by config is refused unread" "$(at plain main) $(grep -c "doesn'
 q jj -R "$dir/plain" describe -r main -m 'x: short'
 push plain 0 git push -b main
 same "the reworded one goes through, the old long one on the remote unread" "$(at plain main)" "$(id plain main)"
+# the provenance rule: a commit authored as the agent identity (agent@t, the identity file's) with no Generated-by is
+# refused, by change, Assisted-by alone included; with Generated-by it goes through; no identity file refuses the push
+change plain agent
+q jj -R "$dir/plain" --config user.email=agent@t metaedit -r main --update-author
+q jj -R "$dir/plain" describe -r main -m $'x: agent\n\nAssisted-by: m h'
+before=$(at plain main)
+push plain 1 git push -b main
+unmarked=$(jj -R "$dir/plain" --ignore-working-copy log --no-graph -r main -T 'change_id.shortest(8)')
+same "an agent commit with Assisted-by alone is refused, by change" \
+  "$(at plain main) $(grep -c "^  $unmarked$" "$dir/out") $(grep -c 'carry no Generated-by trailer' "$dir/out")" "$before 1 1"
+q jj -R "$dir/plain" describe -r main -m $'x: agent\n\nGenerated-by: m h'
+push plain 0 git push -b main
+same "with Generated-by it goes through" "$(at plain main)" "$(id plain main)"
+change plain noid
+before=$(at plain main)
+home=$dir/noid push plain 1 git push -b main
+same "a push whose agent identity can't be read is refused" \
+  "$(at plain main) $(grep -c "couldn't read the agent identity" "$dir/out")" "$before 1"
+q jj -R "$dir/plain" git push -b main
 git -C "$dir/plain" tag v1 "$(id plain main)"
 q jj -R "$dir/plain" git import
 push plain 0 git push -t v1
@@ -385,7 +410,7 @@ push husky 1 git push -b main
 same "a hook its own directory ignores, which xb would ship without it, is refused" \
   "$(at husky main) $(grep -c 'ignored in its own directory' "$dir/out")" "$before 1"
 change hooked f
-home=$dir/nowhere push hooked 1 git push -b main
+home=$dir/noxb push hooked 1 git push -b main
 same "with no xb here the push is refused" "$(grep -c 'there is no' "$dir/out")" 1
 git -C "$k" config --add xb.prePushEnv url
 SKIP_LEAN=1 url=mine push hooked 0 git push -b main
