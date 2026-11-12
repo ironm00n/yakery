@@ -132,13 +132,13 @@ in
       xdg.configFile."git/claude-identity.user".text = lib.generators.toGitINI {
         inherit (agentIdentity) user;
       };
-      # a push from a Claude Code session keeps its commit messages within the width rule (hooks/lib/widths.sh): jj
-      # pushes go through jj-push.sh, and plain git ones run this beside the repo's own pre-push hook, which passes
-      # everything outside a session
-      programs.git.settings."hook \"commit-width\"" = {
+      # a push from a Claude Code session keeps its commit messages within the width rule (hooks/lib/widths.sh) and the
+      # provenance rule (hooks/lib/provenance.sh): jj pushes go through jj-push.sh, and plain git ones run this beside
+      # the repo's own pre-push hook, which passes everything outside a session
+      programs.git.settings."hook \"commit-rules\"" = {
         event = "pre-push";
         # the generation's own copy, so a checkout of /etc/nixos without the script can't break every push
-        command = "${./hooks}/git-pre-push-widths.sh";
+        command = "${./hooks}/git-pre-push.sh";
       };
 
       home.file = {

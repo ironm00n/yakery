@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `jj git push` given as jj's own arguments (`jj-push.sh [-R REPO] git push [OPTIONS]`), after the
 # commits it would send that aren't on the remote yet have passed the commit width rule (lib/widths.sh)
-# and the repo's pre-push hook, if it has one, has passed on what the push would send, fed to it as
+# and the provenance rule (lib/provenance.sh), and the repo's pre-push hook, if it has one, has passed on what the push would send, fed to it as
 # `git push` feeds it. guard-jj-push.sh refuses a bare `jj git push` in a Claude Code session. The
 # push runs on the dry run's snapshot of the working copy, so what is checked here is what gets pushed.
 #
@@ -17,6 +17,7 @@
 set -euo pipefail
 . "${BASH_SOURCE[0]%/*}/lib/jj.sh"
 . "${BASH_SOURCE[0]%/*}/lib/widths.sh"
+. "${BASH_SOURCE[0]%/*}/lib/provenance.sh"
 
 repo=() own=(--ignore-working-copy)
 for ((i = 1; i <= $#; i++)); do
@@ -85,6 +86,10 @@ problems=$(printf '%s\n' "${refs[@]}" | (((${#genv[@]})) && export "${genv[@]}";
 change() { jjr log --no-graph -r "$1" -T 'change_id.shortest(8)'; }
 [[ -z $problems ]] ||
   fail "$(too_wide_reason "$problems" change "Nothing was pushed. Fix each with \`jj describe -r <change> -m '…'\`, then push again.")"
+unmarked=$(printf '%s\n' "${refs[@]}" | (((${#genv[@]})) && export "${genv[@]}"; cd "$root" && unmarked)) ||
+  fail "couldn't read the agent identity or the commits this push sends, so nothing was pushed"
+[[ -z $unmarked ]] ||
+  fail "$(unmarked_reason "$unmarked" change "Nothing was pushed. Add the trailer with \`jj describe -r <change>\`, then push again.")"
 [[ -n $hook ]] || exec jj "$@" "${own[@]}"
 ((${#sending[@]} == 1)) ||
   fail "this push sends to ${!sending[*]}, and git runs the hook once per remote with that remote's lines; push to one at a time"

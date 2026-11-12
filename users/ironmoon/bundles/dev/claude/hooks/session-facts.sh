@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tells the model which model, effort and harness version it runs, for commit trailers: at session
+# Tells the model the whole trailer its commits end with, from the model, effort and harness version it runs (every
+# commit of the agent identity carries Generated-by), so nothing is left to pick: at session
 # and subagent start, after compaction, and whenever one of them changes. SessionStart input carries
 # neither model nor effort (2.1.296): only tool hooks see `effort.level`, and the model is read once
 # from the transcript, which can lag the first PreToolUse (so PostToolUse runs this too), then
@@ -53,10 +54,10 @@ transcript_model() {
 # State is `model|effort|version`; `|` keeps empty fields in place.
 read_state() { [[ -f "$state_dir/$1" ]] && cat "$state_dir/$1"; }
 
-root_of() {
+trailer_of() {
   local model effort version
   IFS='|' read -r model effort version <<<"$1"
-  echo "$model${effort:+:$effort} claude-code${version:+:$version}"
+  echo "Generated-by: $model${effort:+:$effort} claude-code${version:+:$version}"
 }
 
 case "$event" in
@@ -66,7 +67,7 @@ SessionStart)
   model=$(field .model)
   model=${model:-$(transcript_model "$transcript")}
   emit "harness claude-code${version:+ $version}${model:+, model $model};" \
-    "the trailer root follows with the first tool call that knows the effort."
+    "the commit trailer follows with the first tool call that knows the effort."
   ;;
 PostModelSwitch)
   model=$(field .to_model)
@@ -74,12 +75,12 @@ PostModelSwitch)
   IFS='|' read -r _ effort version <<<"$(read_state main)"
   facts="$model|${effort:-}|${version:-$(harness_version)}"
   echo "$facts" >"$state_dir/main"
-  emit "model switched from $(field .from_model) to $model; trailer root \`$(root_of "$facts")\`."
+  emit "model switched from $(field .from_model) to $model; commit trailer \`$(trailer_of "$facts")\`."
   ;;
 SubagentStart)
   own="your own model and effort follow with your first tool call."
   main=$(read_state main) || emit "$own"
-  emit "the session that spawned you has trailer root \`$(root_of "$main")\`; $own"
+  emit "the session that spawned you commits with \`$(trailer_of "$main")\`; $own"
   ;;
 PreToolUse | PostToolUse)
   key=${agent:-main}
@@ -99,10 +100,10 @@ PreToolUse | PostToolUse)
   echo "$facts" >"$state_dir/$key"
   if [[ -n "$agent" ]]; then
     main=$(read_state main) || main=""
-    emit "you run \`$model:$effort\`${main:+, under the trailer root \`$(root_of "$main")\`}."
+    emit "you run \`$model:$effort\`${main:+, under the spawning session with \`$(trailer_of "$main")\`}."
   fi
-  [[ -z "$previous_effort" ]] && emit "trailer root \`$(root_of "$facts")\`."
-  emit "trailer root is now \`$(root_of "$facts")\`, was \`$(root_of "$previous")\`."
+  [[ -z "$previous_effort" ]] && emit "commit trailer \`$(trailer_of "$facts")\`."
+  emit "commit trailer is now \`$(trailer_of "$facts")\`, was \`$(trailer_of "$previous")\`."
   ;;
 esac
 
