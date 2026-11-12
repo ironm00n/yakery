@@ -1,6 +1,11 @@
 # Each account's own anthropic-tap, under a third uid, so the pool token its turns go out under is never the account's
 # to read. The fence keeps its port to the account and his tap's ports to him.
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   accounts = builtins.attrValues (import ../accounts.nix);
   account =
@@ -8,10 +13,34 @@ let
     let
       user = "${name}-claude-tap";
       # His to write, so installing the tap (an out-link) or its token needs no root; PID1 reads the token as root.
-      # Each lands by one rename from `new`: a path unit drops events while its unit runs, so the first of several
-      # would restart the tap before the last.
+      # Each lands by one rename from `new` into `pending`, and the restart moves it into place. A path unit watches
+      # nothing while its unit runs, so it watches a state, `pending` not empty, which it reads again once that ends.
       install = "/var/lib/${user}-install";
+      pending = "${install}/pending";
       tap = "${install}/tap";
+      token = "${install}/pool-token";
+      installed = lib.concatMapStringsSep " | " baseNameOf [
+        tap
+        token
+      ];
+      # What it can't move in, or has no use for, goes aside, so `pending` empties and its path unit goes quiet. Exits 0
+      # once it moved one in, 1 when it moved none, and 255 on any other failure: ExecCondition's skip and fail.
+      moveIn = pkgs.writeShellScript "${user}-move-in" ''
+        set -e
+        trap 'exit 255' ERR
+        shopt -s nullglob
+        moved=1
+        for f in ${pending}/*; do
+          case ''${f##*/} in
+            ${installed}) if mv -T "$f" ${install}/"''${f##*/}"; then moved=0 && continue; fi ;;
+          esac
+          aside=''${aside:-$(mktemp -d ${install}/refused.XXXXXX)}
+          echo "''${f##*/} isn't moved in; it is kept in $aside" >&2
+          mv "$f" "$aside"/
+        done
+        exit $moved
+      '';
+      systemctl = "${config.systemd.package}/bin/systemctl";
     in
     {
       agent.loopback.own.${name} = [ tapPort ];
@@ -28,6 +57,7 @@ let
       systemd.tmpfiles.rules = [
         "d ${install} 0711 ironmoon - -"
         "d ${install}/new 0700 ironmoon - -"
+        "d ${pending} 0700 ironmoon - -"
         # the out-link's own root is left behind in `new`
         "L /nix/var/nix/gcroots/${user} - - - - ${tap}"
       ];
@@ -55,24 +85,37 @@ let
           StateDirectoryMode = "0755";
           RuntimeDirectory = user;
           RuntimeDirectoryMode = "0750";
-          LoadCredential = [ "pool:${install}/pool-token" ];
+          LoadCredential = [ "pool:${token}" ];
           Restart = "on-failure";
         };
       };
 
-      # A path unit only starts its unit, a no-op while the tap runs. It watches the directory, as a watch on the link
-      # follows it to the old store path.
+      # A path unit only starts its unit, a no-op while the tap runs, so it starts this one
       systemd.paths."${user}-install" = {
         wantedBy = [ "paths.target" ];
         pathConfig = {
-          PathChanged = install;
+          DirectoryNotEmpty = pending;
           Unit = "${user}-install.service";
         };
       };
+      # The move is his, in his dir, as PID1's would follow a `pending` he swapped for a link; the restart is PID1's,
+      # and only after a move in. An install is no crash, so it neither counts toward the tap's start limit nor meets
+      # systemd's 5 here; if even the move aside fails, this unit's own limit ends the path unit.
       systemd.services."${user}-install" = {
         description = "restart ${user} on a new install";
-        serviceConfig.Type = "oneshot";
-        script = "systemctl restart ${user}.service";
+        unitConfig = {
+          StartLimitIntervalSec = 10;
+          StartLimitBurst = 20;
+        };
+        serviceConfig = {
+          Type = "oneshot";
+          User = "ironmoon";
+          ExecCondition = moveIn;
+          ExecStart = [
+            "+${systemctl} reset-failed ${user}.service"
+            "+${systemctl} restart ${user}.service"
+          ];
+        };
       };
     };
 in

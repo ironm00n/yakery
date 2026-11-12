@@ -37,11 +37,18 @@ let
       install -D -m 644 ${pkgs.writeText "policy.env" "FLAGS=${flags}\n"} $out/share/anthropic-tap/policy.env
     '';
   install = "/var/lib/${tapUser}-install";
-  # as notes' `just agent-tap-install` does, each written in `new` and moved in by one rename
+  pending = "${install}/pending";
+  # as notes' `just agent-tap-install` does, each written in `new` and moved to `pending` by one rename
   land =
-    file: write: "${write} ${install}/new/${file} && mv -T ${install}/new/${file} ${install}/${file}";
+    file: write: "${write} ${install}/new/${file} && mv -T ${install}/new/${file} ${pending}/${file}";
   link = flags: land "tap" "ln -s ${tap flags}";
   token = value: land "pool-token" "umask 077 && echo ${value} >";
+  # holds the install's restart open after it has moved and restarted, until the test writes to the fifo
+  dropins = "/run/systemd/system/${tapUser}-install.service.d";
+  hold = pkgs.writeText "hold.conf" ''
+    [Service]
+    ExecStartPost=${pkgs.bash}/bin/bash -c 'read -r _ < /run/hold'
+  '';
 in
 pkgs.testers.runNixOSTest {
   name = "${name}-claude";
@@ -71,7 +78,7 @@ pkgs.testers.runNixOSTest {
         assert sliceOoms() == 0
         desktop.succeed(asAgent("systemctl --user is-active neighbour.scope"))
 
-    seen = lambda line: desktop.wait_until_succeeds("grep -qx '" + line + "' /var/lib/${tapUser}/seen")
+    seen = lambda line: desktop.wait_until_succeeds("grep -qx '" + line + "' /var/lib/${tapUser}/seen", timeout=60)
 
     with subtest("until he installs it, its tap waits without failing"):
         desktop.wait_for_unit("${tapUser}-install.path")
@@ -91,10 +98,33 @@ pkgs.testers.runNixOSTest {
         desktop.succeed(asHim("${token "rotated"}"))
         seen("c=true pool rotated")
 
+    with subtest("one that lands while the restart runs is taken once it ends"):
+        desktop.succeed("mkfifo /run/hold && mkdir -p ${dropins} && ln -s ${hold} ${dropins}/hold.conf && systemctl daemon-reload")
+        desktop.succeed(asHim("${token "held"}"))
+        seen("c=true pool held")
+        desktop.succeed(asHim("${link "d=true"}"))
+        desktop.succeed("rm ${dropins}/hold.conf && systemctl daemon-reload && echo > /run/hold")
+        seen("d=true pool held")
+
+    with subtest("what it can't move in, or has no use for, goes aside unrestarted, and the next install restarts it"):
+        tapPid = lambda: desktop.succeed("systemctl show -p MainPID --value ${tapUser}").strip()
+        before = tapPid()
+        desktop.succeed(asHim("touch ${install}/new/bogus && mv -T ${install}/new/bogus ${pending}/bogus"))
+        desktop.succeed(asHim("mkdir ${install}/new/pool-token && mv -T ${install}/new/pool-token ${pending}/pool-token"))
+        desktop.wait_until_succeeds("test -z \"$(ls -A ${pending})\"", timeout=60)
+        desktop.wait_until_succeeds("systemctl show -p ActiveState --value ${tapUser}-install | grep -qx inactive", timeout=60)
+        aside = desktop.succeed("find ${install} -mindepth 2 -maxdepth 2 -path '${install}/refused.*' -printf '%f\\n' | sort").split()
+        assert aside == ["bogus", "pool-token"], aside
+        assert tapPid() == before, "a batch it moved nothing in from restarted the tap"
+        desktop.succeed("systemctl is-active ${tapUser}-install.path")
+        desktop.succeed(asHim("${token "after"}"))
+        seen("d=true pool after")
+
     with subtest("the account neither reads his token nor installs a tap of its own"):
         refused(asAgent("cat ${install}/pool-token"), "Permission denied")
         refused(asAgent("ln -s /tmp ${install}/tap2"), "Permission denied")
         refused(asAgent("ln -s /tmp ${install}/new/tap"), "Permission denied")
+        refused(asAgent("ln -s /tmp ${pending}/tap"), "Permission denied")
         refused(asAgent("ln -sfn /tmp ${install}/tap"), "Permission denied")
 
     with subtest("its tap runs under a uid of its own, with the policy file and the pool token the account can't read"):
