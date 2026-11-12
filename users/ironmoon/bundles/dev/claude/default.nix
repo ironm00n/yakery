@@ -70,11 +70,14 @@ let
       lib.mapAttrs (_: rehome) v
     else
       v;
+  # a Mythos model runs on his account only, so another account's copy defaults to Opus
   settings =
     if config.home.homeDirectory == ownerHome then
       symlink ./settings.json
     else
-      pkgs.writeText "settings.json" (builtins.toJSON (rehome (lib.importJSON ./settings.json)));
+      pkgs.writeText "settings.json" (
+        builtins.toJSON (rehome (lib.importJSON ./settings.json) // { model = "claude-opus-5-5"; })
+      );
   # the agent account is the agent in every repo, so its jj.toml scopes drop their repository lists
   jjEverywhere = (pkgs.formats.toml { }).generate "claude.toml" (
     lib.mapAttrs (
