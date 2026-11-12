@@ -4,6 +4,7 @@
 {
   config,
   lib,
+  options,
   utils,
   ...
 }:
@@ -11,21 +12,24 @@ let
   top = "/shr";
   # the accounts' own, to traverse `top`
   group = baseNameOf top;
-  # checkouts under his home
+  # checkouts under his home, each bound with its Claude memory dir
   projects = [ "workspace/redox" ];
+  # projects whose Claude memory dir alone is bound: the accounts work in clones of their own at the same path under
+  # their homes, push from there, and the memory stays one dir
+  memories = [
+    "workspace/claude"
+    "workspace/autograder"
+  ];
   his = config.users.users.ironmoon.home;
   # Claude's name for a project's dir under ~/.claude/projects
   slug = lib.stringAsChars (c: if builtins.match "[a-zA-Z0-9]" c == null then "-" else c);
+  # a project's Claude memory dir, in a home's layout
+  memory = home: project: "${home}/.claude/projects/${slug "${home}/${project}"}/memory";
   # a project's dir and its Claude memory dir, in a home's layout
-  dirs =
-    home: project:
-    let
-      dir = "${home}/${project}";
-    in
-    [
-      dir
-      "${home}/.claude/projects/${slug dir}/memory"
-    ];
+  dirs = home: project: [
+    "${home}/${project}"
+    (memory home project)
+  ];
   bind = device: {
     inherit device;
     fsType = "none";
@@ -36,18 +40,20 @@ let
       "nofail"
     ];
   };
-  binds = lib.concatMap (
-    project:
-    lib.zipListsWith (where: dir: lib.nameValuePair where (bind dir)) (dirs top project) (
-      dirs his project
-    )
-  ) projects;
+  binds =
+    lib.concatMap (
+      project:
+      lib.zipListsWith (where: dir: lib.nameValuePair where (bind dir)) (dirs top project) (
+        dirs his project
+      )
+    ) projects
+    ++ map (project: lib.nameValuePair (memory top project) (bind (memory his project))) memories;
 in
 {
   options.agent.shares = lib.mkOption {
     readOnly = true;
     default = lib.listToAttrs binds;
-    description = "Each project and its Claude memory dir, at their paths in his home with ${top} for the home, as fileSystems entries.";
+    description = "Each project and its Claude memory dir, and the memory dir alone of each in `memories`, at their paths in his home with ${top} for the home, as fileSystems entries.";
   };
 
   config = {
@@ -77,5 +83,25 @@ in
       deps = [ "users" ];
       text = "install -d -m 0710 -o root -g ${group} ${top}";
     };
+  }
+  # each account's own git and Claude memory, where home-manager runs (a test node may have none)
+  // lib.optionalAttrs (options ? home-manager) {
+    home-manager.users = builtins.mapAttrs (
+      _: _:
+      { config, ... }:
+      {
+        # git refuses a tree another uid owns ("dubious ownership"), and each share is his
+        programs.git.settings.safe.directory = map (project: "${top}/${project}") projects;
+        # the memory dir of the account's own clone is the bound one
+        home.file = lib.listToAttrs (
+          map (
+            project:
+            lib.nameValuePair (lib.removePrefix "${config.home.homeDirectory}/" (
+              memory config.home.homeDirectory project
+            )) { source = config.lib.file.mkOutOfStoreSymlink (memory top project); }
+          ) memories
+        );
+      }
+    ) (import ./accounts.nix);
   };
 }
