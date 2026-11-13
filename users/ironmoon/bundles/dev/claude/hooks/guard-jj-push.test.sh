@@ -1,7 +1,7 @@
 h="${1:-$HOME/.claude/hooks/guard-jj-push.sh}"
 p="${2:-${h%/*}/jj-push.sh}"
 dir=$(realpath "$(mktemp -d)")
-trap 'rm -rf "${dir:?}"' EXIT
+trap 'gpgconf --homedir "$dir/gnupg" --kill all 2>/dev/null; rm -rf "${dir:?}"' EXIT
 export JJ_CONFIG="$dir/jj.toml" GIT_CONFIG_GLOBAL=/dev/null
 unset XDG_CONFIG_HOME
 printf '[user]\nname = "t"\nemail = "t@t"\n' >"$JJ_CONFIG"
@@ -10,6 +10,15 @@ printf '[user]\nname = "t"\nemail = "t@t"\n' >"$JJ_CONFIG"
 for home_dir in "$dir" "$dir/noxb"; do
   mkdir -p "$home_dir/.config/git" && printf '[user]\n\temail = agent@t\n' >"$home_dir/.config/git/claude-identity.user"
 done
+# a keyring holding the agent's key, which signs as its address, and another's
+export GNUPGHOME=$dir/gnupg
+mkdir -m 700 "$GNUPGHOME"
+key() {
+  gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key "$1" ed25519 sign never 2>/dev/null
+  gpg --with-colons --list-keys -- "$1" | awk -F: '$1 == "fpr" { print $10; exit }'
+}
+agent_key=$(key 'agent <agent@t>') other_key=$(key 'other <other@t>')
+signing() { echo --config signing.backend=gpg --config "signing.key=$1"; }
 q() { "$@" >/dev/null 2>&1; }
 echo 0 >"$dir/verdict"
 # xb as jj-push.sh sees it: the command runs in a copy of the worktree's tracked and unignored
@@ -255,8 +264,15 @@ unmarked=$(jj -R "$dir/plain" --ignore-working-copy log --no-graph -r main -T 'c
 same "an agent commit with Assisted-by alone is refused, by change" \
   "$(at plain main) $(grep -c "^  $unmarked$" "$dir/out") $(grep -c 'carry no Generated-by trailer' "$dir/out")" "$before 1 1"
 q jj -R "$dir/plain" describe -r main -m $'x: agent\n\nGenerated-by: m h'
-push plain 0 git push -b main
-same "with Generated-by it goes through" "$(at plain main)" "$(id plain main)"
+# the agent's commits are signed in the push, by the key jj is set to, and go only signed good by the agent's
+before=$(at plain main)
+push plain 1 $(signing "$other_key") git push -b main
+same "an agent commit jj signs with another's key is refused, naming it" \
+  "$(at plain main) $(grep -c "aren't signed good by its key $agent_key" "$dir/out") $(grep -c "(G, by $other_key)" "$dir/out")" \
+  "$before 1 1"
+push plain 0 $(signing "$agent_key") git push -b main
+same "with Generated-by, signed by the agent's key, it goes through" \
+  "$(at plain main) $(git -C "$dir/plain.git" log -1 --format='%G? %GP' main)" "$(id plain main) G $agent_key"
 change plain noid
 before=$(at plain main)
 home=$dir/noid push plain 1 git push -b main

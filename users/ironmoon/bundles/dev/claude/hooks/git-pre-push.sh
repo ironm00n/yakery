@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # git pre-push hook, set for every repo by the claude bundle's `hook.commit-rules` git config, beside a repo's own: in a
 # Claude Code session (CLAUDECODE set, even empty, as the bundle's jj config is scoped) it refuses a push whose new commits
-# break the commit width rule (lib/widths.sh) or the provenance rule (lib/provenance.sh), or that rewrites or deletes
+# break the commit width rule (lib/widths.sh) or the provenance rule (lib/provenance.sh: Generated-by, and signed by the
+# agent's key), or that rewrites or deletes
 # main or master (lib/pushed.sh). Owen's own pushes pass untouched.
 
 [[ -v CLAUDECODE ]] || exit 0
@@ -15,6 +16,12 @@ problems=$(too_wide <<<"$lines") || { echo "commit-width: couldn't read the push
 unmarked=$(unmarked <<<"$lines") ||
   { echo "provenance: couldn't read the agent identity or the pushed commits, so nothing was pushed" >&2; exit 1; }
 [[ -z $unmarked ]] || { unmarked_reason "$unmarked" short "Add the trailer (\`git commit --amend\` for the tip) and push again." >&2; exit 1; }
+unsigned=$(unsigned <<<"$lines") ||
+  { echo "provenance: couldn't read the agent identity or the pushed commits, so nothing was pushed" >&2; exit 1; }
+[[ -z $unsigned ]] || {
+  unsigned_reason "$unsigned" short "Nothing was pushed. Sign each with the agent's key (\`git commit --amend -S<key>\` for the tip) and push again." >&2
+  exit 1
+}
 rewritten=$(rewritten_main <<<"$lines")
 [[ -z $rewritten ]] || {
   echo "this push rewrites or deletes $(cut -d' ' -f1 <<<"$rewritten" | paste -sd' '), which only moves forward; nothing was pushed. A feature branch of ours is rewritten and force-pushed; main and master never" >&2

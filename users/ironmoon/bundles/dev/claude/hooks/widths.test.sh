@@ -3,11 +3,24 @@
 # real git push.
 hooks=${1:-$HOME/.claude/hooks}
 dir=$(realpath "$(mktemp -d)")
-trap 'rm -rf "${dir:?}"' EXIT
+trap 'gpgconf --homedir "$dir/gnupg" --kill all 2>/dev/null; rm -rf "${dir:?}"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 # the agent identity the provenance rule reads, as the claude bundle writes it
 export XDG_CONFIG_HOME=$dir/config
 mkdir -p "$XDG_CONFIG_HOME/git" && printf '[user]\n\temail = agent@t\n' >"$XDG_CONFIG_HOME/git/claude-identity.user"
+# a keyring holding the agent's key, which signs as its address, and another's
+export GNUPGHOME=$dir/gnupg
+mkdir -m 700 "$GNUPGHOME"
+key() {
+  gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key "$1" ed25519 sign never 2>/dev/null
+  gpg --with-colons --list-keys -- "$1" | awk -F: '$1 == "fpr" { print $10; exit }'
+}
+agent_key=$(key 'agent <agent@t>') other_key=$(key 'other <other@t>')
+# a commit authored as the agent, signed with gpg key $1 (none: unsigned), message $2
+as_agent() {
+  GIT_AUTHOR_EMAIL=agent@t git -c gpg.format=openpgp ${1:+-c user.signingkey="$1"} commit -q --allow-empty \
+    ${1:+-S} -m "$2"
+}
 ok=0 failed=0
 same() {
   if [[ $2 == "$3" ]]; then ((ok++)); printf 'ok   %s\n' "$1"; else ((failed++)); printf 'FAIL %s\n     got  %s\n     want %s\n' "$1" "$2" "$3"; fi
@@ -127,10 +140,27 @@ same "outside a session the push goes through" "$?" 0
 CLAUDECODE=1 git push -q origin main 2>"$dir/err"
 same "in a session it's refused, naming each" \
   "$? $(git rev-parse origin/main) $(grep -c -e "^  $(git rev-parse --short "$assisted")$" -e "^  $(git rev-parse --short "$bare")$" "$dir/err")" "1 $base 2"
+# and each agent commit is signed good by the agent's key, the one the identity names or its address's
 git reset -q --hard "$base"
-GIT_AUTHOR_EMAIL=agent@t git commit -q --allow-empty -m $'x: generated\n\nGenerated-by: m h'
+as_agent "" $'x: unsigned\n\nGenerated-by: m h'
+unsigned_one=$(git rev-parse HEAD)
+as_agent "$other_key" $'x: theirs signed\n\nGenerated-by: m h'
+other_one=$(git rev-parse HEAD)
+as_agent "$agent_key" $'x: agent signed\n\nGenerated-by: m h'
+git commit -q --allow-empty -m 'x: someone else, unsigned'
+tip=$(git rev-parse HEAD)
+same "agent commits not signed good by the agent's key are named, with how they're signed, others not" \
+  "$(echo "refs/heads/main $tip refs/heads/main $base" | unsigned | sort)" \
+  "$(printf '%s\n' "$unsigned_one N " "$other_one G $other_key" | sort)"
 CLAUDECODE=1 git push -q origin main 2>"$dir/err"
-same "an agent commit with Generated-by goes through" "$? $(git rev-parse origin/main)" "0 $(git rev-parse HEAD)"
+same "in a session they're refused, naming each" \
+  "$? $(git rev-parse origin/main) $(grep -c -e "^  $(git rev-parse --short "$unsigned_one") (N)$" \
+    -e "^  $(git rev-parse --short "$other_one") (G, by $other_key)$" "$dir/err")" "1 $base 2"
+git reset -q --hard "$base"
+as_agent "$agent_key" $'x: generated\n\nGenerated-by: m h'
+CLAUDECODE=1 git push -q origin main 2>"$dir/err"
+same "an agent commit with Generated-by, signed by the agent's key, goes through" \
+  "$? $(git rev-parse origin/main)" "0 $(git rev-parse HEAD)"
 
 # a feature branch of ours is rewritten and force-pushed with a lease in a session; main, rewritten, is refused
 git reset -q --hard origin/main
