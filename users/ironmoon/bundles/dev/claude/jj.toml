@@ -19,7 +19,11 @@ private-commits = "working_copies()"
   "~/workspace/richwasm",
   "~/workspace/sandbox",
   "~/workspace/spytial",
+  "~/research/gradual-borrows",
 ]
 [--scope.user]
 name = "ironmoon's agent"
 email = "agent@ironmoon.dev"
+[--scope.signing]
+key = "agent@ironmoon.dev"
+backends.gpg.program = "agent-gpg"

@@ -146,7 +146,8 @@ in
 
       xdg.configFile."lazygit/config.yml".source = symlink ./lazygit.yml;
       xdg.configFile."jj/config.toml".source = symlink ./jj.toml;
-      xdg.configFile."jj/conf.d/signing.toml" = mkIf (config.host.git-signing-key != null) {
+      # first of conf.d, so a later file's scope (claude.toml's agent identity) signs with its own key
+      xdg.configFile."jj/conf.d/0-signing.toml" = mkIf (config.host.git-signing-key != null) {
         source = (pkgs.formats.toml { }).generate "jj-signing.toml" {
           signing.key = config.host.git-signing-key;
         };

@@ -54,10 +54,20 @@ let
           (builtins.fromTOML (builtins.readFile ./jj.toml))."--scope";
     in
     assert lib.assertMsg (
-      scope.user == ironmoon.mail.agents.identity
-    ) "jj.toml's agent identity isn't ${builtins.toJSON ironmoon.mail.agents.identity}";
+      scope.user == ironmoon.mail.agents.identity && scope.signing.key == agentEmail
+    ) "jj.toml's agent identity isn't ${builtins.toJSON ironmoon.mail.agents.identity}, signing as ${agentEmail}";
     scope;
   owner = cfg.account == "owner";
+  # the agent's key: an agent account's own keyring holds it, and his account keeps a copy apart from his own keys
+  agentGpg = pkgs.writeShellApplication {
+    name = agentIdentity.signing.backends.gpg.program;
+    runtimeInputs = [ pkgs.gnupg ];
+    text =
+      if owner then
+        ''exec gpg --homedir "$HOME/.local/share/agent-gnupg" "$@"''
+      else
+        ''exec gpg "$@"'';
+  };
   # settings.json names paths under Owen's home; another account's copy has its own home in their place
   ownerHome = "/home/ironmoon";
   rehome =
@@ -113,6 +123,7 @@ in
       home.packages = [
         claude-code
         agent-mail
+        agentGpg
       ];
       xdg.configFile."agent-mail/config.json".text = builtins.toJSON {
         login = agentEmail;
@@ -130,7 +141,10 @@ in
         else
           "[include]\n\tpath = claude-identity.user\n";
       xdg.configFile."git/claude-identity.user".text = lib.generators.toGitINI {
-        inherit (agentIdentity) user;
+        user = agentIdentity.user // {
+          signingkey = agentIdentity.signing.key;
+        };
+        gpg.program = agentIdentity.signing.backends.gpg.program;
       };
       # a push from a Claude Code session keeps its commit messages within the width rule (hooks/lib/widths.sh) and the
       # provenance rule (hooks/lib/provenance.sh): jj pushes go through jj-push.sh, and plain git ones run this beside
