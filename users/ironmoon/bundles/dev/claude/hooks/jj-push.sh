@@ -3,7 +3,8 @@
 # commits it would send that aren't on the remote yet have passed the commit width rule (lib/widths.sh)
 # and the provenance rule (lib/provenance.sh), and the repo's pre-push hook, if it has one, has passed on what the push would send, fed to it as
 # `git push` feeds it. guard-jj-push.sh refuses a bare `jj git push` in a Claude Code session. The
-# push runs on the dry run's snapshot of the working copy, so what is checked here is what gets pushed.
+# push runs on the dry run's snapshot of the working copy, and the agent's commits in it are signed
+# before the checks, so what is checked here is what gets pushed.
 #
 # Nothing builds on desktop (Owen 11-05 21:53), so per clone `git config xb.prePushShell DIR` runs
 # the hook as an xb job on the worktree's snapshot, in DIR's flake dev shell (empty: none), with
@@ -19,10 +20,12 @@ set -euo pipefail
 . "${BASH_SOURCE[0]%/*}/lib/widths.sh"
 . "${BASH_SOURCE[0]%/*}/lib/provenance.sh"
 
-repo=() own=(--ignore-working-copy)
+repo=() own=(--ignore-working-copy) conf=()
 for ((i = 1; i <= $#; i++)); do
   case ${!i} in
     --ignore-working-copy) own=() ;;
+    --config | --config-file) conf+=("${!i}") && ((i++)) && conf+=("${!i}") ;;
+    --config=* | --config-file=*) conf+=("${!i}") ;;
     -R | --repository) ((i++)); repo=(-R "${!i}") ;;
     --repository=*) repo=(-R "${!i#*=}") ;;
     -R?*) repo=(-R "${!i#-R}") ;;
@@ -39,43 +42,47 @@ hook=$(pre_push_hook "$root") || fail "$hook, so nothing was pushed"
 # caller's, as jj 0.46 reads them)
 loud=()
 for a in "$@"; do [[ $a == --quiet ]] || loud+=("$a"); done
-plan=$(jj "${loud[@]}" --dry-run 2>&1) || fail "the dry run failed: $plan" $?
-zero=0000000000000000000000000000000000000000
-git_env "$root"
-full() { jjr log --no-graph -r "$1" -T commit_id; }
-# jj's plan quotes a bookmark, tag or remote name that isn't a plain revset symbol (`"pkg@1.2.3"`), escaping a `"`
-unquoted() {
-  local name=$1
-  [[ $name == \"*\" ]] || { printf '%s\n' "$name"; return; }
-  name=${name:1:-1}
-  printf '%s\n' "${name//\\\"/\"}"
+# what the push sends, read off a dry run into `refs` (pre-push lines) and `sending` (the remotes)
+read_plan() {
+  plan=$(jj "${loud[@]}" --dry-run 2>&1) || fail "the dry run failed: $plan" $?
+  sending=() remote= refs=() warning=0
+  zero=0000000000000000000000000000000000000000
+  git_env "$root"
+  full() { jjr log --no-graph -r "$1" -T commit_id; }
+  # jj's plan quotes a bookmark, tag or remote name that isn't a plain revset symbol (`"pkg@1.2.3"`), escaping a `"`
+  unquoted() {
+    local name=$1
+    [[ $name == \"*\" ]] || { printf '%s\n' "$name"; return; }
+    name=${name:1:-1}
+    printf '%s\n' "${name//\\\"/\"}"
+  }
+  planned='^  (bookmark|tag): ([^ ]+) \[(add to ([0-9a-f]+)|move (forward|backward|sideways) from ([0-9a-f]+) to ([0-9a-f]+)|delete from ([0-9a-f]+))\]$'
+  while IFS= read -r line; do
+    # a warning (`Won't push bookmark b: commit c is private`) and the lines indented under it are jj's, not the plan's
+    [[ $line == '  '* ]] || warning=0
+    if [[ $line == Warning:* ]]; then
+      warning=1
+    elif ((warning)); then
+      :
+    elif [[ $line =~ ^Changes\ to\ push\ to\ (.+):$ ]]; then
+      remote=$(unquoted "${BASH_REMATCH[1]}")
+    elif [[ $line =~ $planned ]]; then
+      m=("${BASH_REMATCH[@]:1}")
+      [[ -n $remote ]] || fail "jj's plan names no remote before this line: $line"
+      sending[$remote]=1
+      name=$(unquoted "${m[1]}")
+      [[ ${m[0]} == bookmark ]] && ref=refs/heads/$name || ref=refs/tags/$name
+      if [[ -n ${m[3]} ]]; then refs+=("$ref $(full "${m[3]}") $ref $zero")
+      elif [[ -n ${m[7]} ]]; then refs+=("(delete) $zero $ref $(full "${m[7]}")")
+      else refs+=("$ref $(full "${m[6]}") $ref $(full "${m[5]}")")
+      fi
+    elif [[ $line == '  '* ]]; then
+      fail "can't read this line of jj's plan, so the hook can't be fed it: $line"
+    fi
+  done <<<"$plan"
 }
 declare -A sending=()
-remote= refs=() warning=0
-planned='^  (bookmark|tag): ([^ ]+) \[(add to ([0-9a-f]+)|move (forward|backward|sideways) from ([0-9a-f]+) to ([0-9a-f]+)|delete from ([0-9a-f]+))\]$'
-while IFS= read -r line; do
-  # a warning (`Won't push bookmark b: commit c is private`) and the lines indented under it are jj's, not the plan's
-  [[ $line == '  '* ]] || warning=0
-  if [[ $line == Warning:* ]]; then
-    warning=1
-  elif ((warning)); then
-    :
-  elif [[ $line =~ ^Changes\ to\ push\ to\ (.+):$ ]]; then
-    remote=$(unquoted "${BASH_REMATCH[1]}")
-  elif [[ $line =~ $planned ]]; then
-    m=("${BASH_REMATCH[@]:1}")
-    [[ -n $remote ]] || fail "jj's plan names no remote before this line: $line"
-    sending[$remote]=1
-    name=$(unquoted "${m[1]}")
-    [[ ${m[0]} == bookmark ]] && ref=refs/heads/$name || ref=refs/tags/$name
-    if [[ -n ${m[3]} ]]; then refs+=("$ref $(full "${m[3]}") $ref $zero")
-    elif [[ -n ${m[7]} ]]; then refs+=("(delete) $zero $ref $(full "${m[7]}")")
-    else refs+=("$ref $(full "${m[6]}") $ref $(full "${m[5]}")")
-    fi
-  elif [[ $line == '  '* ]]; then
-    fail "can't read this line of jj's plan, so the hook can't be fed it: $line"
-  fi
-done <<<"$plan"
+read_plan
 if ((${#refs[@]} == 0)); then
   [[ $plan == *$'\n'"Nothing changed."* || $plan == "Nothing changed."* ]] ||
     fail "jj's plan names nothing to push, and doesn't say nothing changed, so it can't be read: $plan"
@@ -90,6 +97,19 @@ unmarked=$(printf '%s\n' "${refs[@]}" | (((${#genv[@]})) && export "${genv[@]}";
   fail "couldn't read the agent identity or the commits this push sends, so nothing was pushed"
 [[ -z $unmarked ]] ||
   fail "$(unmarked_reason "$unmarked" change "Nothing was pushed. Add the trailer with \`jj describe -r <change>\`, then push again.")"
+# the agent's commits this push sends are signed here, by the key jj is set to, so the check below reads what the push
+# sends (jj would otherwise sign them only as it pushes); messages are checked above, as signing leaves them be
+in_repo() { printf '%s\n' "${refs[@]}" | (((${#genv[@]})) && export "${genv[@]}"; cd "$root" && "$@"); }
+agents=$(in_repo agent_commits) || fail "couldn't read the agent identity or the commits this push sends, so nothing was pushed"
+if [[ -n $agents ]]; then
+  signed=$(jj "${repo[@]}" "${conf[@]}" sign -r "$(paste -sd'|' <<<"$agents")" 2>&1) ||
+    fail "jj couldn't sign the agent's commits this push sends, so nothing was pushed: $signed"
+  read_plan
+fi
+unsigned=$(in_repo unsigned) ||
+  fail "couldn't read the agent identity or the commits this push sends, so nothing was pushed"
+[[ -z $unsigned ]] ||
+  fail "$(unsigned_reason "$unsigned" change "Nothing was pushed. jj here signs them with another key: set signing.key to the agent's, as the claude bundle's jj scope does, then push again.")"
 rewritten=$(printf '%s\n' "${refs[@]}" | (((${#genv[@]})) && export "${genv[@]}"; cd "$root" && rewritten_main))
 [[ -z $rewritten ]] ||
   fail "this push rewrites or deletes $(cut -d' ' -f1 <<<"$rewritten" | paste -sd' '), which only moves forward; nothing was pushed. A feature branch of ours is rewritten and force-pushed; main and master never"
