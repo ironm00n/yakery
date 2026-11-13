@@ -1,7 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "cleanupPeriodDays": 36525000,
-  "subagentPromptCacheTtl": "1h",
   "env": {
     "DISABLE_ERROR_REPORTING": "1",
     "CLAUDE_CODE_GB_DISK_CACHE_WHEN_TELEMETRY_OFF": "1",
@@ -11,10 +10,10 @@
     "CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION": "10000",
     "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "5",
     "CLAUDE_CODE_SUBAGENT_EFFORT": "medium",
-    "CLAUDE_CODE_DISABLE_AGENT_PROGRESS_SUMMARIES": "1",
     "CLAUDE_CODE_AUTO_BACKGROUND_TIMEOUT_MS": "30000",
     "CLAUDE_CODE_NO_MODEL_FALLBACK": "1",
     "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS": "15",
+    "CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING": "1",
     "GIT_CONFIG_COUNT": "1",
     "GIT_CONFIG_KEY_0": "include.path",
     "GIT_CONFIG_VALUE_0": "~/.config/git/claude-identity"
@@ -65,8 +64,12 @@
     ],
     "defaultMode": "default"
   },
-  "model": "opus",
+  "model": "claude-mythos-5-2",
   "disableClaudeAiConnectors": true,
+  "skillOverrides": {
+    "design": "off",
+    "design-sync": "off"
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -264,6 +267,7 @@
       "Racketeering"
     ]
   },
+  "subagentPromptCacheTtl": "1h",
   "alwaysThinkingEnabled": true,
   "effortLevel": "xhigh",
   "modelSettings": {
@@ -271,16 +275,15 @@
       "effortLevel": "xhigh"
     },
     "claude-mythos-5-1": {
-      "effortLevel": "low"
+      "effortLevel": "xhigh"
+    },
+    "claude-mythos-5-2": {
+      "effortLevel": "high"
     }
   },
   "tui": "fullscreen",
   "showThinkingSummaries": true,
   "skipWorkflowUsageWarning": true,
-  "skillOverrides": {
-    "design": "off",
-    "design-sync": "off"
-  },
   "switchModelsOnFlag": false,
   "agentPushNotifEnabled": true,
   "autoMode": {
