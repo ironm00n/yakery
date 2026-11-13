@@ -59,12 +59,9 @@
       "Bash(nix-store -q *)"
     ],
     "deny": [
-      "Skill(artifact-capabilities)",
-      "Artifact(*)",
       "ShareOnboardingGuide(*)",
       "mcp__claude_ai_*",
-      "RemoteTrigger",
-      "DesignSync"
+      "RemoteTrigger"
     ],
     "defaultMode": "default"
   },
@@ -226,7 +223,6 @@
   "worktree": {
     "bgIsolation": "none"
   },
-  "enableArtifact": false,
   "workflowSizeGuideline": "unrestricted",
   "enabledPlugins": {
     "rust-analyzer-lsp@claude-plugins-official": false,
