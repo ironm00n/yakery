@@ -1,10 +1,8 @@
-# Claude Code on each account: its own tap, Owen's settings as the agent's, and its sessions' supervisor.
+# Claude Code on each account, as root sets it up: its own tap, and what its user manager hands each session. Its
+# settings and supervisor are its home's (../home/claude.nix).
 {
   imports = [
     ./tap.nix
     ./sessions.nix
   ];
-  home-manager.users = builtins.mapAttrs (_: account: import ./home-manager.nix account) (
-    import ../accounts.nix
-  );
 }

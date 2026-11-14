@@ -42,13 +42,22 @@ let
         shared.node
         inputs.home-manager.nixosModules.home-manager
         ../../users/agent/identity.nix
-        ../../users/agent/forges.nix
         ../../users/agent/xb.nix
       ];
+      # each account's own home modules, as its homeConfiguration has them, through the system's home-manager here
       home-manager = {
         useGlobalPkgs = true;
         useUserPackages = true;
-        users = builtins.mapAttrs (_: _: { home.stateVersion = config.system.stateVersion; }) accounts;
+        extraSpecialArgs = { inherit my-lib; };
+        users = builtins.mapAttrs (_: account: {
+          imports = [
+            ../../users/agent/home/identity.nix
+            ../../users/agent/home/forges.nix
+            ../../users/agent/home/xb.nix
+          ];
+          _module.args = { inherit account; };
+          home.stateVersion = config.system.stateVersion;
+        }) accounts;
       };
       programs.gnupg.agent.enable = true;
       environment.systemPackages = [

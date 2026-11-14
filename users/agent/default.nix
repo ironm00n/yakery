@@ -1,18 +1,13 @@
 # The accounts agents run as when Owen starts them there (accounts.nix), whatever the tool; each tool is a layer of its
-# own beside them.
-{ config, ... }:
+# own beside them. Only what needs root is here: each account's home is its own (home/, homeConfigurations).
 {
   imports = [
     ./user.nix
     ./privileged.nix
     ./fence.nix
     ./identity.nix
-    ./forges.nix
     ./xb.nix
     ./shares.nix
     ./claude
   ];
-  home-manager.users = builtins.mapAttrs (_: _: { home.stateVersion = config.system.stateVersion; }) (
-    import ./accounts.nix
-  );
 }

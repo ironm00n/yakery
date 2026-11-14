@@ -60,25 +60,52 @@ let
   users = {
     ironmoon = [ ../users/ironmoon/home-manager.nix ];
   };
-in
-lib.cartesianProduct {
-  username = lib.attrNames users;
-  machine = machines |> lib.filterAttrs (_: m: !(m.no-hm or false)) |> lib.attrNames;
-}
-|> map (
-  { username, machine }:
-  {
-    name = "${username}@${machine}";
-    value = home-manager.lib.homeManagerConfiguration (
-      let
-        base = common { inherit username machine; };
-      in
+  # each account agents run as, on each machine whose system has them (`agents` in flake.nix's machines), deployed by
+  # the account itself, so its home needs none of his modules
+  agents =
+    lib.cartesianProduct {
+      account = lib.attrValues (import ../users/agent/accounts.nix);
+      machine = machines |> lib.filterAttrs (_: m: m.agents or false) |> lib.attrNames;
+    }
+    |> map (
+      { account, machine }:
       {
-        inherit pkgs;
-        inherit (base) extraSpecialArgs;
-        modules = base.modules ++ users.${username};
+        name = "${account.name}@${machine}";
+        value = home-manager.lib.homeManagerConfiguration {
+          inherit pkgs;
+          inherit
+            (common {
+              username = account.name;
+              inherit machine;
+            })
+            extraSpecialArgs
+            ;
+          modules = [ (import ../users/agent/home account) ];
+        };
       }
-    );
-  }
-)
-|> lib.listToAttrs
+    )
+    |> lib.listToAttrs;
+  homes =
+    lib.cartesianProduct {
+      username = lib.attrNames users;
+      machine = machines |> lib.filterAttrs (_: m: !(m.no-hm or false)) |> lib.attrNames;
+    }
+    |> map (
+      { username, machine }:
+      {
+        name = "${username}@${machine}";
+        value = home-manager.lib.homeManagerConfiguration (
+          let
+            base = common { inherit username machine; };
+          in
+          {
+            inherit pkgs;
+            inherit (base) extraSpecialArgs;
+            modules = base.modules ++ users.${username};
+          }
+        );
+      }
+    )
+    |> lib.listToAttrs;
+in
+homes // agents

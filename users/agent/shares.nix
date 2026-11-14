@@ -1,30 +1,23 @@
-# His projects the accounts work in, each bound under `top` in his home's layout with its Claude memory dir, so no data
-# moves. `top` is root's, so no account owns any part of a mount path; what it may read or write inside is his ACLs'
-# call, never a rule here, since an owner change on a mount point would land on his tree.
+# His projects the accounts work in, each bound under `top` in his home's layout with its Claude memory dir (layout.nix),
+# so no data moves; each account's home links its clones to them (home/shares.nix). `top` is root's, so no account owns
+# any part of a mount path; what it may read or write inside is his ACLs' call, never a rule here, since an owner change
+# on a mount point would land on his tree.
 {
   config,
   lib,
-  options,
   utils,
   ...
 }:
 let
-  top = "/shr";
+  inherit (import ./layout.nix { inherit lib; })
+    top
+    projects
+    memories
+    memory
+    ;
   # the accounts' own, to traverse `top`
   group = baseNameOf top;
-  # checkouts under his home, each bound with its Claude memory dir
-  projects = [ "workspace/redox" ];
-  # projects whose Claude memory dir alone is bound: the accounts work in clones of their own at the same path under
-  # their homes, push from there, and the memory stays one dir
-  memories = [
-    "workspace/claude"
-    "workspace/autograder"
-  ];
   his = config.users.users.ironmoon.home;
-  # Claude's name for a project's dir under ~/.claude/projects
-  slug = lib.stringAsChars (c: if builtins.match "[a-zA-Z0-9]" c == null then "-" else c);
-  # a project's Claude memory dir, in a home's layout
-  memory = home: project: "${home}/.claude/projects/${slug "${home}/${project}"}/memory";
   # a project's dir and its Claude memory dir, in a home's layout
   dirs = home: project: [
     "${home}/${project}"
@@ -83,25 +76,5 @@ in
       deps = [ "users" ];
       text = "install -d -m 0710 -o root -g ${group} ${top}";
     };
-  }
-  # each account's own git and Claude memory, where home-manager runs (a test node may have none)
-  // lib.optionalAttrs (options ? home-manager) {
-    home-manager.users = builtins.mapAttrs (
-      _: _:
-      { config, ... }:
-      {
-        # git refuses a tree another uid owns ("dubious ownership"), and each share is his
-        programs.git.settings.safe.directory = map (project: "${top}/${project}") projects;
-        # the memory dir of the account's own clone is the bound one
-        home.file = lib.listToAttrs (
-          map (
-            project:
-            lib.nameValuePair (lib.removePrefix "${config.home.homeDirectory}/" (
-              memory config.home.homeDirectory project
-            )) { source = config.lib.file.mkOutOfStoreSymlink (memory top project); }
-          ) memories
-        );
-      }
-    ) (import ./accounts.nix);
   };
 }

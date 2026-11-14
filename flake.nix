@@ -214,6 +214,9 @@
         sops-nix.nixosModules.sops
       ] ++ lib.optionals use-hm [
         home-manager.nixosModules.home-manager
+      # the accounts agents run as; their homes are homeConfigurations of their own
+      ] ++ lib.optionals (ctx.machine.agents or false) [
+        ./users/agent
       ];
     my-lib = import ./lib { inherit lib; };
     base-system = system: {
@@ -281,6 +284,7 @@
           ./hosts/desktop/configuration.nix
         ];
         host = import ./hosts/desktop/host-cfg.nix;
+        agents = true;
       };
     }
     // servers;

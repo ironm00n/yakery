@@ -43,30 +43,6 @@ let
         '';
       };
 
-      home-manager.users.${name} = {
-        programs.git = {
-          enable = true;
-          settings.user = identity;
-          signing = {
-            key = email;
-            signByDefault = true;
-            format = "openpgp";
-            signer = gpg;
-          };
-        };
-        programs.jujutsu = {
-          enable = true;
-          settings = {
-            user = identity;
-            signing = {
-              behavior = "own";
-              backend = "gpg";
-              key = email;
-              backends.gpg.program = gpg;
-            };
-          };
-        };
-      };
     };
 in
 {

@@ -12,7 +12,6 @@
     ../common/interactive
     ./networking.nix
     ./agent-vm.nix
-    ../../users/agent
   ];
 
   bundles = {
