@@ -683,6 +683,24 @@ test('in arm A no issue is put before the lane at a turn\'s end', async ($, on) 
   expect(openRun(seen.runs)).toEqual([])
 })
 
+test('while ~/.local/state/claude-lanes/off exists the mod does nothing, and it is back at the next hook once the file is gone', async ($, on) => {
+  const OFF = `${HOME}/.local/state/claude-lanes/off`
+  const { seen, files } = world($, on, { tokens: 650_000 })
+  compactions(on)
+  files[OFF] = ''
+  await start($)
+  await prompt($, 'hello')
+  expect(seen.prompts[0].context).toBeUndefined()
+  expect(await describe($, 'SendMessage')).toEqual({ description: 'd', isDeferred: true })
+  expect((await bash($, 'git push')).additionalContext).toBeUndefined()
+  expect((await stop($)).block).toBeUndefined()
+  expect(await rotateCall($)).toEqual({ deny: `the lane mod is off while ${OFF} exists` })
+  expect((await $.session.compact({ trigger: 'auto', messages: [OLD] })).messages?.map(({ text }) => text)).toEqual(['the summary'])
+  delete files[OFF]
+  expect((await stop($)).block).toContain('The context holds 650k tokens')
+  expect(await describe($, 'SendMessage')).toEqual({ description: 'd', isDeferred: false })
+})
+
 test('front matter names the files a state file carries', () => {
   expect(carried(STATE_TEXT)).toEqual([NOTES, '/w/gone.md'])
   expect(carried('# no front matter\ncarry:\n  - /x\n')).toEqual([])

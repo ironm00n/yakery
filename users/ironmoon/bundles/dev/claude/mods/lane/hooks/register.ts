@@ -62,8 +62,14 @@ function note(e: Classic) {
   if (e.agent_id === undefined && session?.id !== e.session_id) session = { id: e.session_id, transcript: e.transcript_path }
 }
 
-/** Named sessions only: ~/.claude/sessions/<pid>.json holds each one's name beside its id, and the engine's process. */
+/** The file whose presence turns the mod off for every session, at each one's next hook: rollback with no switch. */
+const offFile = async ($: EngineInterface) => `${(await $.env.get('HOME')) ?? ''}/.local/state/claude-lanes/off`
+const isOff = async ($: EngineInterface) => $.fs.exists(await offFile($))
+
+/** Named sessions only: ~/.claude/sessions/<pid>.json holds each one's name beside its id, and the engine's process.
+ * While the off file exists no session is one, so the mod does nothing. */
 async function laneOf($: EngineInterface): Promise<Lane | undefined> {
+  if (await isOff($)) return undefined
   if (lane !== undefined) return lane
   const [id, now] = [session?.id ?? (await $.session.id()), await $.clock.now()]
   if (unnamed?.id === id && now - unnamed.at < UNNAMED_MS) return undefined
@@ -458,6 +464,7 @@ export const register: Register = (on) => {
   })
 
   on('tool.call', { tool: `mcp__lane__${TOOL}` }, async ($, e) => {
+    if (await isOff($)) return { deny: `the lane mod is off while ${await offFile($)} exists` }
     if (e.agentId !== undefined) return { deny: 'only the main conversation starts its context over' }
     const me = await laneOf($)
     if (me === undefined) return { deny: 'this session has no name, so no kit a new context could start from' }
