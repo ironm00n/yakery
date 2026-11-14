@@ -65,8 +65,10 @@ pkgs.testers.runNixOSTest {
       ];
       virtualisation.memorySize = 2048;
       bundles.zitadel.mail.enable = true;
+      bundles.zitadel.signIn.checkDays = 30;
       # its secrets come from the test: the app password from the server, the token from the first instance
       systemd.services.zitadel-mail.wantedBy = lib.mkForce [ ];
+      systemd.services.zitadel-sign-in.wantedBy = lib.mkForce [ ];
       security.pki.certificateFiles = nodes.server.security.pki.certificateFiles;
       # IPv6 only, as cx23-2 reaches mail.ironmoon.dev
       networking.hosts.${mailAddress} = [ stalwart.my-lib.ironmoon.mail.host ];
@@ -125,6 +127,33 @@ pkgs.testers.runNixOSTest {
           smtp = provider["smtp"]
           want = {"senderAddress": "${sender}", "user": "${login}", "host": "${stalwart.my-lib.ironmoon.mail.host}:587", "tls": True}
           assert {k: smtp.get(k) for k in want} == want, smtp
+
+      with subtest("zitadel-sign-in refuses an empty token, naming its file"):
+          store("api_token", "")
+          zitadel.fail("systemctl start zitadel-sign-in.service")
+          zitadel.succeed("journalctl -u zitadel-sign-in.service -o cat | grep -Fx '${zitadel.secretsDir}/zitadel-api_token is empty'")
+          store("api_token", secrets["api_token"])
+
+      with subtest("zitadel-sign-in sets 30 days on the instance's policy and an org's own, and leaves the rest"):
+          lifetimes = ("passwordCheckLifetime", "secondFactorCheckLifetime", "multiFactorCheckLifetime")
+          month = ["2592000s"] * 3
+          own_org = api("POST", "/management/v1/orgs", pat, {"name": "own policy"})["id"]
+          api("POST", "/management/v1/policies/login", pat, {"allowUsernamePassword": True, "disableLoginWithPhone": True}, org=own_org)
+          own_before = api("GET", "/management/v1/policies/login", pat, org=own_org)["policy"]
+          zitadel.succeed("systemctl start zitadel-sign-in.service")
+          instance = api("GET", "/admin/v1/policies/login", pat)["policy"]
+          own = api("GET", "/management/v1/policies/login", pat, org=own_org)
+          assert [instance[k] for k in lifetimes] == month, instance
+          assert not own.get("isDefault") and [own["policy"][k] for k in lifetimes] == month, own
+          rest = lambda policy: {k: v for k, v in policy.items() if k not in lifetimes and k != "details"}
+          assert rest(own["policy"]) == rest(own_before), (own_before, own["policy"])
+          # the token's own org keeps no policy of its own, so it follows the instance's
+          followed = api("GET", "/management/v1/policies/login", pat)
+          assert followed.get("isDefault") and [followed["policy"][k] for k in lifetimes] == month, followed
+
+      with subtest("zitadel-sign-in started again finds nothing to change and succeeds"):
+          zitadel.succeed("systemctl restart zitadel-sign-in.service")
+          assert zitadel.succeed("systemctl show -P ActiveState zitadel-sign-in.service").strip() == "active"
 
       with subtest("the verification code ZITADEL mails a new user arrives over IPv6, From auth@ and signed as sent from it"):
           api("POST", "/v2/users/human", pat, {

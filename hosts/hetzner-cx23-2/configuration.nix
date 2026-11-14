@@ -13,6 +13,7 @@
   bundles.zitadel = {
     enable = true;
     mail.enable = true;
+    signIn.checkDays = 30;
   };
 
   system.stateVersion = "26.11";

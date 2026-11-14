@@ -119,9 +119,11 @@ in
   python = ''
     import json  # noqa: F811
 
-    def api(method, path, token, body=None):
+    # org= acts as that org, as the management API takes it
+    def api(method, path, token, body=None, org=None):
         data = f"-d '{json.dumps(body)}' -H 'Content-Type: application/json'" if body is not None else ""
-        return json.loads(zitadel.succeed(f"{https}{path} -X {method} -H 'Authorization: Bearer {token}' {data}"))
+        acting = f"-H 'x-zitadel-orgid: {org}'" if org else ""
+        return json.loads(zitadel.succeed(f"{https}{path} -X {method} -H 'Authorization: Bearer {token}' {acting} {data}"))
 
     # the machine user is the instance's IAM owner
     def admin_pat():

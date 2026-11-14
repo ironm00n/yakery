@@ -12,6 +12,8 @@ let
   port = 39995;
   ips = inputs.secrets.data.ips.${config.networking.hostName};
   zitadelAddr = "${ips.ipv6.prefix}::1:1";
+  # the units below call the admin API with an IAM owner's token
+  adminApi = cfg.mail.enable || cfg.signIn.checkDays != null;
   zitadel-secrets =
     my-lib.sops.mkSecrets
       {
@@ -26,11 +28,9 @@ let
           "admin_steps"
           "settings"
         ]
-        # the app password of Stalwart's zitadel@ account, and a token of an IAM owner's to set it with
-        ++ lib.optionals cfg.mail.enable [
-          "smtp_password"
-          "api_token"
-        ]
+        # the app password of Stalwart's zitadel@ account
+        ++ lib.optional cfg.mail.enable "smtp_password"
+        ++ lib.optional adminApi "api_token"
       );
   get-zitadel-secret = zitadel-secrets.get-path;
 
@@ -117,6 +117,35 @@ let
     fi
   '';
 
+  # an update sets all of a policy's fields, so each is sent back as read with only the three check lifetimes changed,
+  # and only when one differs: ZITADEL refuses an update that changes nothing
+  setSignInChecks = ''
+    lifetime=${toString (cfg.signIn.checkDays * 86400)}s
+    keep() {
+      local have
+      have=$(api "$1" "''${@:2}")
+      if [ "$(jq --arg l "$lifetime" \
+        '.policy | [.passwordCheckLifetime, .secondFactorCheckLifetime, .multiFactorCheckLifetime] == [$l, $l, $l]' \
+        <<<"$have")" != true ]; then
+        jq --arg l "$lifetime" '.policy
+          | {allowUsernamePassword, allowRegister, allowExternalIdp, forceMfa, passwordlessType, hidePasswordReset,
+            ignoreUnknownUsernames, defaultRedirectUri, passwordCheckLifetime, externalLoginCheckLifetime,
+            mfaInitSkipLifetime, secondFactorCheckLifetime, multiFactorCheckLifetime, allowDomainDiscovery,
+            disableLoginWithEmail, disableLoginWithPhone, forceMfaLocalOnly}
+          + {passwordCheckLifetime: $l, secondFactorCheckLifetime: $l, multiFactorCheckLifetime: $l}' <<<"$have" \
+          | api "$1" "''${@:2}" --request PUT --data @- >/dev/null
+      fi
+    }
+
+    keep /admin/v1/policies/login
+    # an org without a policy of its own follows the instance's
+    for org in $(api /admin/v1/orgs/_search --data '{"query": {"limit": 1000}}' | jq --raw-output '.result[]?.id'); do
+      if [ "$(api /management/v1/policies/login --header "x-zitadel-orgid: $org" | jq '.isDefault // false')" != true ]; then
+        keep /management/v1/policies/login --header "x-zitadel-orgid: $org"
+      fi
+    done
+  '';
+
   # one role over the socket with peer auth: Admin = User, so init's admin steps skip themselves
   role = "zitadel";
   database = "zitadel";
@@ -132,6 +161,15 @@ in
       sign-in, so a lost sign-in can't be reset by mail; the way back in is in the private notes
       repo's homelab/zitadel-break-glass.md
     '';
+    signIn.checkDays = lib.mkOption {
+      type = lib.types.nullOr lib.types.ints.positive;
+      default = null;
+      description = ''
+        Days a password, second factor or passkey check counts before ZITADEL asks for it again, on the instance's
+        login policy and on each org that keeps its own, set again at each start through the admin API with an IAM
+        owner's token. null leaves ZITADEL's own (10 days, 18 h, 12 h).
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -219,6 +257,13 @@ in
         inherit token;
       };
       text = setMailProvider;
+    });
+
+    systemd.services.zitadel-sign-in = lib.mkIf (cfg.signIn.checkDays != null) (adminUnit {
+      name = "zitadel-sign-in";
+      description = "How long ZITADEL's sign-in checks count, on the instance's login policy and each org's own";
+      credentials = { inherit token; };
+      text = setSignInChecks;
     });
 
     bundles.backup.services.zitadel.dumpCommand = pkgs.writeShellScript "zitadel-dump" ''
