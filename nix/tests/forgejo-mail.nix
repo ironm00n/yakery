@@ -1,10 +1,11 @@
 # oracle-a1-flex-1's Forgejo mailing through cx33-1's Stalwart and its program accounts: a mention
 # arrives From code@, sent signed in as forgejo@, and a reply to it becomes a comment by the user it
 # went to, while an automatic reply or one without a valid token is deleted and logged; the app
-# password signs in from flex-1's public and overlay addresses; the submission listener refuses
-# mail before sign-in, the app password from another address, and a sender other than the
-# account's own addresses; mail to them is refused but at a subaddress of the alias; and an address
-# another account already holds makes applying the plan fail.
+# password signs in from flex-1's public and overlay addresses, to submission and to IMAP, which
+# Forgejo reaches at cx33-1's public address as public DNS answers it; the submission listener
+# refuses mail before sign-in and a sender other than the account's own addresses; both listeners
+# refuse the app password from another address; mail to them is refused but at a subaddress of the
+# alias; and an address another account already holds makes applying the plan fail.
 { pkgs }:
 let
   inherit (pkgs) lib;
@@ -201,6 +202,29 @@ pkgs.testers.runNixOSTest {
               " | grep -qF 'remoteIp = ${outsideIp},'",
               timeout=30,
           )
+
+      # SELECT and SEARCH, as Forgejo's reader runs them: the account isn't granted LIST
+      def imap(here):
+          return forgejo.execute(
+              f"curl -sS --ssl-reqd --interface {here} --user ${login}:\"$(cat ${passwordFile})\""
+              " 'imaps://${stalwart.my-lib.ironmoon.mail.host}/INBOX?UNSEEN' 2>&1"
+          )
+
+      def unauthorized(remote):
+          return int(server.succeed(
+              "journalctl -u stalwart.service -o cat | grep -F security.ip-unauthorized"
+              f" | grep -cF 'remoteIp = {remote},' || true"
+          ).strip())
+
+      with subtest("IMAP takes the app password at cx33-1's public address, from flex-1's"):
+          status, out = imap(flex1)
+          assert status == 0 and "* SEARCH" in out, out
+
+      with subtest("IMAP refuses the app password from any other address"):
+          refused_before = unauthorized("${outsideIp}")
+          status, out = imap("${outsideIp}")
+          assert status != 0 and "* SEARCH" not in out, out
+          retry(lambda _: unauthorized("${outsideIp}") > refused_before, timeout_seconds=30)
 
       with subtest("the account sends only from its own addresses, not a user's or another account's alias"):
           for other in ["${address "owen"}", "${address "auth"}"]:

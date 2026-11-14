@@ -477,8 +477,9 @@ in
       is done
     '';
     imap.enable = lib.mkEnableOption ''
-      IMAP with implicit TLS on port 993 of the NetBird overlay addresses only, for a program on a
-      peer that reads its account's mailbox
+      IMAP with implicit TLS on port 993 of the public addresses and of the NetBird overlay addresses,
+      for a program that reads its account's mailbox; a program account signs in only from its
+      allowed addresses, as on submission
     '';
     certificate = lib.mkOption {
       type = lib.types.submodule {
@@ -687,7 +688,7 @@ in
               submission = smtpListener "submission" 587 (hostnameAddresses ++ overlay);
             }
             // lib.optionalAttrs cfg.imap.enable {
-              imaps = tlsListener "imap" true "imaps" 993 overlay;
+              imaps = tlsListener "imap" true "imaps" 993 (hostnameAddresses ++ overlay);
             }
           ))
           (reconcile "Certificate" [ "certificate" ] (
@@ -1079,8 +1080,8 @@ in
       53
     ]
     ++ lib.optional cfg.receiving.enable 25
-    ++ lib.optional cfg.submission.enable 587;
-    bundles.vpn.netbird.allowedTCPPorts = lib.optional cfg.imap.enable 993;
+    ++ lib.optional cfg.submission.enable 587
+    ++ lib.optional cfg.imap.enable 993;
     # Stalwart reads the certificate files only at start
     security.acme.certs.${hostname}.reloadServices = lib.optional tls "stalwart.service";
     systemd.services.stalwart = lib.mkIf tls {
