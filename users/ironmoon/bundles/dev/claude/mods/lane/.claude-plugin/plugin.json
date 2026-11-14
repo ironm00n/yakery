@@ -1,5 +1,0 @@
-{
-  "name": "lane",
-  "version": "0.1.0",
-  "description": "A named session's context starts over from its state file: the kit (state file, open agents/work issues, messages sent to it) loads after every start, clear and compaction, and the session is asked to rotate at a landed unit of work or a token mark"
-}

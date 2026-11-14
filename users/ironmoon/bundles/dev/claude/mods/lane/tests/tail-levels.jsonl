@@ -1,4 +1,0 @@
-{"uuid": "u1", "timestamp": "2026-11-11T05:00:00.000Z", "type": "user", "origin": {"kind": "human"}, "message": {"role": "user", "content": "go"}}
-{"uuid": "a1", "timestamp": "2026-11-11T05:00:01.000Z", "type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
-{"uuid": "r1", "timestamp": "2026-11-11T05:00:02.000Z", "type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR"}]}}
-{"uuid": "n1", "timestamp": "2026-11-11T05:00:03.000Z", "type": "user", "origin": {"kind": "task-notification"}, "message": {"role": "user", "content": "NNNNNNNNNN"}}

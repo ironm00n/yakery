@@ -1,5 +1,0 @@
-{"type":"user","uuid":"o1","parentUuid":null,"isSidechain":false,"timestamp":"2026-11-05T09:00:00Z","origin":{"kind":"human"},"message":{"role":"user","content":"before the loop, kept by file order"}}
-{"type":"system","subtype":"compact_boundary","uuid":"cb","parentUuid":null,"logicalParentUuid":"k1","isSidechain":false}
-{"type":"user","uuid":"k1","parentUuid":"cb","isSidechain":false,"timestamp":"2026-11-05T09:01:00Z","origin":{"kind":"human"},"message":{"role":"user","content":"kept across the compaction"}}
-{"type":"assistant","uuid":"a1","parentUuid":"k1","isSidechain":false,"message":{"role":"assistant","content":[]}}
-{"type":"user","uuid":"n1","parentUuid":"a1","isSidechain":false,"timestamp":"2026-11-05T09:02:00Z","origin":{"kind":"human"},"message":{"role":"user","content":"newest"}}

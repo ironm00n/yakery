@@ -1,3 +1,0 @@
-{"type":"user","uuid":"o1","parentUuid":null,"isSidechain":false,"timestamp":"2026-11-06T09:00:00Z","origin":{"kind":"human"},"message":{"role":"user","content":"before a compaction whose link names nothing"}}
-{"type":"system","subtype":"compact_boundary","uuid":"cb","parentUuid":null,"logicalParentUuid":"gone","isSidechain":false}
-{"type":"user","uuid":"n1","parentUuid":"cb","isSidechain":false,"timestamp":"2026-11-06T09:01:00Z","origin":{"kind":"human"},"message":{"role":"user","content":"after"}}
