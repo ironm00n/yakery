@@ -44,50 +44,78 @@ let
     host = "${my-lib.ironmoon.mail.host}:587";
     description = "Stalwart, as kept by bundles.zitadel.mail";
   };
-  credentials = {
-    password = get-zitadel-secret "smtp_password";
-    token = get-zitadel-secret "api_token";
-  };
   # EX_CONFIG, which no retry fixes: the deploy that fills the secret starts the unit again
   emptySecret = 78;
-  setMailProvider = pkgs.writeShellApplication {
-    name = "zitadel-mail";
-    runtimeInputs = [
-      pkgs.curl
-      pkgs.jq
-    ];
-    text = ''
-      ${lib.concatMapAttrsStringSep "" (name: path: ''
-        [ -n "$(<"$CREDENTIALS_DIRECTORY/${name}")" ] || { echo ${lib.escapeShellArg "${path} is empty"} >&2; exit ${toString emptySecret}; }
-      '') credentials}
-      # the token and the password reach neither argv nor the environment
-      api() {
-        curl --silent --show-error --fail-with-body --max-time 30 \
-          --config <(printf 'header = "Authorization: Bearer %s"\n' "$(<"$CREDENTIALS_DIRECTORY/token")") \
-          --header 'Host: ${hostname}' --header 'Content-Type: application/json' \
-          "http://127.0.0.1:${toString port}/admin/v1$1" "''${@:2}"
-      }
-      password() {
-        jq --null-input --rawfile p "$CREDENTIALS_DIRECTORY/password" '{password: ($p | rtrimstr("\n"))}'
-      }
-      want=${lib.escapeShellArg (builtins.toJSON mailProvider)}
+  # a oneshot calling ZITADEL's APIs as `api PATH CURL-ARGS...` with the token among its credentials, again at each
+  # start; the admin API answers once ZITADEL's projections have caught up after a start
+  adminUnit =
+    {
+      name,
+      description,
+      credentials,
+      text,
+    }:
+    {
+      inherit description;
+      requires = [ "zitadel.service" ];
+      after = [ "zitadel.service" ];
+      wantedBy = [ "multi-user.target" ];
+      startLimitIntervalSec = 0;
+      serviceConfig = my-lib.systemd.hardening.network // {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        DynamicUser = true;
+        Restart = "on-failure";
+        RestartSec = "10s";
+        RestartPreventExitStatus = emptySecret;
+        LoadCredential = lib.mapAttrsToList (name: path: "${name}:${path}") credentials;
+        ExecStart = lib.getExe (
+          pkgs.writeShellApplication {
+            inherit name;
+            runtimeInputs = [
+              pkgs.curl
+              pkgs.jq
+            ];
+            text = ''
+              ${lib.concatMapAttrsStringSep "" (name: path: ''
+                [ -n "$(<"$CREDENTIALS_DIRECTORY/${name}")" ] || { echo ${lib.escapeShellArg "${path} is empty"} >&2; exit ${toString emptySecret}; }
+              '') credentials}
+              # the credentials reach neither argv nor the environment
+              api() {
+                curl --silent --show-error --fail-with-body --max-time 30 \
+                  --config <(printf 'header = "Authorization: Bearer %s"\n' "$(<"$CREDENTIALS_DIRECTORY/token")") \
+                  --header 'Host: ${hostname}' --header 'Content-Type: application/json' \
+                  "http://127.0.0.1:${toString port}$1" "''${@:2}"
+              }
+              ${text}
+            '';
+          }
+        );
+      };
+    };
+  token = get-zitadel-secret "api_token";
 
-      have=$(api /email/_search --data '{}' | jq --compact-output --argjson want "$want" \
-        '[.result[]? | select(.description == $want.description)] | first // empty')
-      if [ -z "$have" ]; then
-        id=$(password | jq --argjson want "$want" '$want + .' | api /email/smtp --data @- | jq --raw-output .id)
-      else
-        id=$(jq --raw-output .id <<<"$have")
-        if [ "$(jq --argjson want "$want" '.smtp | {senderAddress, senderName, user, tls, host} == ($want | del(.description))' <<<"$have")" != true ]; then
-          api "/email/smtp/$id" --request PUT --data "$want" >/dev/null
-        fi
-        password | api "/email/smtp/$id/password" --request PUT --data @- >/dev/null
+  setMailProvider = ''
+    password() {
+      jq --null-input --rawfile p "$CREDENTIALS_DIRECTORY/password" '{password: ($p | rtrimstr("\n"))}'
+    }
+    want=${lib.escapeShellArg (builtins.toJSON mailProvider)}
+
+    have=$(api /admin/v1/email/_search --data '{}' | jq --compact-output --argjson want "$want" \
+      '[.result[]? | select(.description == $want.description)] | first // empty')
+    if [ -z "$have" ]; then
+      id=$(password | jq --argjson want "$want" '$want + .' | api /admin/v1/email/smtp --data @- | jq --raw-output .id)
+    else
+      id=$(jq --raw-output .id <<<"$have")
+      if [ "$(jq --argjson want "$want" '.smtp | {senderAddress, senderName, user, tls, host} == ($want | del(.description))' <<<"$have")" != true ]; then
+        api "/admin/v1/email/smtp/$id" --request PUT --data "$want" >/dev/null
       fi
-      if [ "$(jq --raw-output '.state // empty' <<<"$have")" != EMAIL_PROVIDER_ACTIVE ]; then
-        api "/email/$id/_activate" --data '{}' >/dev/null
-      fi
-    '';
-  };
+      password | api "/admin/v1/email/smtp/$id/password" --request PUT --data @- >/dev/null
+    fi
+    if [ "$(jq --raw-output '.state // empty' <<<"$have")" != EMAIL_PROVIDER_ACTIVE ]; then
+      api "/admin/v1/email/$id/_activate" --data '{}' >/dev/null
+    fi
+  '';
 
   # one role over the socket with peer auth: Admin = User, so init's admin steps skip themselves
   role = "zitadel";
@@ -183,24 +211,15 @@ in
       after = [ "postgresql.target" ];
     };
 
-    systemd.services.zitadel-mail = lib.mkIf cfg.mail.enable {
+    systemd.services.zitadel-mail = lib.mkIf cfg.mail.enable (adminUnit {
+      name = "zitadel-mail";
       description = "ZITADEL's mail provider, Stalwart's submission listener";
-      requires = [ "zitadel.service" ];
-      after = [ "zitadel.service" ];
-      wantedBy = [ "multi-user.target" ];
-      # the admin API answers once ZITADEL's projections have caught up after a start
-      startLimitIntervalSec = 0;
-      serviceConfig = my-lib.systemd.hardening.network // {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        DynamicUser = true;
-        Restart = "on-failure";
-        RestartSec = "10s";
-        RestartPreventExitStatus = emptySecret;
-        LoadCredential = lib.mapAttrsToList (name: path: "${name}:${path}") credentials;
-        ExecStart = lib.getExe setMailProvider;
+      credentials = {
+        password = get-zitadel-secret "smtp_password";
+        inherit token;
       };
-    };
+      text = setMailProvider;
+    });
 
     bundles.backup.services.zitadel.dumpCommand = pkgs.writeShellScript "zitadel-dump" ''
       exec ${pkgs.util-linux}/bin/setpriv --reuid=${role} --regid=${role} --clear-groups \
