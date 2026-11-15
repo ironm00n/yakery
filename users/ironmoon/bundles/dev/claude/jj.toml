@@ -6,12 +6,15 @@
 [--scope.git]
 private-commits = "working_copies()"
 
-# default.nix reads this scope again to give git the same identity in the same repos
+# default.nix reads this scope again to give git the same identity in the same repos. jj matches a workspace by its
+# repo's path, so a listed repo's workspaces under /shr/worktree are covered, and yakery's there are not.
 [[--scope]]
 --when.environments = ["CLAUDECODE"]
 --when.repositories = [
   "~/workspace/autograder",
   "~/workspace/claude",
+  "/shr/hearth",
+  "/shr/workspace/agent",
   "~/workspace/codex",
   "~/workspace/common",
   "~/workspace/health",

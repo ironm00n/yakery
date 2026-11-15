@@ -10,6 +10,9 @@ trap 'rm -r "${dir:?}"' EXIT
 mkdir -p "$dir/.config/jj/conf.d" "$dir/.config/git" "$dir/workspace"
 cp -L "$config"/jj/conf.d/*.toml "$dir/.config/jj/conf.d/"
 cp -L "$config/git/claude-identity" "$config/git/claude-identity.user" "$dir/.config/git/"
+# the shared repos' root, which no build may make, moves under $dir in these copies alone
+sed -i "s#\"/shr/#\"$dir/shr/#" "$dir/.config/jj/conf.d/claude.toml"
+sed -i "s#gitdir:/shr/#gitdir:$dir/shr/#" "$dir/.config/git/claude-identity"
 printf '[user]\nname = "Base"\nemail = "base@example.com"\n' >"$dir/.config/jj/config.toml"
 printf '[user]\n\tname = Base\n\temail = base@example.com\n' >"$dir/.config/git/config"
 mapfile -t session < <(jq -r '.env | to_entries[] | select(.key | startswith("GIT_CONFIG_")) | "\(.key)=\(.value)"' "$settings")
@@ -20,6 +23,13 @@ jj_author() {
   run "${@:2}" jj --quiet git init "$1" &&
     run "${@:2}" jj --quiet -R "$1" commit -m test &&
     run "${@:2}" jj --quiet -R "$1" log --no-graph -r @- -T 'author.name() ++ " <" ++ author.email() ++ ">"'
+}
+# the author of a commit in a workspace of REPO at WORKSPACE
+jj_workspace_author() {
+  run "${@:3}" jj --quiet git init "$1" && mkdir -p "${2%/*}" &&
+    run "${@:3}" jj --quiet -R "$1" workspace add --name w "$2" &&
+    run "${@:3}" jj --quiet -R "$2" commit -m test &&
+    run "${@:3}" jj --quiet -R "$2" log --no-graph -r @- -T 'author.name() ++ " <" ++ author.email() ++ ">"'
 }
 git_author() {
   run "${@:2}" git init -q "$1" &&
@@ -52,5 +62,15 @@ for tool in jj git; do
   check "$base" ${tool}_author elsewhere "${session[@]}"
   check agent ${tool}_signer workspace/claude "${session[@]}"
   check base ${tool}_signer elsewhere "${session[@]}"
+  check "$agent" ${tool}_author shr/hearth "${session[@]}"
+  check agent ${tool}_signer shr/workspace/agent "${session[@]}"
 done
+# check WANT REPO WORKSPACE, both under $dir, in a session
+check_workspace() {
+  got=$(jj_workspace_author "$dir/$2" "$dir/$3" "${session[@]}" 2>"$dir/stderr")
+  [ "$got" = "$1" ] && echo "ok   jj workspace $3 of $2: $got" ||
+    { failed=1; echo "FAIL jj workspace $3 of $2: want $1, got $got"; cat "$dir/stderr"; }
+}
+check_workspace "$agent" shr/hearth shr/worktree/hearth-lane
+check_workspace "$base" shr/yakery shr/worktree/yakery-lane
 exit $failed
