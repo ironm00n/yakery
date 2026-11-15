@@ -14,10 +14,19 @@ let
     projects
     memories
     memory
+    repos
+    worktree
     ;
-  # the accounts' own, to traverse `top`
+  # the accounts' own, to traverse `top`, and his, to share the repos under it
   group = baseNameOf top;
-  his = config.users.users.ironmoon.home;
+  under = map (dir: "${top}/${dir}");
+  # each shared repo and the worktree dir: what any member makes inside stays group shr's to write (setgid, default
+  # ACL), which jj's lock files in a shared store need; their parents are root's, like `top`, so no mount path is a
+  # member's
+  shared = under (repos ++ [ worktree ]);
+  parents = under (lib.remove "." (lib.unique (map dirOf repos)));
+  him = "ironmoon";
+  his = config.users.users.${him}.home;
   # a project's dir and its Claude memory dir, in a home's layout
   dirs = home: project: [
     "${home}/${project}"
@@ -60,7 +69,22 @@ in
         message = "users/agent/shares.nix: a share lies inside another, which would put its mount point in his tree";
       }
     ];
-    users.groups.${group}.members = builtins.attrNames (import ./accounts.nix);
+    users.groups.${group}.members = builtins.attrNames (import ./accounts.nix) ++ [ him ];
+    # his named entries let in the sessions he started before joining the group, which keep their old groups
+    systemd.tmpfiles.rules = [
+      "a+ ${top} - - - - user:${him}:x"
+    ]
+    ++ map (dir: "d ${dir} 0750 root ${group} -") parents
+    ++ map (dir: "a+ ${dir} - - - - user:${him}:rx") parents
+    ++ lib.concatMap (dir: [
+      "d ${dir} 2770 root ${group} -"
+      "a+ ${dir} - - - - group:${group}:rwx,default:group:${group}:rwx,user:${him}:rwx,default:user:${him}:rwx"
+    ]) shared;
+    # git refuses a repo another uid owns ("dubious ownership"); `/*` covers every depth below
+    programs.git = {
+      enable = true;
+      config.safe.directory = "${top}/*";
+    };
     agent.groupsWithHim = [ group ];
     fileSystems = config.agent.shares;
     # systemd makes a missing bind source as root, which would put a root-owned dir in his home

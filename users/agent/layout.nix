@@ -11,6 +11,15 @@ rec {
     "workspace/claude"
     "workspace/autograder"
   ];
+  # the shared repos under `top`, each one jj repo every account works in, laid out as the forge has them: infra's at
+  # top level, the workspace org's under workspace/
+  repos = [
+    "hearth"
+    "yakery"
+    "workspace/agent"
+  ];
+  # every account's jj workspaces of those repos
+  worktree = "worktree";
   # Claude's name for a project's dir under ~/.claude/projects
   slug = lib.stringAsChars (c: if builtins.match "[a-zA-Z0-9]" c == null then "-" else c);
   memory = home: project: "${home}/.claude/projects/${slug "${home}/${project}"}/memory";
