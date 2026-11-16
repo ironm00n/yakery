@@ -85,6 +85,12 @@ buildGoModule (
   // {
     pname = "zitadel";
 
+    # on the server build alone, unlike carriedCommits, so the console, the proto image and the module fetch stay as they are
+    patches = [
+      # a user who can sign in locally and picked no IdP is asked for a password, not sent to a linked IdP (zitadel#9318)
+      ./01-local-sign-in-first.patch
+    ];
+
     subPackages = [ "." ];
     env.CGO_ENABLED = 0;
     ldflags = [
@@ -131,6 +137,7 @@ buildGoModule (
     # buildGoModule copies preBuild into the fixed-output module fetch
     overrideModAttrs = {
       preBuild = "";
+      patches = [ ];
     };
 
     doCheck = false;

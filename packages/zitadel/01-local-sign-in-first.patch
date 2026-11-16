@@ -1,0 +1,135 @@
+diff --git a/internal/auth/repository/eventsourcing/eventstore/auth_request.go b/internal/auth/repository/eventsourcing/eventstore/auth_request.go
+index 5bf27bc..f746f75 100644
+--- a/internal/auth/repository/eventsourcing/eventstore/auth_request.go
++++ b/internal/auth/repository/eventsourcing/eventstore/auth_request.go
+@@ -1090,17 +1090,22 @@ func (repo *AuthRequestRepo) nextSteps(ctx context.Context, request *domain.Auth
+ 		request.PreferredLanguage = gu.Ptr(language.Make(user.HumanView.PreferredLanguage))
+ 	}
+ 
+-	isInternalLogin := (request.SelectedIDPConfigID == "" && userSession.SelectedIDPConfigID == "") || request.RequestLocalAuth
++	noLocalAuth := request.LoginPolicy != nil && !request.LoginPolicy.AllowUsernamePassword
++	// A user who can sign in locally and picked no IdP signs in locally, unless an IdP sign-in still holds;
++	// a linked IdP, or the one the session last used, is no longer chosen for them (zitadel#9318).
++	localAuth := request.RequestLocalAuth || (!noLocalAuth && request.SelectedIDPConfigID == "" &&
++		user.HumanView != nil && (user.PasswordSet || user.IsPasswordlessReady()) &&
++		!checkVerificationTimeMaxAge(userSession.ExternalLoginVerification, request.LoginPolicy.ExternalLoginCheckLifetime, request))
++	isInternalLogin := (request.SelectedIDPConfigID == "" && userSession.SelectedIDPConfigID == "") || localAuth
+ 	idps, err := checkExternalIDPsOfUser(ctx, repo.IDPUserLinksProvider, user.ID)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	noLocalAuth := request.LoginPolicy != nil && !request.LoginPolicy.AllowUsernamePassword
+ 
+ 	allowedLinkedIDPs := checkForAllowedIDPs(request.AllowedExternalIDPs, idps.Links)
+ 	if (!isInternalLogin || len(allowedLinkedIDPs) > 0 || noLocalAuth) &&
+ 		len(request.LinkingUsers) == 0 &&
+-		!request.RequestLocalAuth {
++		!localAuth {
+ 		step, err := repo.idpChecked(request, allowedLinkedIDPs, userSession)
+ 		if err != nil {
+ 			return nil, err
+diff --git a/internal/auth/repository/eventsourcing/eventstore/auth_request_test.go b/internal/auth/repository/eventsourcing/eventstore/auth_request_test.go
+index 30de3b6..511a344 100644
+--- a/internal/auth/repository/eventsourcing/eventstore/auth_request_test.go
++++ b/internal/auth/repository/eventsourcing/eventstore/auth_request_test.go
+@@ -66,6 +66,7 @@ type mockViewUserSession struct {
+ 	PasswordVerification      time.Time
+ 	SecondFactorVerification  time.Time
+ 	MultiFactorVerification   time.Time
++	SelectedIDPConfigID       string
+ 	Users                     []mockUser
+ }
+ 
+@@ -83,6 +84,7 @@ func (m *mockViewUserSession) UserSessionByIDs(context.Context, string, string,
+ 		PasswordVerification:      sql.NullTime{Time: m.PasswordVerification},
+ 		SecondFactorVerification:  sql.NullTime{Time: m.SecondFactorVerification},
+ 		MultiFactorVerification:   sql.NullTime{Time: m.MultiFactorVerification},
++		SelectedIDPConfigID:       sql.NullString{String: m.SelectedIDPConfigID},
+ 	}, nil
+ }
+ 
+@@ -367,6 +369,42 @@ func TestAuthRequestRepo_nextSteps(t *testing.T) {
+ 		request       *domain.AuthRequest
+ 		checkLoggedIn bool
+ 	}
++	// a user with the allowed IdP "IDPConfigID" linked, whose session last used sessionIDP (zitadel#9318)
++	linkedIDPUser := func(passwordSet bool, externalLogin time.Time, sessionIDP string) fields {
++		return fields{
++			userSessionViewProvider: &mockViewUserSession{
++				ExternalLoginVerification: externalLogin,
++				SecondFactorVerification:  testNow.Add(-5 * time.Minute),
++				SelectedIDPConfigID:       sessionIDP,
++			},
++			userViewProvider: &mockViewUser{
++				PasswordSet:     passwordSet,
++				IsEmailVerified: true,
++				MFAMaxSetUp:     int32(domain.MFALevelSecondFactor),
++			},
++			userEventProvider:     &mockEventUser{},
++			orgViewProvider:       &mockViewOrg{State: domain.OrgStateActive},
++			userGrantProvider:     &mockUserGrants{},
++			projectProvider:       &mockProject{},
++			applicationProvider:   &mockApp{app: &query.App{OIDCConfig: &query.OIDCApp{AppType: domain.OIDCApplicationTypeWeb}}},
++			lockoutPolicyProvider: &mockLockoutPolicy{policy: &query.LockoutPolicy{ShowFailures: true}},
++			idpUserLinksProvider:  &mockIDPUserLinks{idps: []*query.IDPUserLink{{IDPID: "IDPConfigID"}}},
++		}
++	}
++	linkedIDPRequest := func(selectedIDP string) args {
++		return args{&domain.AuthRequest{
++			UserID:              "UserID",
++			SelectedIDPConfigID: selectedIDP,
++			Request:             &domain.AuthRequestOIDC{},
++			AllowedExternalIDPs: []*domain.IDPProvider{{IDPConfigID: "IDPConfigID"}},
++			LoginPolicy: &domain.LoginPolicy{
++				AllowUsernamePassword:      true,
++				PasswordCheckLifetime:      10 * 24 * time.Hour,
++				ExternalLoginCheckLifetime: 10 * 24 * time.Hour,
++				SecondFactorCheckLifetime:  18 * time.Hour,
++			},
++		}, false}
++	}
+ 	tests := []struct {
+ 		name    string
+ 		fields  fields
+@@ -1584,6 +1622,41 @@ func TestAuthRequestRepo_nextSteps(t *testing.T) {
+ 			[]domain.NextStep{&domain.PasswordStep{}},
+ 			nil,
+ 		},
++		{
++			"password and a linked idp, none picked, password step",
++			linkedIDPUser(true, time.Time{}, ""),
++			linkedIDPRequest(""),
++			[]domain.NextStep{&domain.PasswordStep{}},
++			nil,
++		},
++		{
++			"password and the linked idp the session last used, none picked, password step",
++			linkedIDPUser(true, time.Time{}, "IDPConfigID"),
++			linkedIDPRequest(""),
++			[]domain.NextStep{&domain.PasswordStep{}},
++			nil,
++		},
++		{
++			"password and a linked idp picked on the login page, external login step",
++			linkedIDPUser(true, time.Time{}, ""),
++			linkedIDPRequest("IDPConfigID"),
++			[]domain.NextStep{&domain.ExternalLoginStep{SelectedIDPConfigID: "IDPConfigID"}},
++			nil,
++		},
++		{
++			"password and a linked idp whose sign-in still holds, callback",
++			linkedIDPUser(true, testNow.Add(-5*time.Minute), "IDPConfigID"),
++			linkedIDPRequest(""),
++			[]domain.NextStep{&domain.RedirectToCallbackStep{}},
++			nil,
++		},
++		{
++			"a linked idp and no password, external login step",
++			linkedIDPUser(false, time.Time{}, ""),
++			linkedIDPRequest(""),
++			[]domain.NextStep{&domain.ExternalLoginStep{SelectedIDPConfigID: "IDPConfigID"}},
++			nil,
++		},
+ 		{
+ 			"external user (no password check needed), callback",
+ 			fields{

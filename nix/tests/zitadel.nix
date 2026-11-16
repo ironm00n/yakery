@@ -13,6 +13,8 @@ pkgs.testers.runNixOSTest {
   nodes.machine = {
     imports = [ zitadel.node ];
     virtualisation.memorySize = 2048;
+    # the classic login, as cx23-2's instance serves it
+    services.zitadel.settings.DefaultInstance.Features.LoginV2.Required = false;
   };
 
   testScript =
@@ -23,6 +25,8 @@ pkgs.testers.runNixOSTest {
     zitadel.python
     + ''
       import base64
+      import re
+      import urllib.parse
 
       zitadel = machine
       https = "curl -fsS -k --resolve ${host}:443:${addr} https://${host}"
@@ -58,6 +62,76 @@ pkgs.testers.runNixOSTest {
           payload = token.split(".")[1]
           claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
           assert claims.get("scope") == "${scope}", claims
+
+      # an IdP whose endpoints nothing serves: being sent to it is a redirect to its authorize URL
+      idp_authorize = "https://idp.example.test/authorize"
+      pat = admin_pat()
+      idp = api("POST", "/admin/v1/idps/oauth", pat, {
+          "name": "idp", "clientId": "zitadel", "clientSecret": "secret", "authorizationEndpoint": idp_authorize,
+          "tokenEndpoint": "https://idp.example.test/token", "userEndpoint": "https://idp.example.test/user",
+          "scopes": ["openid"], "idAttribute": "sub", "providerOptions": {"isLinkingAllowed": True},
+      })["id"]
+      api("POST", "/admin/v1/policies/login/idps", pat, {"idpId": idp})
+      project = api("POST", "/management/v1/projects", pat, {"name": "login"})["id"]
+      client = api("POST", f"/management/v1/projects/{project}/apps/oidc", pat, {
+          "name": "login", "redirectUris": ["http://localhost/cb"], "responseTypes": ["OIDC_RESPONSE_TYPE_CODE"],
+          "grantTypes": ["OIDC_GRANT_TYPE_AUTHORIZATION_CODE"], "appType": "OIDC_APP_TYPE_USER_AGENT",
+          "authMethodType": "OIDC_AUTH_METHOD_TYPE_NONE", "devMode": True,
+      })["clientId"]
+
+      def linked_user(name, **password):
+          uid = api("POST", "/v2/users/human", pat, {
+              "username": name, "profile": {"givenName": name, "familyName": name},
+              "email": {"email": f"{name}@example.test", "isVerified": True},
+              "idpLinks": [{"idpId": idp, "userId": f"ext-{name}", "userName": name}], **password,
+          })["userId"]
+          return api("GET", f"/v2/users/{uid}", pat)["user"]["preferredLoginName"]
+
+      # an authorization request through the classic login, up to the step after the login name or the IdP's button
+      def after(login_name=None, idp_button=None):
+          jar = "/tmp/login.jar"
+          curl = f"curl -sS -k --resolve ${host}:443:${addr} -b {jar} -c {jar} -H 'Referer: https://${host}/ui/login/login'"
+          machine.succeed(f"rm -f {jar}")
+          query = urllib.parse.urlencode({
+              "client_id": client, "redirect_uri": "http://localhost/cb", "response_type": "code", "scope": "openid",
+              "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method": "S256",
+          })
+          login = machine.succeed(f"{curl} -o /dev/null -w '%{{redirect_url}}' 'https://${host}/oauth/v2/authorize?{query}'")
+          page = machine.succeed(f"{curl} '{login}'")
+
+          def field(name):
+              found = re.search(f'name="{re.escape(name)}" value="([^"]+)"', page)
+              assert found, (name, page[-500:])
+              return found.group(1)
+
+          request = field("authRequestID")
+          if idp_button:
+              step = f"{curl} 'https://${host}/ui/login/login/externalidp?authRequestID={request}&idpConfigID={idp_button}'"
+          else:
+              form = urllib.parse.urlencode({"gorilla.csrf.Token": field("gorilla.csrf.Token"), "authRequestID": request, "loginName": login_name})
+              step = f"{curl} --data '{form}' 'https://${host}/ui/login/loginname'"
+          body, status = machine.succeed(f"{step} -w '\\n%{{http_code}} %{{redirect_url}}'").rsplit("\n", 1)
+          code, _, location = status.partition(" ")
+          return code, location, body
+
+      def sent_to_idp(step):
+          code, location, _ = step
+          return code == "302" and location.startswith(idp_authorize)
+
+      with_password = linked_user("both", password={"password": "Password1!", "changeRequired": False})
+      idp_only = linked_user("idponly")
+
+      with subtest("a user with a password and a linked IdP is asked for the password after the login name"):
+          code, location, body = after(login_name=with_password)
+          assert code == "200" and 'name="password"' in body, (code, location, body[-500:])
+
+      with subtest("the same user picking the IdP on the login page is sent to it"):
+          step = after(idp_button=idp)
+          assert sent_to_idp(step), step[:2]
+
+      with subtest("a user with a linked IdP and no password is sent to it after the login name"):
+          step = after(login_name=idp_only)
+          assert sent_to_idp(step), step[:2]
 
       with subtest("the backup dump connects over the socket and restores"):
           machine.succeed(
