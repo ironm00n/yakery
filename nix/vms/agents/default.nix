@@ -46,6 +46,7 @@ let
 in
 {
   imports = [
+    ../../../hosts/common/base/blocked-kernel-modules.nix
     ./agent-mail.nix
     (import ./agentd.nix {
       key = keyDevice;

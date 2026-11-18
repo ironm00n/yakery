@@ -8,6 +8,7 @@
   # all bundles are behind an `enable` option
   imports = [
     ../../../bundles/default.nix
+    ./blocked-kernel-modules.nix
     ./initrd-network.nix
   ];
 

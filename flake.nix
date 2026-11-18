@@ -390,6 +390,7 @@
         zitadel = import ./nix/tests/zitadel.nix { pkgs = test-pkgs; };
         agent-mail = import ./nix/tests/agent-mail.nix { pkgs = test-pkgs; };
         initrd-network = import ./nix/tests/initrd-network.nix { pkgs = test-pkgs; };
+        blocked-kernel-modules = import ./nix/tests/blocked-kernel-modules.nix { pkgs = test-pkgs; };
         bulwark = import ./nix/tests/bulwark.nix {
           pkgs = test-pkgs;
           pkgs-node = pkgs-node-map.${system};
