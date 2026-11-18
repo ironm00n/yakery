@@ -18,9 +18,9 @@
 }:
 
 let
-  version = "4.19.4";
-  commit = "101343ad87aef7b0eea7c3522d519308e0ea9547";
-  commitDate = "2026-10-01T08:44:27Z";
+  version = "4.20.3";
+  commit = "a8b256c94b6d8615f12c05c54289600a06ca1912";
+  commitDate = "2026-11-13T11:55:38Z";
 
   carriedCommits = [
     {
@@ -44,7 +44,7 @@ let
       owner = "zitadel";
       repo = "zitadel";
       rev = commit;
-      hash = "sha256-gfeJXRBVZNkGl+SHsGtOMLaNiksg/sFnzf8ISb5cItM=";
+      hash = "sha256-gOyMm+6GWItFnoaypmST/RsuurBqy+K4U5mf60d5jyE=";
     };
     patches = map (
       c:
@@ -59,7 +59,7 @@ let
   goModules = {
     inherit version src;
     proxyVendor = true;
-    vendorHash = "sha256-8/TkV1JTKNSIknzEPbTDWzcOZQ6jCEkc6vSLLhdLYrs=";
+    vendorHash = "sha256-IZM5DS7SbEgwPinkb/GA0aU9IqnLmPpP6C0Bp4Nh5Vc=";
   };
 
   protoImage = callPackage ./proto-image.nix { inherit version src; };
