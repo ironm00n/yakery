@@ -4,6 +4,7 @@
 hooks=${1:-$HOME/.claude/hooks}
 dir=$(realpath "$(mktemp -d)")
 trap 'gpgconf --homedir "$dir/gnupg" --kill all 2>/dev/null; rm -rf "${dir:?}"' EXIT
+unset $(git rev-parse --local-env-vars)
 export GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 # the agent identity the provenance rule reads, as the claude bundle writes it
 export XDG_CONFIG_HOME=$dir/config
