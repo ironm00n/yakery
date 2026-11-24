@@ -7,12 +7,14 @@ mask=$'\x1f'
 # Quotes and comments resolved: a quoted word stays when it holds no blank or shell syntax and
 # becomes $mask otherwise, while a `$(…)` or backtick inside double quotes stays code. The quoted
 # script of `sh -c` (bash, zsh, ...) becomes a parenthesized subshell, left quoted for the next
-# pass. A backslash-newline joins lines; any other escaped character becomes $mask.
+# pass. A backslash-newline joins lines; any other escaped character becomes $mask. With
+# $quoted_globs set, a quoted word holding a glob character becomes $mask too, so a guard can tell a
+# pattern a program reads from one the shell expands.
 unquote() {
-  awk -v mask="$mask" '
+  awk -v mask="$mask" -v globs="${quoted_globs-}" '
     BEGIN { shell_c = "(^|[[:space:];&|(`])([^[:space:];&|()]*/)?(ba|da|z|k)?sh[[:space:]]+(([-+][[:alnum:]-]+|-o[[:space:]]+[[:alnum:]]+)[[:space:]]+)*-[[:alnum:]]*c[[:alnum:]]*[[:space:]]+$" }
     function word(lit, q) {
-      return lit ~ /^[^#[:space:];&|()<>`"\047\\][^[:space:];&|()<>`"\047\\]*$/ && !(q == "s" && lit ~ /\$/) ? lit : mask
+      return lit ~ /^[^#[:space:];&|()<>`"\047\\][^[:space:];&|()<>`"\047\\]*$/ && !(q == "s" && lit ~ /\$/) && !(globs != "" && lit ~ /[*?[]/) ? lit : mask
     }
     function open_sub(c) {
       out = out c
